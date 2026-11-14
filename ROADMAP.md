@@ -32,12 +32,17 @@ Decide, with the user:
 **Decided (2026-11-14):**
 
 - **Purpose:** a programming assistant.
-- **First model:** Claude through the user's Claude Code subscription, with
-  no API key. The first adapter drives the locally logged-in Claude Code
-  (headless `claude -p` with streamed JSON, or the Claude Agent SDK on the
-  same login). Still to confirm in phase 1: the current terms and limits
-  for this use, and how the model's tool calls reach the agent's own
-  tools. An API-key adapter stays possible behind the same interface.
+- **First model:** Claude through the user's Claude Pro subscription, with
+  no API key and no pay-per-token billing. The first adapter drives the
+  locally logged-in Claude Code (headless `claude -p` with streamed JSON,
+  or the Claude Agent SDK on the same login, if its terms allow it). The
+  subscription is used transparently, within Anthropic's terms and the
+  plan's own usage limits: the agent never tries to get more usage than
+  the plan gives, and never extracts or reuses Claude Code's credentials
+  in other clients. Still to confirm in phase 1: the current terms for
+  this use, and how the model's tool calls reach the agent's own tools.
+  The model interface keeps other adapters possible, but none that bills
+  per token is used unless the user decides so.
 - **First interface:** the command line.
 
 Then:
