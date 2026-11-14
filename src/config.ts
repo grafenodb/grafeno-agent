@@ -8,6 +8,8 @@ export interface Config {
   readonly namespace: string;
   /** Which model the agent reasons with (an adapter name, such as `claude-code`). */
   readonly model: string;
+  /** For `claude-code`: the Claude model alias (`haiku`, `sonnet`, `opus`…); unset: Claude Code's own. */
+  readonly claudeModel?: string;
 }
 
 export const DEFAULTS = {
@@ -60,9 +62,16 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   }
 
   const model = read(env, "AGENT_MODEL") ?? DEFAULTS.model;
+  const claudeModel = read(env, "CLAUDE_MODEL");
 
   if (problems.length > 0 || agentKey === undefined) throw new ConfigError(problems);
-  return { grafenoUrl, agentKey, namespace, model };
+  return {
+    grafenoUrl,
+    agentKey,
+    namespace,
+    model,
+    ...(claudeModel === undefined ? {} : { claudeModel }),
+  };
 }
 
 /** The settings as text safe to print: the key is masked. */
@@ -70,7 +79,7 @@ export function describeConfig(config: Config): string {
   return [
     `server:    ${config.grafenoUrl}`,
     `namespace: ${config.namespace}`,
-    `model:     ${config.model}`,
+    `model:     ${config.model}${config.claudeModel === undefined ? "" : ` (${config.claudeModel})`}`,
     `key:       ${maskSecret(config.agentKey)}`,
   ].join("\n");
 }

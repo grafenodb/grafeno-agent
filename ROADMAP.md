@@ -99,6 +99,21 @@ but has not run yet: there is no remote repository.
 **Done when** the same test suite passes against the fake model and,
 optionally, the real one.
 
+**Status (2026-11-14):** done. The interface (`src/model/types.ts`) is
+turn-based: a model holds conversations, and calls the agent's tools
+through a `ToolHost` the agent controls, so the same contract fits a
+model run by another program (Claude Code) and one called directly. The
+first adapter, `claude-code`, starts `claude -p` with streamed JSON, no
+built-in tools, and the agent's tools over a local MCP server; it reads
+the plan's usage windows and stops on the usage limit. `resilient()` adds
+a time limit per turn and retries with backoff, only before anything of
+the turn was seen, so no tool runs twice. The model contract passes on
+`FakeModel` and on real Claude (Haiku); the adapter's own tests run
+against a stand-in `claude` and spend no plan usage. Measured: `claude -p`
+reports the plan's own five-hour and seven-day windows, so it draws on
+the same subscription usage. Known limit: cancelling a turn stops Claude
+Code, and the conversation with it.
+
 ## Phase 2 — The agent loop
 
 - A turn: read the input, ask the model, run the tools it calls, give

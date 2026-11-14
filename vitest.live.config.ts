@@ -1,10 +1,12 @@
 import { defineConfig } from "vitest/config";
 
-// Tests against a running Grafeno server, configured from the environment
-// (or `.env`). Not part of `npm test`: run with `npm run test:live`.
+// Tests against real services, not part of `npm test`:
+// `npm run test:live` (the Grafeno server in `.env`) and
+// `npm run test:live:model` (Claude through the user's Claude Code login,
+// which spends a little of the plan's usage).
 export default defineConfig({
   test: {
     include: ["test/live/**/*.test.ts"],
-    testTimeout: 15_000,
+    testTimeout: 180_000,
   },
 });

@@ -20,12 +20,14 @@ describe("loadConfig", () => {
         GRAFENO_AGENT_KEY: ` ${KEY} `,
         GRAFENO_NAMESPACE: "work.agent-1",
         AGENT_MODEL: "fake",
+        CLAUDE_MODEL: "sonnet",
       }),
     ).toEqual({
       grafenoUrl: "https://grafeno.example:7810",
       agentKey: KEY,
       namespace: "work.agent-1",
       model: "fake",
+      claudeModel: "sonnet",
     });
   });
 
