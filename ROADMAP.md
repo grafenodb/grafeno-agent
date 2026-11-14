@@ -384,3 +384,49 @@ is published), and CI (no remote).
 
 **Done when** two agents work on one task at the same time without
 undoing each other's memory.
+
+**Status (2026-11-14):** done locally, on the fake model; not yet run with
+two agents on real Claude, nor in CI (no remote).
+
+Decided with the user:
+
+- an agent's name is its Grafeno key's name, read with `GET /v1/whoami`
+  (no setting of its own); the convention is `grafeno-agent-<role>`;
+- one key per agent, `--grant grafeno-agent:write --own-only`: it reads
+  and adds to all the memory, and changes only what it recorded;
+- the project's palace is shared by default; `AGENT_PALACE=own` gives an
+  agent a palace of its own, `<project> · <agent>`, in the same namespace.
+
+Done:
+
+- **Identity:** `checkGrafeno` reads the key's name; `check` and the chat
+  show it. Grafeno records it as `recorded_by` on every node and fact.
+- **The project's node is shared:** it is looked up before it is made, and
+  when another agent makes it at the same moment, theirs is used (an
+  `--own-only` key may not "update" another's node by remembering its
+  name).
+- **Each agent's own marks:** a node per agent (`Agent`, `works_on` the
+  project) holds when it last ran upkeep, which it may change.
+- **Checkpoints:** saved under the agent's name, as the task
+  `<project>: work of <agent>`. A session comes back to its own latest
+  checkpoint, and is shown a newer one by another agent as that agent's.
+- **Correcting another agent:** the model is told it may change only its
+  own memories; a refusal, or a duplicate of another's memory, tells it to
+  store the correction and relate it with `supersedes`.
+- **Watching from Studio:** Studio already shows `recorded_by` on a node;
+  the agent nodes make each agent visible in the graph.
+- **The test:** `npm run eval:agents` (also in CI) runs three agents with
+  `--own-only` keys on the fake model against Grafeno in memory: two
+  start at the same moment and store 25 memories at once, all land under
+  the right name; one tries to update, mark obsolete and forget the
+  other's decision (all refused, the decision unchanged) and supersedes it
+  instead; checkpoints stay each agent's own; a third agent's own palace
+  stays apart. Mutation-checked: with keys that are not `--own-only`, five
+  checks fail.
+
+Found, for Grafeno itself:
+
+- a memory superseded by another agent's still comes back in `context`
+  (with the `supersedes` fact beside it): under `--own-only` the other
+  agent cannot mark it obsolete, so `context`/`recall` could rank a memory
+  with a current incoming `supersedes` lower, as a general feature.

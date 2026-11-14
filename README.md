@@ -76,6 +76,7 @@ agent works without it, by words alone, if it is missing.
 | `CLAUDE_MODEL`      | Claude Code's own       | `haiku`, `sonnet`, `opus`…                          |
 | `AGENT_PROJECT`     | the git repository      | The project whose memory the agent uses             |
 | `AGENT_EMBEDDER`    | `e5-small`              | Meaning for memory (a local model), or `none`       |
+| `AGENT_PALACE`      | `shared`                | `shared` with other agents, or `own` (see below)    |
 | `AGENT_SHELL`       | Git's bash on Windows   | The shell for commands, with its arguments          |
 
 Variables set in the environment win over the file. The agent never reads
@@ -154,6 +155,33 @@ With it, the memory that answers a question reached the model 93% of the
 time instead of 63% on the measured set (`docs/measurements/`). If the
 model is not installed or fails, memory works by words alone.
 
+### Several agents
+
+Several agents can work on one project at the same time, sharing its
+memory. Give each one a key of its own: its name is the agent's name, and
+Grafeno records it on everything the agent writes. With `--own-only`, an
+agent may read and add to all the memory but change only what it recorded
+itself, so no agent can undo another's work:
+
+```bash
+grafeno keys create grafeno-agent-dev    --grant grafeno-agent:write --own-only --config grafeno.toml
+grafeno keys create grafeno-agent-review --grant grafeno-agent:write --own-only --config grafeno.toml
+```
+
+Each agent runs with its own settings file (`GRAFENO_AGENT_CONFIG`) holding
+its key. `grafeno-agent check` shows the name it works under.
+
+- The project's palace is shared: what one agent stores reaches the
+  others. When an agent finds another's memory wrong, it stores the
+  corrected one and relates it with `supersedes`; it does not change the
+  other's memory.
+- Each agent saves its own checkpoints, and comes back to them. A newer
+  checkpoint saved by another agent is shown too, as that agent's work.
+- `AGENT_PALACE=own` gives an agent a palace of its own,
+  `<project> · <agent>`, for work apart from the others.
+- In Grafeno Studio, each memory and fact shows who recorded it, and each
+  agent has a node of its own, linked to the project it `works_on`.
+
 ## Troubleshooting
 
 | Message                                          | What to do                                                            |
@@ -187,6 +215,7 @@ npm run test:live        # against the Grafeno server in .env
 npm run test:live:model  # the model contract on real Claude (spends a little plan usage)
 npm run eval             # the evaluation suite on the fake model (needs `grafeno` or GRAFENO_BIN)
 npm run eval:real        # the same suite on Claude Haiku (spends plan usage)
+npm run eval:agents      # several agents on one task at once (fake model, Grafeno in memory)
 npm run measure:meaning  # what meaning adds to recall
 ```
 

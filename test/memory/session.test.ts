@@ -85,6 +85,7 @@ describe("the memory tools", () => {
       "palace_anchor",
       "recall",
       "remember",
+      "update",
     ]);
     for (const tool of tools) {
       expect(tool.writes).toBe(false);
@@ -205,5 +206,126 @@ describe("detectProject", () => {
     const here = detectProject(process.cwd());
     expect(here.name).toBe("grafeno-agent");
     expect(detectProject(process.cwd(), "other").name).toBe("other");
+  });
+});
+
+/** An answer of memory, as data. */
+const ok = (data: unknown) => ({ text: JSON.stringify(data), isError: false, data });
+const context = { signal: new AbortController().signal };
+
+describe("several agents", () => {
+  const review = { name: "grafeno-agent-review", ownOnly: true };
+
+  async function startAs(vault: FakeVault, palace?: "shared" | "own") {
+    return MemorySession.start({ vault, project, agent: review, ...(palace ? { palace } : {}) });
+  }
+
+  it("uses the project's node another agent made, without changing it", async () => {
+    const vault = new FakeVault({
+      recall: (args) =>
+        ok({
+          results:
+            Array.isArray(args.labels) && args.labels.includes("Project")
+              ? [{ id: "p-by-other", name: "demo", labels: ["Project"], text: "demo" }]
+              : [],
+        }),
+    });
+    const session = await startAs(vault);
+    expect(session.projectId).toBe("p-by-other");
+    expect(vault.called("remember").map((a) => a.name)).toEqual(["grafeno-agent-review"]);
+    expect(vault.called("relate")).toEqual([
+      { from: session.agentId, label: "works_on", to: "p-by-other" },
+    ]);
+  });
+
+  it("finds the project's node when another agent made it at the same moment", async () => {
+    let made = false;
+    const vault = new FakeVault({
+      recall: () =>
+        ok({
+          results: made ? [{ id: "p-race", name: "Demo", labels: ["Project"], text: "demo" }] : [],
+        }),
+      remember: (args) => {
+        if (args.name === "demo") {
+          made = true;
+          return {
+            text: 'forbidden: grafeno-agent-review may only change what it recorded, and node "demo" was recorded by grafeno-agent-dev',
+            isError: true,
+          };
+        }
+        return { text: JSON.stringify({ id: "a1" }), isError: false };
+      },
+    });
+    expect((await startAs(vault)).projectId).toBe("p-race");
+  });
+
+  it("keeps a palace of its own when asked", async () => {
+    const vault = new FakeVault();
+    const session = await startAs(vault, "own");
+    expect(session.palace).toBe("demo · grafeno-agent-review");
+    expect(vault.called("palace_create_room")[0]).toMatchObject({
+      palace: "demo · grafeno-agent-review",
+    });
+    await expect(
+      MemorySession.start({ vault: new FakeVault(), project, palace: "own" }),
+    ).rejects.toThrow(/needs the agent's name/);
+  });
+
+  it("tells the model who it is and what it may change", async () => {
+    const session = await startAs(new FakeVault());
+    const prompt = session.systemPrompt("BASE");
+    expect(prompt).toContain('You are the agent "grafeno-agent-review"');
+    expect(prompt).toContain("change, mark (feedback) or forget only what you recorded yourself");
+    expect(prompt).toContain("supersedes");
+  });
+
+  it("saves checkpoints under its own name and task", async () => {
+    const vault = new FakeVault();
+    const session = await startAs(vault);
+    const checkpoint = (await session.tools()).find((t) => t.name === "checkpoint");
+    await checkpoint?.run({ summary: "done", agent: "grafeno-agent-dev" }, context);
+    expect(vault.called("checkpoint")[0]).toMatchObject({
+      agent: "grafeno-agent-review",
+      task: "demo: work of grafeno-agent-review",
+      about: session.projectId,
+    });
+  });
+
+  it("brings back its own checkpoint and another agent's newer one", async () => {
+    const vault = new FakeVault({
+      resume: (args) =>
+        args.agent === "grafeno-agent-review"
+          ? ok({ found: true, checkpoint: { id: "c1", agent: "grafeno-agent-review" }, s: "MINE" })
+          : ok({ found: true, checkpoint: { id: "c2", agent: "grafeno-agent-dev" }, s: "THEIRS" }),
+    });
+    const session = await startAs(vault);
+    expect(session.brief).toMatch(/Your latest checkpoint[\s\S]*MINE/);
+    expect(session.brief).toMatch(/saved by another agent \(grafeno-agent-dev\)[\s\S]*THEIRS/);
+  });
+
+  it("explains a refusal to change another agent's memory", async () => {
+    const vault = new FakeVault({
+      update: () => ({
+        text: 'forbidden: grafeno-agent-review may only change what it recorded, and node "x" was recorded by grafeno-agent-dev',
+        isError: true,
+      }),
+    });
+    const session = await startAs(vault);
+    const update = (await session.tools()).find((t) => t.name === "update");
+    expect(update).toBeDefined();
+    await expect(update?.run({ id: "x", text: "changed" }, context)).rejects.toThrow(
+      /relate it to that one with supersedes/,
+    );
+  });
+
+  it("says when what it would store was recorded by another agent", async () => {
+    const vault = new FakeVault({
+      get_node: () => ok({ provenance: { recorded_by: "grafeno-agent-dev" } }),
+    });
+    const session = await startAs(vault);
+    vault.memories.push({ id: "m-dev", text: "The cache uses Redis.", labels: [] });
+    const remember = (await session.tools()).find((t) => t.name === "remember");
+    const answer = await remember?.run({ text: "The cache uses Redis." }, context);
+    expect(answer).toContain("recorded by another agent (grafeno-agent-dev)");
   });
 });

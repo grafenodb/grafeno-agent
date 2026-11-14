@@ -52,6 +52,7 @@ jobs:
           tar -xzf grafeno-x86_64-unknown-linux-musl.tar.gz ./grafeno
           echo "GRAFENO_BIN=$RUNNER_TEMP/grafeno/grafeno" >> "$GITHUB_ENV"
       - run: npm run eval
+      - run: npm run eval:agents
       - uses: actions/upload-artifact@v4
         if: always()
         with:

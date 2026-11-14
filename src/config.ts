@@ -14,7 +14,17 @@ export interface Config {
   readonly project?: string;
   /** The embedder for meaning (`e5-small`, local), or `none` for words alone. */
   readonly embedder: string;
+  /**
+   * Whose palace the agent keeps the project's memory in: `shared`, the
+   * project's own, which every agent on it uses; or `own`, a palace of this
+   * agent alone ("<project> · <agent>"), for agents that do not work together.
+   */
+  readonly palace: PalaceMode;
 }
+
+/** The palaces `AGENT_PALACE` may name. */
+export const PALACES = ["shared", "own"] as const;
+export type PalaceMode = (typeof PALACES)[number];
 
 /** The embedders `AGENT_EMBEDDER` may name. */
 export const EMBEDDERS = ["e5-small", "none"] as const;
@@ -26,6 +36,7 @@ export const DEFAULTS = {
   // Measured: with meaning, the right memory reaches the model 93% of the
   // time instead of 63% (docs/measurements/meaning-2026-11-14.md).
   embedder: "e5-small",
+  palace: "shared",
 } as const;
 
 /** The settings are missing or wrong; `problems` says each one. */
@@ -79,6 +90,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     problems.push(`AGENT_EMBEDDER must be one of ${EMBEDDERS.join(", ")}: ${embedder}`);
   }
 
+  const palace = read(env, "AGENT_PALACE") ?? DEFAULTS.palace;
+  if (!(PALACES as readonly string[]).includes(palace)) {
+    problems.push(`AGENT_PALACE must be one of ${PALACES.join(", ")}: ${palace}`);
+  }
+
   if (problems.length > 0 || agentKey === undefined) throw new ConfigError(problems);
   return {
     grafenoUrl,
@@ -86,6 +102,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     namespace,
     model,
     embedder,
+    palace: palace as PalaceMode,
     ...(claudeModel === undefined ? {} : { claudeModel }),
     ...(project === undefined ? {} : { project }),
   };
@@ -98,6 +115,7 @@ export function describeConfig(config: Config): string {
     `namespace: ${config.namespace}`,
     `model:     ${config.model}${config.claudeModel === undefined ? "" : ` (${config.claudeModel})`}`,
     `meaning:   ${config.embedder}`,
+    `palace:    ${config.palace}`,
     `key:       ${maskSecret(config.agentKey)}`,
   ].join("\n");
 }

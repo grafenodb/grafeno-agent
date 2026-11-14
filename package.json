@@ -43,6 +43,7 @@
     "measure:meaning": "tsx test/eval/measure-meaning.ts",
     "eval": "tsx test/eval/run-eval.ts",
     "eval:real": "tsx test/eval/run-eval.ts --model claude-code",
+    "eval:agents": "tsx test/eval/agents.ts",
     "prepack": "npm run build"
   },
   "dependencies": {

@@ -8,6 +8,16 @@ export interface StartupReport {
   readonly namespace: string;
   /** The memory tools the agent's key may run in its namespace. */
   readonly tools: readonly string[];
+  /** Who the agent is: its key's name, which Grafeno records on all it writes. */
+  readonly identity?: AgentIdentity;
+}
+
+/** An agent's identity in Grafeno: the name of its key. */
+export interface AgentIdentity {
+  /** The key's name: recorded on everything the agent writes. */
+  readonly name: string;
+  /** The key may change only what it recorded itself (`--own-only`). */
+  readonly ownOnly: boolean;
 }
 
 export type StartupFailure =
@@ -97,9 +107,27 @@ export async function checkGrafeno(
     );
   }
 
+  const identity = await whoAmI(client);
   return {
     serverVersion: health.version,
     namespace: config.namespace,
     tools: tools.map((tool) => tool.name),
+    ...(identity === undefined ? {} : { identity }),
   };
+}
+
+/**
+ * The name of the agent's key (`GET /v1/whoami`), or nothing when the server
+ * does not say: a server without keys, or one that is too old.
+ */
+async function whoAmI(client: Grafeno): Promise<AgentIdentity | undefined> {
+  let me: Awaited<ReturnType<Grafeno["whoami"]>>;
+  try {
+    me = await client.whoami();
+  } catch {
+    return undefined;
+  }
+  const name = me.via?.kind === "key" ? me.via.name : me.name;
+  if (typeof name !== "string" || name === "" || name === "anonymous") return undefined;
+  return { name, ownOnly: me.own_only };
 }

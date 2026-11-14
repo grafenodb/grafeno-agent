@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Several agents**: an agent's name is its Grafeno key's name (read with
+  `whoami`), recorded on everything it writes. With `--own-only` keys,
+  agents share a project's memory but change only what they recorded; a
+  refusal tells the model to supersede instead. The project's node is
+  shared and found before it is made, so agents starting at once use one.
+  Each agent has a node of its own, saves checkpoints under its name and
+  comes back to its own, and is told of a newer one by another agent.
+  `AGENT_PALACE=own` keeps an agent's memory in a palace of its own.
+  `npm run eval:agents` checks it with two agents at once.
+
 ## 0.1.0 (unreleased)
 
 The first version: a programming assistant with long-term memory in

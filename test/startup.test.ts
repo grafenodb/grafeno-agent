@@ -8,6 +8,7 @@ const config: Config = {
   namespace: "agent",
   model: "fake",
   embedder: "none",
+  palace: "shared",
 };
 
 interface Seen {
@@ -113,5 +114,34 @@ describe("checkGrafeno", () => {
     );
     expect(error.failure).toBe("forbidden");
     expect(error.message).toContain('"agent"');
+  });
+});
+
+describe("checkGrafeno: who the agent is", () => {
+  it("names the agent after its key, from whoami", async () => {
+    const report = await checkGrafeno(config, {
+      fetch: fakeFetch({
+        "/health": healthy,
+        "/v1/agent/tools": tools,
+        "/v1/whoami": () =>
+          json(200, {
+            name: "grafeno-agent-review",
+            own_only: true,
+            via: { kind: "key", name: "grafeno-agent-review" },
+          }),
+      }),
+    });
+    expect(report.identity).toEqual({ name: "grafeno-agent-review", ownOnly: true });
+  });
+
+  it("goes on without a name when the server does not say it", async () => {
+    const anonymous = await checkGrafeno(config, {
+      fetch: fakeFetch({
+        "/health": healthy,
+        "/v1/agent/tools": tools,
+        "/v1/whoami": () => json(200, { name: "anonymous" }),
+      }),
+    });
+    expect(anonymous.identity).toBeUndefined();
   });
 });

@@ -11,6 +11,7 @@ describe("loadConfig", () => {
       namespace: DEFAULTS.namespace,
       model: DEFAULTS.model,
       embedder: DEFAULTS.embedder,
+      palace: DEFAULTS.palace,
     });
   });
 
@@ -33,6 +34,7 @@ describe("loadConfig", () => {
       claudeModel: "sonnet",
       project: "demo",
       embedder: "none",
+      palace: "shared",
     });
   });
 
@@ -79,5 +81,14 @@ describe("describeConfig", () => {
 
   it("masks short secrets entirely", () => {
     expect(maskSecret("abc")).toBe("********");
+  });
+});
+
+describe("AGENT_PALACE", () => {
+  it("takes own, and refuses what it does not know", () => {
+    expect(loadConfig({ GRAFENO_AGENT_KEY: KEY, AGENT_PALACE: "own" }).palace).toBe("own");
+    expect(() => loadConfig({ GRAFENO_AGENT_KEY: KEY, AGENT_PALACE: "mine" })).toThrow(
+      /AGENT_PALACE must be one of shared, own/,
+    );
   });
 });

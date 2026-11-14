@@ -42,6 +42,7 @@ export class FakeVault implements Vault {
         inputSchema: schema(["memory", "room", "locus"], ["memory", "room"]),
       },
       { name: "forget", description: "Forget.", inputSchema: schema(["id"], ["id"]) },
+      { name: "update", description: "Update.", inputSchema: schema(["id", "text"], ["id"]) },
       {
         name: "merge",
         description: "Merge.",

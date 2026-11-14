@@ -6,18 +6,18 @@ import { Agent } from "./agent/agent.js";
 import { SYSTEM_PROMPT } from "./agent/builtin-tools.js";
 import { ToolRegistry } from "./agent/tools.js";
 import { runChat } from "./chat.js";
-import { ConfigError, describeConfig, loadConfig } from "./config.js";
+import { ConfigError, describeConfig, loadConfig, type Config } from "./config.js";
 import { LOCAL_MODELS, localEmbedder } from "./embed/local.js";
 import type { Embedder } from "./embed/types.js";
 import { initSettings, loadSettings, settingsPath } from "./settings-file.js";
 import { projectTools, toolsPrompt } from "./tools/index.js";
 import { Workspace } from "./tools/workspace.js";
-import { MemorySession } from "./memory/session.js";
+import { MemorySession, type Project } from "./memory/session.js";
 import { detectProject } from "./memory/project.js";
 import { describeUpkeep, upkeep } from "./memory/upkeep.js";
-import { grafenoVault } from "./memory/vault.js";
+import { grafenoVault, type Vault } from "./memory/vault.js";
 import { createModel } from "./model/index.js";
-import { StartupError, checkGrafeno } from "./startup.js";
+import { StartupError, checkGrafeno, type AgentIdentity } from "./startup.js";
 
 const USAGE = `Usage: grafeno-agent <command>
 
@@ -54,6 +54,12 @@ function init(): number {
   console.log(
     "\n  grafeno keys create grafeno-agent --grant grafeno-agent:write --config <grafeno.toml>\n",
   );
+  console.log(
+    "Several agents: one key each, named after its role, which is recorded on what it writes,\nand --own-only so that none can change what another recorded:",
+  );
+  console.log(
+    "\n  grafeno keys create grafeno-agent-review --grant grafeno-agent:write --own-only --config <grafeno.toml>\n",
+  );
   console.log("Then run: grafeno-agent check");
   return 0;
 }
@@ -86,20 +92,39 @@ async function check(): Promise<number> {
     `\nGrafeno ${report.serverVersion} answers; the key works in "${report.namespace}" ` +
       `(${String(report.tools.length)} memory tools).`,
   );
+  console.log(
+    report.identity
+      ? `The agent is "${report.identity.name}" (its key's name, recorded on what it writes)` +
+          `${report.identity.ownOnly ? "; it may change only what it recorded" : ""}.`
+      : "Grafeno did not say the key's name: the agent works as one, without a name of its own.",
+  );
   return 0;
+}
+
+/** The memory session of a command, as the settings and the start-up check say. */
+async function startMemory(
+  config: Config,
+  identity: AgentIdentity | undefined,
+  embedder?: Embedder,
+): Promise<{ memory: MemorySession; vault: Vault; project: Project }> {
+  const vault = grafenoVault(config);
+  const project = detectProject(process.cwd(), config.project);
+  const memory = await MemorySession.start({
+    vault,
+    project,
+    palace: config.palace,
+    knownSecrets: [config.agentKey],
+    ...(identity ? { agent: identity } : {}),
+    ...(embedder ? { embedder } : {}),
+  });
+  return { memory, vault, project };
 }
 
 async function chat(): Promise<number> {
   const config = loadConfig();
-  await checkGrafeno(config);
-  const project = detectProject(process.cwd(), config.project);
+  const { identity } = await checkGrafeno(config);
   const embedder = await embedderFor(config.embedder);
-  const memory = await MemorySession.start({
-    vault: grafenoVault(config),
-    project,
-    knownSecrets: [config.agentKey],
-    ...(embedder ? { embedder } : {}),
-  });
+  const { memory, project } = await startMemory(config, identity, embedder);
   const memoryTools = await memory.tools();
   const last = await memory.lastUpkeep();
   if (!last || Date.now() - last.getTime() > UPKEEP_EVERY_DAYS * 86_400_000) {
@@ -107,7 +132,8 @@ async function chat(): Promise<number> {
     console.log(`Memory upkeep ${when}: run \`grafeno-agent upkeep\`.`);
   }
   console.log(
-    `Project: ${project.name} (memory: palace "${project.name}" in namespace "${config.namespace}")`,
+    `Project: ${project.name} (memory: palace "${memory.palace}" in namespace "${config.namespace}"` +
+      `${identity ? `; agent "${identity.name}"` : ""})`,
   );
 
   const model = createModel(config.model, {
@@ -135,11 +161,9 @@ async function chat(): Promise<number> {
 
 async function runUpkeep(apply: boolean): Promise<number> {
   const config = loadConfig();
-  await checkGrafeno(config);
-  const vault = grafenoVault(config);
-  const project = detectProject(process.cwd(), config.project);
-  const memory = await MemorySession.start({ vault, project, knownSecrets: [config.agentKey] });
-  const report = await upkeep({ vault, palace: project.name, projectId: memory.projectId, apply });
+  const { identity } = await checkGrafeno(config);
+  const { memory, vault, project } = await startMemory(config, identity);
+  const report = await upkeep({ vault, palace: memory.palace, projectId: memory.projectId, apply });
   const mode = apply ? "" : " (report only; --apply carries out the safe fixes)";
   console.log(`Memory upkeep for ${project.name}${mode}:\n`);
   console.log(describeUpkeep(report));

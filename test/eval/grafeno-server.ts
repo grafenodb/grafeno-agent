@@ -23,16 +23,23 @@ async function freePort(): Promise<number> {
 
 /**
  * Starts `grafeno serve --memory` (the program in `GRAFENO_BIN`, else
- * `grafeno` from the PATH) on a free port of 127.0.0.1. Only this process
- * is ever stopped.
+ * `grafeno` from the PATH) on a free port of 127.0.0.1. With `ownerToken`,
+ * every request needs a key, and that token may make them. Only this
+ * process is ever stopped.
  */
-export async function startGrafeno(): Promise<EvalGrafeno> {
+export async function startGrafeno(options: { ownerToken?: string } = {}): Promise<EvalGrafeno> {
   const program = process.env.GRAFENO_BIN ?? "grafeno";
   const port = await freePort();
   const url = `http://127.0.0.1:${String(port)}`;
   const child: ChildProcess = spawn(
     program,
-    ["serve", "--memory", "--addr", `127.0.0.1:${String(port)}`],
+    [
+      "serve",
+      "--memory",
+      "--addr",
+      `127.0.0.1:${String(port)}`,
+      ...(options.ownerToken === undefined ? [] : ["--token", options.ownerToken]),
+    ],
     {
       stdio: "ignore",
       windowsHide: true,
