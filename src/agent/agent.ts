@@ -25,6 +25,11 @@ export interface AgentOptions {
   readonly system: string;
   readonly tools: ToolHost;
   readonly limits?: AgentLimits;
+  /**
+   * Prepares each message before the model sees it, such as putting what
+   * memory knows about it in front.
+   */
+  readonly prepare?: (message: string) => Promise<string>;
 }
 
 export interface TurnOptions {
@@ -94,13 +99,14 @@ export class Agent {
 
     this.#busy = true;
     try {
+      const prepared = this.options.prepare ? await this.options.prepare(message) : message;
       let restarted = false;
       for (;;) {
         const started = this.#conversation === undefined;
         const conversation = await this.#open();
         const progress = { seen: false };
         try {
-          const result = await this.#run(conversation, message, options, () => {
+          const result = await this.#run(conversation, prepared, options, () => {
             progress.seen = true;
           });
           this.#turns++;

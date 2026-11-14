@@ -155,6 +155,26 @@ Code reports usage only when the turn ends.
 **Done when** a second session picks up what the first left without being
 told, with tests that check what was stored and recalled.
 
+**Status (2026-11-14):** done. `MemorySession` (`src/memory/session.ts`)
+holds the policy. Each project (the git repository the agent runs in, or
+`AGENT_PROJECT`) has a palace of its name, a room `General` (loci
+Decisions, Facts, Preferences, Open questions, Notes) and a `Project`
+node. At start, the agent enters the room and resumes the project's
+latest checkpoint, and both go into the system prompt. Before each
+message, `context` puts what memory knows in front of it, between
+`<memory>` tags, as data. The model gets the memory tools (context,
+recall, remember, relate, get_node, timeline, checkpoint, resume,
+palace_map, palace_enter, palace_walk, palace_anchor, palace_create_room)
+in the agent's namespace only; what it remembers is anchored in the room
+by kind. Checkpoints are always about the project (on real Claude, the
+model passed the room's id instead, and the next session missed the
+checkpoint). On leaving after talking, one last turn saves a checkpoint.
+A secret filter refuses to store keys, tokens, passwords and the agent's
+own key. Tested with a fake memory, with real Grafeno and the fake model
+across two sessions, and by hand on real Claude across two sessions.
+Known: Claude Code tells the model its working folder (a private temp
+folder), not the project's; the project's tools come in phase 6.
+
 ## Phase 4 — The quality of memory
 
 - Before storing, look for the same thing (`find_matches`, `recall`) to

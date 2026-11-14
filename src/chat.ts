@@ -11,6 +11,8 @@ export interface ChatOptions {
   readonly makeAgent: (approve: Approver) => Agent;
   /** Warn when a plan window is at least this full. Default: 0.8. */
   readonly warnAt?: number;
+  /** Sent as a last turn when the user leaves after talking, such as asking to save a checkpoint. */
+  readonly endOfSession?: string;
 }
 
 const HELP = `Commands:
@@ -58,8 +60,70 @@ export async function runChat(options: ChatOptions): Promise<void> {
   };
 
   const agent = options.makeAgent(approve);
+
+  /** Runs one turn and shows it; true when the chat cannot go on. */
+  async function runTurn(message: string): Promise<boolean> {
+    current = new AbortController();
+    let answered = false;
+    const onEvent = (event: ModelEvent) => {
+      switch (event.type) {
+        case "text":
+          if (!answered) write("\n");
+          answered = true;
+          write(event.text);
+          break;
+        case "tool_call":
+          write(`\n  → ${event.call.name} ${JSON.stringify(event.call.input)}\n`);
+          break;
+        case "tool_result":
+          write(
+            `  ← ${event.outcome.isError === true ? "error: " : ""}${firstLine(event.outcome.content)}\n`,
+          );
+          break;
+        case "usage_windows":
+          for (const window of event.windows) {
+            if (window.utilization !== undefined && window.utilization >= warnAt) {
+              if (!warned.has(window.name)) {
+                warned.add(window.name);
+                write(
+                  `\n  ! The plan's ${window.name} window is ${percent(window.utilization)} used.\n`,
+                );
+              }
+            }
+          }
+          break;
+        case "done":
+          break;
+      }
+    };
+
+    try {
+      const turn = await agent.turn(message, { signal: current.signal, onEvent });
+      if (turn.restarted) {
+        write(
+          "\n  (The conversation with the model had ended and was started again: it does not remember this session's earlier turns.)\n",
+        );
+      }
+      if (turn.result.stopReason === "max_steps") {
+        write("\n  (Stopped at the step limit for one turn.)\n");
+      } else if (turn.result.stopReason === "max_tokens") {
+        write("\n  (The answer reached its length limit.)\n");
+      } else if (turn.result.stopReason === "refusal") {
+        write("\n  (The model declined to answer.)\n");
+      }
+      write("\n");
+    } catch (error) {
+      write(`\n  ${describeError(error)}\n`);
+      if (error instanceof ModelError && error.kind === "setup") return true;
+    } finally {
+      current = undefined;
+    }
+    return false;
+  }
+
   write(`Grafeno Agent. Type /help for commands.\n`);
 
+  let stopped = false;
   try {
     for (;;) {
       const line = await readLine("\n> ");
@@ -76,61 +140,14 @@ export async function runChat(options: ChatOptions): Promise<void> {
         continue;
       }
 
-      current = new AbortController();
-      let answered = false;
-      const onEvent = (event: ModelEvent) => {
-        switch (event.type) {
-          case "text":
-            if (!answered) write("\n");
-            answered = true;
-            write(event.text);
-            break;
-          case "tool_call":
-            write(`\n  → ${event.call.name} ${JSON.stringify(event.call.input)}\n`);
-            break;
-          case "tool_result":
-            write(
-              `  ← ${event.outcome.isError === true ? "error: " : ""}${firstLine(event.outcome.content)}\n`,
-            );
-            break;
-          case "usage_windows":
-            for (const window of event.windows) {
-              if (window.utilization !== undefined && window.utilization >= warnAt) {
-                if (!warned.has(window.name)) {
-                  warned.add(window.name);
-                  write(
-                    `\n  ! The plan's ${window.name} window is ${percent(window.utilization)} used.\n`,
-                  );
-                }
-              }
-            }
-            break;
-          case "done":
-            break;
-        }
-      };
-
-      try {
-        const turn = await agent.turn(text, { signal: current.signal, onEvent });
-        if (turn.restarted) {
-          write(
-            "\n  (The conversation with the model had ended and was started again: it does not remember this session's earlier turns.)\n",
-          );
-        }
-        if (turn.result.stopReason === "max_steps") {
-          write("\n  (Stopped at the step limit for one turn.)\n");
-        } else if (turn.result.stopReason === "max_tokens") {
-          write("\n  (The answer reached its length limit.)\n");
-        } else if (turn.result.stopReason === "refusal") {
-          write("\n  (The model declined to answer.)\n");
-        }
-        write("\n");
-      } catch (error) {
-        write(`\n  ${describeError(error)}\n`);
-        if (error instanceof ModelError && error.kind === "setup") break;
-      } finally {
-        current = undefined;
+      if (await runTurn(text)) {
+        stopped = true;
+        break;
       }
+    }
+    if (!stopped && options.endOfSession !== undefined && agent.turns > 0) {
+      write("\n  Saving where this session stands...\n");
+      await runTurn(options.endOfSession);
     }
   } finally {
     lines.close();

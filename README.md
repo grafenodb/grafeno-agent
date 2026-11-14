@@ -54,6 +54,17 @@ the plan's usage windows are; `/exit` or Ctrl+D leaves; Ctrl+C cancels the
 answer being written (with Claude Code, that also ends the conversation:
 the next message starts a new one, and the agent says so).
 
+## Memory
+
+What the agent knows lives in Grafeno, in its namespace, one palace per
+project (the git repository it runs in, or `AGENT_PROJECT`). When a
+session starts, the agent brings back the project's room and its latest
+checkpoint; before each message it looks up what memory knows about it;
+during the session it stores decisions, facts, preferences and open
+questions; when you leave, it saves a checkpoint, so the next session
+picks up where this one stopped. It never stores keys, passwords or
+tokens: storing them is refused.
+
 ## The model
 
 The agent reasons with Claude through your own Claude Code: it starts the

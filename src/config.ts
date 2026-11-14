@@ -10,6 +10,8 @@ export interface Config {
   readonly model: string;
   /** For `claude-code`: the Claude model alias (`haiku`, `sonnet`, `opus`…); unset: Claude Code's own. */
   readonly claudeModel?: string;
+  /** The project the agent works on; unset: the git repository (or folder) it runs in. */
+  readonly project?: string;
 }
 
 export const DEFAULTS = {
@@ -63,6 +65,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 
   const model = read(env, "AGENT_MODEL") ?? DEFAULTS.model;
   const claudeModel = read(env, "CLAUDE_MODEL");
+  const project = read(env, "AGENT_PROJECT");
 
   if (problems.length > 0 || agentKey === undefined) throw new ConfigError(problems);
   return {
@@ -71,6 +74,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     namespace,
     model,
     ...(claudeModel === undefined ? {} : { claudeModel }),
+    ...(project === undefined ? {} : { project }),
   };
 }
 

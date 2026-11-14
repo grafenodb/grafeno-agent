@@ -5,6 +5,9 @@ import { SYSTEM_PROMPT, currentTimeTool } from "./agent/builtin-tools.js";
 import { ToolRegistry } from "./agent/tools.js";
 import { runChat } from "./chat.js";
 import { ConfigError, describeConfig, loadConfig } from "./config.js";
+import { MemorySession } from "./memory/session.js";
+import { detectProject } from "./memory/project.js";
+import { grafenoVault } from "./memory/vault.js";
 import { createModel } from "./model/index.js";
 import { StartupError, checkGrafeno } from "./startup.js";
 
@@ -27,19 +30,31 @@ async function check(): Promise<number> {
 
 async function chat(): Promise<number> {
   const config = loadConfig();
-  // Memory comes in phase 3; Grafeno must already answer at start-up.
   await checkGrafeno(config);
+  const project = detectProject(process.cwd(), config.project);
+  const memory = await MemorySession.start({
+    vault: grafenoVault(config),
+    project,
+    knownSecrets: [config.agentKey],
+  });
+  const memoryTools = await memory.tools();
+  console.log(
+    `Project: ${project.name} (memory: palace "${project.name}" in namespace "${config.namespace}")`,
+  );
+
   const model = createModel(config.model, {
     ...(config.claudeModel === undefined ? {} : { claudeModel: config.claudeModel }),
   });
   await runChat({
     input: process.stdin,
     output: process.stdout,
+    endOfSession: memory.endOfSession(),
     makeAgent: (approve) =>
       new Agent({
         model,
-        system: SYSTEM_PROMPT,
-        tools: new ToolRegistry([currentTimeTool()], approve),
+        system: memory.systemPrompt(SYSTEM_PROMPT),
+        tools: new ToolRegistry([currentTimeTool(), ...memoryTools], approve),
+        prepare: (message) => memory.beforeTurn(message),
       }),
   });
   return 0;
