@@ -1,0 +1,81 @@
+/** The agent's settings, read from the environment. */
+export interface Config {
+  /** Base URL of the Grafeno server, without a trailing slash. */
+  readonly grafenoUrl: string;
+  /** The agent's own Grafeno key. A secret: never log or store it. */
+  readonly agentKey: string;
+  /** The namespace the agent keeps its memory in. */
+  readonly namespace: string;
+  /** Which model the agent reasons with (an adapter name, such as `claude-code`). */
+  readonly model: string;
+}
+
+export const DEFAULTS = {
+  grafenoUrl: "http://127.0.0.1:7810",
+  namespace: "grafeno-agent",
+  model: "claude-code",
+} as const;
+
+/** The settings are missing or wrong; `problems` says each one. */
+export class ConfigError extends Error {
+  constructor(readonly problems: readonly string[]) {
+    super(`Invalid settings:\n${problems.map((p) => `  - ${p}`).join("\n")}`);
+    this.name = "ConfigError";
+  }
+}
+
+const NAMESPACE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function read(env: Record<string, string | undefined>, name: string): string | undefined {
+  const value = env[name]?.trim();
+  return value === undefined || value === "" ? undefined : value;
+}
+
+/** Reads and checks the settings; throws a `ConfigError` listing every problem. */
+export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
+  const problems: string[] = [];
+
+  const rawUrl = read(env, "GRAFENO_URL") ?? DEFAULTS.grafenoUrl;
+  let grafenoUrl = rawUrl;
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      problems.push(`GRAFENO_URL must be http or https, not ${url.protocol}`);
+    }
+    grafenoUrl = rawUrl.replace(/\/+$/, "");
+  } catch {
+    problems.push(`GRAFENO_URL is not a URL: ${rawUrl}`);
+  }
+
+  const agentKey = read(env, "GRAFENO_AGENT_KEY");
+  if (agentKey === undefined) {
+    problems.push("GRAFENO_AGENT_KEY is not set (an administrator makes it: grafeno keys create)");
+  }
+
+  const namespace = read(env, "GRAFENO_NAMESPACE") ?? DEFAULTS.namespace;
+  if (!NAMESPACE.test(namespace)) {
+    problems.push(
+      `GRAFENO_NAMESPACE must be letters, digits, '.', '_' or '-', starting with a letter or digit: ${namespace}`,
+    );
+  }
+
+  const model = read(env, "AGENT_MODEL") ?? DEFAULTS.model;
+
+  if (problems.length > 0 || agentKey === undefined) throw new ConfigError(problems);
+  return { grafenoUrl, agentKey, namespace, model };
+}
+
+/** The settings as text safe to print: the key is masked. */
+export function describeConfig(config: Config): string {
+  return [
+    `server:    ${config.grafenoUrl}`,
+    `namespace: ${config.namespace}`,
+    `model:     ${config.model}`,
+    `key:       ${maskSecret(config.agentKey)}`,
+  ].join("\n");
+}
+
+/** Shows only enough of a secret to tell which one it is. */
+export function maskSecret(secret: string): string {
+  return secret.length <= 8 ? "********" : `${secret.slice(0, 4)}…${secret.slice(-2)}`;
+}
