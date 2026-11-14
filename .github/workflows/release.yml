@@ -1,0 +1,39 @@
+name: Release
+
+# A tag v<version> publishes that version to npm, only after the whole
+# pipeline (checks and evaluation) is green, and only when the tag matches
+# package.json. See RELEASING.md: publishing is a decision of the owner.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  pipeline:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: pipeline
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+      - name: The tag must match the package's version
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, package $version"; exit 1; }
+          test "$(node -p 'require("./package.json").private === true')" = "false" || { echo "package.json is private"; exit 1; }
+      - run: npm ci
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

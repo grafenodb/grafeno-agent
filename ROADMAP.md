@@ -340,6 +340,41 @@ needless (about 6 s a turn).
 **Done when** someone else can install it and use it from its
 documentation alone.
 
+**Status (2026-11-14):** done locally. Nothing is published, and there is
+no remote yet, by the user's choice.
+
+Decided with the user:
+
+- license `MIT OR Apache-2.0`;
+- an npm package (`grafeno-agent`, with a `grafeno-agent` command), still
+  `private` until the owner decides to publish;
+- no second interface for now.
+
+Done:
+
+- **Settings:** they live in a file of the user's
+  (`grafeno-agent init`; `%APPDATA%\grafeno-agent\config.env` on Windows,
+  `~/.config/grafeno-agent/config.env` elsewhere, or
+  `GRAFENO_AGENT_CONFIG`). The installed agent never reads the `.env` of
+  the project it runs in. `version` and `init` were added.
+- **Install size:** the meaning model's runtime is an optional dependency;
+  the agent falls back to words without it. The full install is about
+  500 MB.
+- **Releases:** `CHANGELOG.md`, `RELEASING.md`, and a release workflow
+  that publishes on a `v<version>` tag only after the whole pipeline is
+  green, refusing a tag that does not match the package or a package still
+  private.
+- **Documentation:** the README is rewritten for a new user, with
+  requirements, install, the key, settings, use, permissions, memory and
+  troubleshooting.
+
+Checked by following the README alone. The packed tarball was installed
+into a temporary prefix, the settings were written with `init`, the key
+was added, `check` passed while the project's own `.env` (with wrong
+values on purpose) was ignored, and a chat turn on Claude listed the
+project's files. Not checked: `npm install -g` from the registry (nothing
+is published), and CI (no remote).
+
 ## Phase 9 — Several agents
 
 - One key per agent, its writes recorded under its name.

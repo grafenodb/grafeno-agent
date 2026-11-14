@@ -1,6 +1,6 @@
 {
-  "date": "2026-11-14T15:26:24.864Z",
-  "commit": "ebd58fb+changes",
+  "date": "2026-11-14T15:36:34.125Z",
+  "commit": "ec4aa6d+changes",
   "model": "fake",
   "summary": {
     "passed": 9,
@@ -8,10 +8,10 @@
     "recall": 1,
     "needless": 0,
     "duplicatesRefused": 1,
-    "inputTokens": 1836,
+    "inputTokens": 1835,
     "outputTokens": 93,
     "cacheTokens": 0,
-    "msPerTurn": 30
+    "msPerTurn": 32
   },
   "results": [
     {
@@ -24,13 +24,13 @@
       "duplicatesRefused": 0,
       "turns": [
         {
-          "ms": 62,
+          "ms": 47,
           "inputTokens": 77,
           "outputTokens": 2,
           "cacheTokens": 0
         },
         {
-          "ms": 15,
+          "ms": 16,
           "inputTokens": 122,
           "outputTokens": 7,
           "cacheTokens": 0
@@ -47,13 +47,13 @@
       "duplicatesRefused": 1,
       "turns": [
         {
-          "ms": 39,
+          "ms": 60,
           "inputTokens": 18,
           "outputTokens": 2,
           "cacheTokens": 0
         },
         {
-          "ms": 14,
+          "ms": 30,
           "inputTokens": 122,
           "outputTokens": 5,
           "cacheTokens": 0
@@ -70,19 +70,19 @@
       "duplicatesRefused": 0,
       "turns": [
         {
-          "ms": 68,
+          "ms": 64,
           "inputTokens": 248,
           "outputTokens": 2,
           "cacheTokens": 0
         },
         {
-          "ms": 98,
+          "ms": 110,
           "inputTokens": 126,
           "outputTokens": 5,
           "cacheTokens": 0
         },
         {
-          "ms": 16,
+          "ms": 15,
           "inputTokens": 338,
           "outputTokens": 5,
           "cacheTokens": 0
@@ -99,7 +99,7 @@
       "duplicatesRefused": 0,
       "turns": [
         {
-          "ms": 15,
+          "ms": 14,
           "inputTokens": 21,
           "outputTokens": 13,
           "cacheTokens": 0
@@ -116,19 +116,19 @@
       "duplicatesRefused": 0,
       "turns": [
         {
-          "ms": 3,
+          "ms": 15,
           "inputTokens": 22,
           "outputTokens": 3,
           "cacheTokens": 0
         },
         {
-          "ms": 27,
+          "ms": 34,
           "inputTokens": 95,
           "outputTokens": 2,
           "cacheTokens": 0
         },
         {
-          "ms": 15,
+          "ms": 14,
           "inputTokens": 12,
           "outputTokens": 10,
           "cacheTokens": 0
@@ -145,7 +145,7 @@
       "duplicatesRefused": 0,
       "turns": [
         {
-          "ms": 20,
+          "ms": 19,
           "inputTokens": 90,
           "outputTokens": 2,
           "cacheTokens": 0
@@ -179,8 +179,8 @@
       "duplicatesRefused": 0,
       "turns": [
         {
-          "ms": 31,
-          "inputTokens": 406,
+          "ms": 16,
+          "inputTokens": 405,
           "outputTokens": 12,
           "cacheTokens": 0
         }
@@ -196,7 +196,7 @@
       "duplicatesRefused": 0,
       "turns": [
         {
-          "ms": 14,
+          "ms": 16,
           "inputTokens": 127,
           "outputTokens": 8,
           "cacheTokens": 0

@@ -1,11 +1,15 @@
 #!/usr/bin/env node
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Agent } from "./agent/agent.js";
 import { SYSTEM_PROMPT } from "./agent/builtin-tools.js";
 import { ToolRegistry } from "./agent/tools.js";
 import { runChat } from "./chat.js";
 import { ConfigError, describeConfig, loadConfig } from "./config.js";
-import { localEmbedder } from "./embed/local.js";
+import { LOCAL_MODELS, localEmbedder } from "./embed/local.js";
+import type { Embedder } from "./embed/types.js";
+import { initSettings, loadSettings, settingsPath } from "./settings-file.js";
 import { projectTools, toolsPrompt } from "./tools/index.js";
 import { Workspace } from "./tools/workspace.js";
 import { MemorySession } from "./memory/session.js";
@@ -17,17 +21,65 @@ import { StartupError, checkGrafeno } from "./startup.js";
 
 const USAGE = `Usage: grafeno-agent <command>
 
+Run it in the project you want help with.
+
 Commands:
-  chat    Talk with the agent (the default).
-  check   Check the settings, that Grafeno answers and that the agent's key works.
+  chat     Talk with the agent (the default).
+  init     Write the settings file to fill in (it never overwrites one).
+  check    Check the settings, that Grafeno answers and that the agent's key works.
+  version  Show the version.
   upkeep  Look after the project's memory: duplicates, contradictions, the palace's
           arrangement. Add --apply to carry out the safe fixes.`;
 
 /** Days between upkeeps before the chat suggests one. */
 const UPKEEP_EVERY_DAYS = 7;
 
+function version(): string {
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+    version: string;
+  };
+  return pkg.version;
+}
+
+function init(): number {
+  const path = settingsPath();
+  if (!initSettings(path)) {
+    console.log(`The settings file is already there: ${path}`);
+    return 0;
+  }
+  console.log(`Wrote ${path}\n`);
+  console.log(
+    "Fill in GRAFENO_AGENT_KEY there. An administrator of your Grafeno server makes the key:",
+  );
+  console.log(
+    "\n  grafeno keys create grafeno-agent --grant grafeno-agent:write --config <grafeno.toml>\n",
+  );
+  console.log("Then run: grafeno-agent check");
+  return 0;
+}
+
+/** The embedder the settings name, when it can run here. */
+async function embedderFor(name: string): Promise<Embedder | undefined> {
+  if (name !== "e5-small") return undefined;
+  try {
+    await import("@huggingface/transformers");
+  } catch {
+    console.log(
+      "Meaning is off: @huggingface/transformers is not installed, so memory works by words alone.",
+    );
+    return undefined;
+  }
+  const model = LOCAL_MODELS["e5-small"].id.split("/");
+  if (!existsSync(join(homedir(), ".cache", "grafeno-agent", "models", ...model))) {
+    console.log("The meaning model is downloaded once, on first use (about 130 MB).");
+  }
+  return localEmbedder("e5-small");
+}
+
 async function check(): Promise<number> {
   const config = loadConfig();
+  const file = settingsPath();
+  console.log(`settings:  ${file}${existsSync(file) ? "" : " (not there: grafeno-agent init)"}`);
   console.log(describeConfig(config));
   const report = await checkGrafeno(config);
   console.log(
@@ -41,17 +93,18 @@ async function chat(): Promise<number> {
   const config = loadConfig();
   await checkGrafeno(config);
   const project = detectProject(process.cwd(), config.project);
+  const embedder = await embedderFor(config.embedder);
   const memory = await MemorySession.start({
     vault: grafenoVault(config),
     project,
     knownSecrets: [config.agentKey],
-    ...(config.embedder === "e5-small" ? { embedder: localEmbedder("e5-small") } : {}),
+    ...(embedder ? { embedder } : {}),
   });
   const memoryTools = await memory.tools();
   const last = await memory.lastUpkeep();
   if (!last || Date.now() - last.getTime() > UPKEEP_EVERY_DAYS * 86_400_000) {
     const when = last ? `last ran ${last.toISOString().slice(0, 10)}` : "has not run yet";
-    console.log(`Memory upkeep ${when}: run \`npm run upkeep\`.`);
+    console.log(`Memory upkeep ${when}: run \`grafeno-agent upkeep\`.`);
   }
   console.log(
     `Project: ${project.name} (memory: palace "${project.name}" in namespace "${config.namespace}")`,
@@ -95,8 +148,9 @@ async function runUpkeep(apply: boolean): Promise<number> {
 }
 
 async function main(argv: readonly string[]): Promise<number> {
-  // Settings from `.env` when present; real environment variables win.
-  if (existsSync(".env")) process.loadEnvFile(".env");
+  // Real environment variables win over the settings file. Run from the
+  // source (development), ./.env is read too; installed, never.
+  loadSettings({ fromSource: import.meta.url.endsWith(".ts") });
 
   const command = argv[0] ?? "chat";
   switch (command) {
@@ -104,6 +158,13 @@ async function main(argv: readonly string[]): Promise<number> {
       return chat();
     case "check":
       return check();
+    case "init":
+      return init();
+    case "version":
+    case "--version":
+    case "-v":
+      console.log(version());
+      return 0;
     case "upkeep":
       return runUpkeep(argv.includes("--apply"));
     case "help":
@@ -122,7 +183,11 @@ main(process.argv.slice(2)).then(
     process.exitCode = code;
   },
   (error: unknown) => {
-    if (error instanceof ConfigError || error instanceof StartupError) {
+    if (error instanceof ConfigError) {
+      console.error(
+        `${error.message}\n\nSettings file: ${settingsPath()} (grafeno-agent init writes one to fill in).`,
+      );
+    } else if (error instanceof StartupError) {
       console.error(error.message);
     } else {
       console.error(error);

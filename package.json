@@ -1,16 +1,32 @@
 {
   "name": "grafeno-agent",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "An agent with long-term memory, built on Grafeno",
-  "license": "UNLICENSED",
+  "description": "A programming assistant with long-term memory in Grafeno, reasoning with Claude through your own Claude Code",
+  "license": "MIT OR Apache-2.0",
   "type": "module",
+  "keywords": [
+    "grafeno",
+    "agent",
+    "memory",
+    "claude-code",
+    "cli",
+    "programming-assistant"
+  ],
   "engines": {
     "node": ">=22.18"
   },
   "bin": {
     "grafeno-agent": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    ".env.example"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
@@ -26,11 +42,11 @@
     "upkeep": "tsx src/cli.ts upkeep",
     "measure:meaning": "tsx test/eval/measure-meaning.ts",
     "eval": "tsx test/eval/run-eval.ts",
-    "eval:real": "tsx test/eval/run-eval.ts --model claude-code"
+    "eval:real": "tsx test/eval/run-eval.ts --model claude-code",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@grafenodb/client": "^0.2.2",
-    "@huggingface/transformers": "^4.3.2",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "zod": "^4.6.7"
   },
@@ -43,5 +59,8 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.72.2",
     "vitest": "^4.1.12"
+  },
+  "optionalDependencies": {
+    "@huggingface/transformers": "^4.3.2"
   }
 }
