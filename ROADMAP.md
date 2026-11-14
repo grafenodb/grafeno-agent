@@ -39,10 +39,33 @@ Decide, with the user:
   subscription is used transparently, within Anthropic's terms and the
   plan's own usage limits: the agent never tries to get more usage than
   the plan gives, and never extracts or reuses Claude Code's credentials
-  in other clients. Still to confirm in phase 1: the current terms for
-  this use, and how the model's tool calls reach the agent's own tools.
-  The model interface keeps other adapters possible, but none that bills
-  per token is used unless the user decides so.
+  in other clients. The model interface keeps other adapters possible,
+  but none that bills per token is used unless the user decides so.
+
+**How the subscription is used (decided 2026-11-14):**
+
+- **Like Herdr:** the agent starts the official, unmodified `claude`
+  binary as the user, under the login the user made in Claude Code
+  itself. The agent never reads, stores or passes on Claude's
+  credentials, and offers no Claude login of its own. Anthropic's terms
+  allow a user to sign in to the unmodified binary with their own
+  subscription; they forbid apps that intermediate credentials or route
+  requests through a plan on behalf of others. For subscription use, the
+  CLI is preferred over the Agent SDK, whose overview restricts
+  claude.ai login in products built on it.
+- **The same quota:** what the agent asks of Claude counts against the
+  user's own Pro plan, exactly as if the user had asked it. When the plan's
+  limit is reached, the agent stops cleanly and says so; it never works
+  around the limit.
+- **Claude as the brain only (option A):** `claude -p` with streamed JSON,
+  no built-in tools (`--tools ""`), and only the agent's own MCP server
+  (`--mcp-config` with `--strict-mcp-config`). The agent keeps its loop,
+  its tools, its permissions and its Grafeno memory. `--bare` is not used:
+  it does not read the subscription login.
+- **Still open:** no official page says which usage pool `claude -p`
+  draws from; a separate monthly "Agent SDK credit" was reported but not
+  confirmed. Phase 1 measures it on the user's account before relying on
+  it.
 - **First interface:** the command line.
 
 Then:
