@@ -329,3 +329,33 @@ describe("several agents", () => {
     expect(answer).toContain("recorded by another agent (grafeno-agent-dev)");
   });
 });
+
+describe("rooms of the same name in several palaces", () => {
+  it("names the session's palace when the model leaves it out and the room is ambiguous", async () => {
+    const vault = new FakeVault({
+      palace_anchor: (args) =>
+        args.palace === undefined
+          ? {
+              text: 'palace_anchor failed: several palaces have a room named "General" (grafeno-agent, demo): say which with palace',
+              isError: true,
+            }
+          : ok({ anchored: true, palace: args.palace }),
+    });
+    const { session } = await start(vault);
+    const anchor = (await session.tools()).find((t) => t.name === "palace_anchor");
+    const answer = await anchor?.run({ memory: "m1", room: "General" }, context);
+    expect(answer).toContain('"palace":"demo"');
+    expect(vault.called("palace_anchor").at(-1)).toMatchObject({ room: "General", palace: "demo" });
+  });
+
+  it("leaves a palace the model named alone", async () => {
+    const vault = new FakeVault({
+      palace_anchor: () => ({ text: 'several palaces have a room named "General"', isError: true }),
+    });
+    const { session } = await start(vault);
+    const anchor = (await session.tools()).find((t) => t.name === "palace_anchor");
+    await expect(
+      anchor?.run({ memory: "m1", room: "General", palace: "other" }, context),
+    ).rejects.toThrow(/several palaces/);
+  });
+});

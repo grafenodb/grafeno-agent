@@ -385,8 +385,8 @@ is published), and CI (no remote).
 **Done when** two agents work on one task at the same time without
 undoing each other's memory.
 
-**Status (2026-11-14):** done locally, on the fake model; not yet run with
-two agents on real Claude, nor in CI (no remote).
+**Status (2026-11-14):** done, on the fake model (also in CI) and live with
+two agents on Claude Haiku against the owner's Grafeno server.
 
 Decided with the user:
 
@@ -430,3 +430,19 @@ Found, for Grafeno itself:
   (with the `supersedes` fact beside it): under `--own-only` the other
   agent cannot mark it obsolete, so `context`/`recall` could rank a memory
   with a current incoming `supersedes` lower, as a general feature.
+
+Live run (2026-11-14): two `--own-only` keys, `grafeno-agent-dev` and
+`grafeno-agent-review`, on Claude Haiku, two chats at once in a scratch
+project. One project node (they started in the same second); 14 memories,
+each under the agent that made it; review stored the new decision and
+related it with `supersedes` to dev's, which stayed as dev left it, and
+said on its own that it could not mark another agent's memory obsolete;
+dev, asked afterwards, answered with review's decision; both saved their
+checkpoints at the same moment and each gets its own back.
+
+- Fixed from it: a room named without its palace failed when several
+  palaces have one of that name (every project's palace has a "General");
+  the session now retries with its own palace.
+- Seen: models give checkpoints task names of their own, so the default
+  `<project>: work of <agent>` is seldom used; `resume` filters by agent,
+  so it does not matter.

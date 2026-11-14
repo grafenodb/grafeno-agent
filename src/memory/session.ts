@@ -47,6 +47,9 @@ const NOTHING_FOUND = /^No relevant memories found\.?$/i;
 /** How Grafeno refuses a change to what another key recorded. */
 const NOT_YOURS = /may only change what it recorded/i;
 
+/** How Grafeno refuses a room name that several palaces share. */
+const AMBIGUOUS_ROOM = /several palaces have a room named/i;
+
 /** The palace a project's memory goes in, for this agent. */
 export function palaceFor(
   project: Project,
@@ -393,7 +396,13 @@ ${this.brief}`;
       if (embedding) args.embedding = embedding;
     }
 
-    const answer = await this.options.vault.call(name, args);
+    let answer = await this.options.vault.call(name, args);
+    // A room named without its palace, and several palaces have one of that
+    // name (every project's palace has a "General"): the session's palace.
+    if (answer.isError && args.palace === undefined && AMBIGUOUS_ROOM.test(answer.text)) {
+      args.palace = this.palace;
+      answer = await this.options.vault.call(name, args);
+    }
     if (answer.isError) {
       if (NOT_YOURS.test(answer.text)) {
         throw new Error(
