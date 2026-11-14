@@ -42,6 +42,18 @@ Then check that Grafeno answers and the key works:
 npm run check
 ```
 
+## Use
+
+```bash
+npm run chat
+```
+
+Type to talk; the agent shows each tool it uses, and asks before any tool
+that changes something. `/usage` shows what the session spent and how full
+the plan's usage windows are; `/exit` or Ctrl+D leaves; Ctrl+C cancels the
+answer being written (with Claude Code, that also ends the conversation:
+the next message starts a new one, and the agent says so).
+
 ## The model
 
 The agent reasons with Claude through your own Claude Code: it starts the

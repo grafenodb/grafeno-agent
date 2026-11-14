@@ -125,6 +125,20 @@ Code, and the conversation with it.
 **Done when** the agent holds a conversation and uses a trivial tool, with
 tests on the fake model for the loop's limits and errors.
 
+**Status (2026-11-14):** done. `Agent` runs turns over the model
+interface: steps per turn (default 20), time per turn (from
+`resilient`), a token budget per session, cancelling, and starting the
+conversation again when the model lost it (it says so). `ToolRegistry` is
+the model's `ToolHost`: name, description, argument schema (checked before
+anything runs), and `writes`; a writing tool runs only when the user
+allows that call, and never when nobody can be asked. The command line
+(`grafeno-agent chat`, the default) streams the answer, shows each tool
+call, warns when a plan window is 80% used, asks before writing tools, and
+has `/usage`, `/help` and `/exit`; Ctrl+C cancels the answer. The trivial
+tool is `current_time`. Tested on the fake model, and tried by hand on
+real Claude (Haiku). A token limit inside one turn is not enforced: Claude
+Code reports usage only when the turn ends.
+
 ## Phase 3 — Memory with Grafeno
 
 - The memory tools reach the model through `@grafenodb/client`
