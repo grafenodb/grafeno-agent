@@ -340,6 +340,20 @@ with three different models and efforts). On the real Claude Code, without
 spending: architecture and backend → Opus 5.5 high, frontend → Sonnet 5.5
 medium, tests → Haiku 5.5 medium, docs → Haiku 5.5 low.
 
+**A5 done** (`worktrees.ts`, `pipeline.ts`): `WorktreeManager` gives each
+task a worktree and branch `grafeno/<run>/<task>` from the run's base
+commit, commits a worker's changes with the worker as author, merges into
+`grafeno/<run>/integration` in its own worktree (a conflict is undone and
+its files returned; a merge that fails without conflicts is an error to
+retry), checks whether a merge already happened before redoing it, and
+removes a worktree only when nothing would be lost (the branches stay for
+the user). Merges into one run and worktree creation run one at a time:
+git's own locks made parallel merges look like conflicts. `TaskPipeline`
+wraps the workers: worktree before, commit, verification hook (A7), merge as
+a recorded effect, review on conflict, cleanup at the end; without git it
+works in the project folder. 9 tests on a real temporary repository,
+including the user's uncommitted change, HEAD and branch left untouched.
+
 | Stage | What                                                                                                                          | Done when (verified by tests)                                                                                                                     |
 | ----- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A1    | Plan schema, checker (cycles, references, acceptance), planner prompt and repair loop                                         | Valid plans accepted; cyclic, dangling, unchecked plans refused with reasons; planner repairs from the problems (fake model)                      |
