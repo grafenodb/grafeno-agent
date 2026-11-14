@@ -54,6 +54,11 @@ Then:
 **Done when** the repository builds, its tests run in CI and the agent
 connects to a Grafeno server with its own key.
 
+**Status (2026-11-14):** done locally. `npm run ci` passes; `npm run check`
+and `npm run test:live` pass against the local Grafeno 0.3.0 with the
+agent's own key in namespace `grafeno-agent`. The CI workflow is written
+but has not run yet: there is no remote repository.
+
 ## Phase 1 — The model layer
 
 - One interface for every model: messages, tool calls and their results,
