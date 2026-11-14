@@ -13,9 +13,11 @@ session picks up where the last one left off.
   run `claude` once and sign in with `/login`. The agent spends that
   plan's usage, exactly as if you asked Claude Code yourself; no API key,
   no other billing.
-- **A Grafeno server** (0.3 or later) that you can reach, such as one
-  installed on this computer (`http://127.0.0.1:7810`), and **a key for the
-  agent** made by the server's administrator.
+- **Memory (Grafeno)**: nothing to install beforehand. On first run you
+  choose to **include Grafeno** (the agent downloads the official build and
+  runs it on this computer; Windows x64 and Linux), or to connect to **a
+  Grafeno server you already have** (0.3 or later), such as
+  `http://127.0.0.1:7810`, with a key its administrator made for the agent.
 
 ## Install
 
@@ -37,47 +39,49 @@ agent works without it, by words alone, if it is missing.
 
 ## Set up
 
-1. Write the settings file:
+Run `grafeno-agent` in a terminal. The first time, it asks two things:
 
-   ```bash
-   grafeno-agent init
-   ```
+1. **Where the agent keeps its memory.**
+   - **Include Grafeno** (recommended): the official build of Grafeno is
+     downloaded once, checked against its published checksum, and runs in
+     the background on `127.0.0.1:7811` (so it never meets a Grafeno of your
+     own on 7810). The agent makes its own key. Several agents share it.
+   - **Connect to a Grafeno server**: its address, the agent's key and the
+     namespace. The server's administrator makes the key:
 
-   It says where it wrote it: on Windows,
-   `%APPDATA%\grafeno-agent\config.env`; elsewhere,
-   `~/.config/grafeno-agent/config.env`. `GRAFENO_AGENT_CONFIG` points to
-   another file.
+     ```bash
+     grafeno keys create grafeno-agent --grant grafeno-agent:write --config grafeno.toml
+     ```
 
-2. Get the agent's key. The administrator of the Grafeno server makes it,
-   as an administrator (for the Windows service, in a terminal opened as
-   administrator, with `--config C:\ProgramData\Grafeno\grafeno.toml`):
+2. **The provider**: Claude, through your Claude Code. It shows whether
+   Claude Code is installed and signed in, and with which plan.
 
-   ```bash
-   grafeno keys create grafeno-agent --grant grafeno-agent:write --config grafeno.toml
-   ```
+Both are saved in the settings file: `%APPDATA%\grafeno-agent\config.env` on
+Windows, `~/.config/grafeno-agent/config.env` elsewhere, or
+`GRAFENO_AGENT_CONFIG`. Without a terminal, the same can be done with:
 
-   The secret is shown once. Put it in the settings file as
-   `GRAFENO_AGENT_KEY`. It is a secret: keep it in that file only.
+```bash
+grafeno-agent init --include-grafeno
+grafeno-agent init --grafeno-url http://127.0.0.1:7810 --key <key>
+```
 
-3. Check that Grafeno answers and the key works:
-
-   ```bash
-   grafeno-agent check
-   ```
+`grafeno-agent check` checks that Grafeno answers and the key works.
 
 ### Settings
 
-| Variable            | Default                 | What                                                |
-| ------------------- | ----------------------- | --------------------------------------------------- |
-| `GRAFENO_URL`       | `http://127.0.0.1:7810` | The Grafeno server                                  |
-| `GRAFENO_AGENT_KEY` | (required)              | The agent's key                                     |
-| `GRAFENO_NAMESPACE` | `grafeno-agent`         | Where the agent keeps its memory                    |
-| `AGENT_MODEL`       | `claude-code`           | The model (`claude-code`: your Claude subscription) |
-| `CLAUDE_MODEL`      | Claude Code's own       | `haiku`, `sonnet`, `opus`…                          |
-| `AGENT_PROJECT`     | the git repository      | The project whose memory the agent uses             |
-| `AGENT_EMBEDDER`    | `e5-small`              | Meaning for memory (a local model), or `none`       |
-| `AGENT_PALACE`      | `shared`                | `shared` with other agents, or `own` (see below)    |
-| `AGENT_SHELL`       | Git's bash on Windows   | The shell for commands, with its arguments          |
+| Variable            | Default                 | What                                                   |
+| ------------------- | ----------------------- | ------------------------------------------------------ |
+| `GRAFENO_MODE`      | `external`              | `included` (Grafeno runs with the agent) or `external` |
+| `GRAFENO_URL`       | `http://127.0.0.1:7810` | The Grafeno server, when external                      |
+| `GRAFENO_AGENT_KEY` | (required)              | The agent's key                                        |
+| `GRAFENO_NAMESPACE` | `grafeno-agent`         | Where the agent keeps its memory                       |
+| `AGENT_MODEL`       | `claude-code`           | The model (`claude-code`: your Claude subscription)    |
+| `CLAUDE_MODEL`      | Claude Code's own       | `haiku`, `sonnet`, `opus`, `fable` (set by `/models`)  |
+| `CLAUDE_EFFORT`     | the model's own         | `low` … `max` (set by `/effort`)                       |
+| `AGENT_PROJECT`     | the git repository      | The project whose memory the agent uses                |
+| `AGENT_EMBEDDER`    | `e5-small`              | Meaning for memory (a local model), or `none`          |
+| `AGENT_PALACE`      | `shared`                | `shared` with other agents, or `own` (see below)       |
+| `AGENT_SHELL`       | Git's bash on Windows   | The shell for commands, with its arguments             |
 
 Variables set in the environment win over the file. The agent never reads
 the `.env` of the folder it runs in: that belongs to your project.
@@ -91,15 +95,51 @@ cd my-project
 grafeno-agent
 ```
 
-Type to talk. The agent shows each tool it uses. In the chat:
+In a terminal it opens a full-screen interface, laid out like a desktop
+app: the conversation in the middle, the box to type in below it (type `/`
+for the commands), and a side panel with:
 
-- `/usage` shows what the session spent and how full your plan's usage
-  windows are (it warns at 80%);
-- `/help` lists the commands;
-- `/exit` or Ctrl+D leaves, saving where the session stands;
-- Ctrl+C cancels the answer being written. This also ends the conversation
-  with Claude Code: the next message starts a new one (memory remains),
-  and the agent says so.
+- **Model**: its exact name and effort ("Opus 5.5 · Medium"), the provider
+  and your plan;
+- **Context**: how full the model's context is;
+- **Plan usage**: your provider's real usage (for Claude: the session and
+  weekly limits, with when they reset), read from Claude Code itself
+  without spending any of it;
+- **This session**, **Environment** (project, git branch, changed files)
+  and **Memory** (Grafeno, palace, agent).
+
+The panel hides on narrow windows, or with Ctrl+B.
+
+| Command       | What it does                                                    |
+| ------------- | --------------------------------------------------------------- |
+| `/help`       | Commands and keys                                               |
+| `/new`        | A new conversation (the current one is kept)                    |
+| `/resume`     | Take up an earlier conversation of this project                 |
+| `/models`     | Choose the model, by its exact name                             |
+| `/effort`     | Choose how hard the model thinks (Low … Max)                    |
+| `/connect`    | The provider: Claude today, more later; whether it is signed in |
+| `/palace`     | Grafeno: included, or a server you already have                 |
+| `/usage`      | Your provider's real usage, and this session's tokens           |
+| `/status`     | Provider, Grafeno, agent, project and model                     |
+| `/memory`     | What memory brought back when the session started               |
+| `/checkpoint` | Save where the work stands, in memory                           |
+| `/upkeep`     | Report on the memory: duplicates, contradictions                |
+| `/sidebar`    | Show or hide the side panel                                     |
+| `/clear`      | Clear the conversation from the screen                          |
+| `/exit`       | Leave, saving where the session stands                          |
+
+Keys: Enter sends; `\` then Enter (or Shift+Enter) starts a new line; ↑ ↓
+go through earlier messages; Tab completes a command; PgUp/PgDn scroll the
+conversation; Ctrl+B shows or hides the panel; Esc interrupts the answer;
+Ctrl+C interrupts, or leaves.
+
+Conversations are kept on this computer (`%LOCALAPPDATA%\grafeno-agent\sessions`
+on Windows, `~/.local/state/grafeno-agent/sessions` elsewhere, or
+`GRAFENO_AGENT_DATA`), so `/resume` can take one up again: the model is
+given the earlier conversation with your next message. Changing the model
+with `/models`, or interrupting an answer, goes on the same way.
+
+Piped input, or `grafeno-agent chat --plain`, talks line by line instead.
 
 ### What it may do
 

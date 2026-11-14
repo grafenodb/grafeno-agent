@@ -28,6 +28,8 @@ export interface ClaudeCodeOptions {
   readonly command?: string;
   /** A model alias or name for Claude Code (`haiku`, `sonnet`, `opus`…). Default: its own. */
   readonly model?: string;
+  /** How hard the model thinks: `low`, `medium`, `high`, `xhigh`, `max`. Default: its own. */
+  readonly effort?: string;
   /** For tests: how to start the program. */
   readonly spawn?: typeof nodeSpawn;
 }
@@ -72,6 +74,10 @@ class ClaudeCodeConversation implements Conversation {
   #dead: ModelError | undefined;
   #stderr = "";
   #calls = 0;
+  /** The exact model last told to the agent. */
+  #reported: string | undefined;
+  /** The most context the model takes, once Claude Code said. */
+  #window: number | undefined;
 
   constructor(
     private readonly options: ClaudeCodeOptions,
@@ -115,6 +121,7 @@ class ClaudeCodeConversation implements Conversation {
       "--no-chrome",
     ];
     if (this.options.model !== undefined) args.push(`--model=${this.options.model}`);
+    if (this.options.effort !== undefined) args.push(`--effort=${this.options.effort}`);
 
     const spawn = this.options.spawn ?? nodeSpawn;
     const child = spawn(this.options.command ?? "claude", args, {
@@ -260,6 +267,25 @@ class ClaudeCodeConversation implements Conversation {
 
     switch (event.type) {
       case "assistant": {
+        const model = event.message?.model;
+        if (model !== undefined && model !== "<synthetic>" && model !== this.#reported) {
+          this.#reported = model;
+          turn.channel.push({ type: "model_info", model });
+        }
+        const usage = event.message?.usage;
+        if (usage) {
+          const used =
+            (usage.input_tokens ?? 0) +
+            (usage.cache_read_input_tokens ?? 0) +
+            (usage.cache_creation_input_tokens ?? 0);
+          if (used > 0) {
+            turn.channel.push({
+              type: "context",
+              used,
+              ...(this.#window === undefined ? {} : { window: this.#window }),
+            });
+          }
+        }
         const blocks = event.message?.content ?? [];
         for (const block of blocks) {
           if (block.type === "text" && typeof block.text === "string" && block.text !== "") {
@@ -287,6 +313,9 @@ class ClaudeCodeConversation implements Conversation {
         break;
       }
       case "result": {
+        for (const model of Object.values(event.modelUsage ?? {})) {
+          if (typeof model.contextWindow === "number") this.#window = model.contextWindow;
+        }
         this.#finish(turn, event);
         break;
       }
@@ -345,7 +374,12 @@ interface StreamEvent {
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
   };
-  message?: { content?: { type?: string; text?: string; name?: string }[] };
+  message?: {
+    model?: string;
+    usage?: StreamEvent["usage"];
+    content?: { type?: string; text?: string; name?: string }[];
+  };
+  modelUsage?: Record<string, { contextWindow?: number }>;
   rate_limit_info?: RateLimitInfo;
 }
 

@@ -15,6 +15,8 @@ export const MODEL_NAMES = ["claude-code"] as const;
 export interface CreateModelOptions extends ResilienceOptions {
   /** For `claude-code`: the Claude model alias (`haiku`, `sonnet`, `opus`…). */
   readonly claudeModel?: string;
+  /** For `claude-code`: the effort (`low`, `medium`, `high`, `xhigh`, `max`). */
+  readonly claudeEffort?: string;
 }
 
 /** The model named by the settings, with time limits and retries. */
@@ -22,9 +24,10 @@ export function createModel(name: string, options: CreateModelOptions = {}): Mod
   switch (name) {
     case "claude-code":
       return resilient(
-        new ClaudeCodeModel(
-          options.claudeModel === undefined ? {} : { model: options.claudeModel },
-        ),
+        new ClaudeCodeModel({
+          ...(options.claudeModel === undefined ? {} : { model: options.claudeModel }),
+          ...(options.claudeEffort === undefined ? {} : { effort: options.claudeEffort }),
+        }),
         options,
       );
     default:

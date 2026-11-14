@@ -6,6 +6,7 @@ const KEY = "gk_test_0123456789abcdef";
 describe("loadConfig", () => {
   it("uses the defaults when only the key is set", () => {
     expect(loadConfig({ GRAFENO_AGENT_KEY: KEY })).toEqual({
+      grafenoMode: "external",
       grafenoUrl: DEFAULTS.grafenoUrl,
       agentKey: KEY,
       namespace: DEFAULTS.namespace,
@@ -34,6 +35,7 @@ describe("loadConfig", () => {
       claudeModel: "sonnet",
       project: "demo",
       embedder: "none",
+      grafenoMode: "external",
       palace: "shared",
     });
   });
@@ -89,6 +91,21 @@ describe("AGENT_PALACE", () => {
     expect(loadConfig({ GRAFENO_AGENT_KEY: KEY, AGENT_PALACE: "own" }).palace).toBe("own");
     expect(() => loadConfig({ GRAFENO_AGENT_KEY: KEY, AGENT_PALACE: "mine" })).toThrow(
       /AGENT_PALACE must be one of shared, own/,
+    );
+  });
+});
+
+describe("GRAFENO_MODE", () => {
+  it("uses the included Grafeno's address when included, whatever GRAFENO_URL says", () => {
+    const config = loadConfig({
+      GRAFENO_AGENT_KEY: KEY,
+      GRAFENO_MODE: "included",
+      GRAFENO_URL: "http://elsewhere:7810",
+    });
+    expect(config.grafenoMode).toBe("included");
+    expect(config.grafenoUrl).toBe("http://127.0.0.1:7811");
+    expect(() => loadConfig({ GRAFENO_AGENT_KEY: KEY, GRAFENO_MODE: "cloud" })).toThrow(
+      /GRAFENO_MODE must be one of external, included/,
     );
   });
 });

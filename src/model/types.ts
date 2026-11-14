@@ -85,6 +85,13 @@ export type ModelEvent =
   | { readonly type: "text"; readonly text: string }
   | { readonly type: "tool_call"; readonly call: ToolCall }
   | { readonly type: "tool_result"; readonly callId: string; readonly outcome: ToolOutcome }
+  /** The exact model answering (such as `claude-opus-5-5`), when the model tells. */
+  | { readonly type: "model_info"; readonly model: string }
+  /**
+   * How full the model's context is: the tokens of the latest request, and
+   * the most it takes, when the model tells.
+   */
+  | { readonly type: "context"; readonly used: number; readonly window?: number }
   /** Where the plan's usage windows stand, when the model tells. */
   | { readonly type: "usage_windows"; readonly windows: readonly UsageWindow[] }
   /** The last event of a turn that ended well. */

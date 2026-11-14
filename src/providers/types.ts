@@ -1,0 +1,72 @@
+import type { Model } from "../model/index.js";
+
+/** Whether a provider can be used here, and as whom. */
+export interface ProviderStatus {
+  /** Its program or access is there. */
+  readonly installed: boolean;
+  /** It is signed in (or has its key). */
+  readonly signedIn: boolean;
+  /** Its version, when it has one. */
+  readonly version?: string;
+  /** The plan or account kind, such as "Claude Pro" (never an e-mail or a secret). */
+  readonly plan?: string;
+  /** What to do next, or what is fine, in a sentence. */
+  readonly detail: string;
+}
+
+/** A model a provider offers. */
+export interface ModelOption {
+  /** What the provider is given to use it (an alias or an id). */
+  readonly id: string;
+  /** Its exact name, as the provider writes it: "Opus 5.5". */
+  readonly name: string;
+  readonly hint?: string;
+}
+
+/** One of the provider's usage limits, as it reports it. */
+export interface UsageLimit {
+  /** "Session", "Week (all models)"… */
+  readonly label: string;
+  /** Used, from 0 to 1. */
+  readonly used: number;
+  /** When it starts again, as the provider says it. */
+  readonly resets?: string;
+}
+
+/** The provider's real usage of the user's plan or account. */
+export interface ProviderUsage {
+  readonly limits: readonly UsageLimit[];
+  /** A line about how it is paid for, when the provider says. */
+  readonly note?: string;
+  readonly at: Date;
+}
+
+/** Which model, and how hard it thinks. */
+export interface ModelChoice {
+  /** Undefined: the provider's own default. */
+  readonly model?: string;
+  readonly effort?: string;
+}
+
+/**
+ * Where the reasoning comes from: Claude through Claude Code today, other
+ * providers later. Each says whether it is ready, which models and efforts
+ * it has, and how much of the user's plan is used.
+ */
+export interface Provider {
+  readonly id: string;
+  /** "Claude (Claude Code)". */
+  readonly name: string;
+  status(): Promise<ProviderStatus>;
+  models(): Promise<readonly ModelOption[]>;
+  /** The efforts it takes, lowest first; empty when it has none. */
+  efforts(model?: string): readonly string[];
+  /** The real usage of the plan, without spending any; undefined when it cannot say. */
+  usage(): Promise<ProviderUsage | undefined>;
+  /** The exact name of a model from its id: `claude-opus-5-5` → "Opus 5.5". */
+  modelName(id: string): string;
+  /** A model to reason with. */
+  create(choice: ModelChoice): Model;
+  /** How to sign in, in a sentence. */
+  readonly signIn: string;
+}

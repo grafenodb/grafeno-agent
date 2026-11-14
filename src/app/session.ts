@@ -1,0 +1,325 @@
+import { Agent, type AgentTurn } from "../agent/agent.js";
+import { SYSTEM_PROMPT } from "../agent/builtin-tools.js";
+import { ToolRegistry, type Approver, type Tool } from "../agent/tools.js";
+import type { Config } from "../config.js";
+import type { Embedder } from "../embed/types.js";
+import { detectProject } from "../memory/project.js";
+import { MemorySession, type AgentName } from "../memory/session.js";
+import { grafenoVault, type Vault } from "../memory/vault.js";
+import { ClaudeCodeProvider } from "../providers/claude-code.js";
+import type { ModelChoice, Provider } from "../providers/types.js";
+import {
+  ModelError,
+  NO_USAGE,
+  type ModelErrorKind,
+  type Model,
+  type ModelEvent,
+  type ToolCall,
+  type Usage,
+  type UsageWindow,
+} from "../model/index.js";
+import {
+  previousConversation,
+  SessionStore,
+  type SavedSession,
+  type SessionSummary,
+} from "../sessions/store.js";
+import { projectTools, toolsPrompt } from "../tools/index.js";
+import { Workspace } from "../tools/workspace.js";
+
+/** Errors after which the model's conversation is gone. */
+const ENDS_CONVERSATION = new Set<ModelErrorKind>(["cancelled", "lost", "timeout"]);
+
+export interface AgentSessionOptions {
+  readonly config: Config;
+  /** Who the agent is in Grafeno, when it said. */
+  readonly identity?: AgentName;
+  readonly embedder?: Embedder;
+  /** Where conversations are kept. Default: the user's data folder. */
+  readonly store?: SessionStore;
+  /** The folder the agent runs in. Default: the current one. */
+  readonly cwd?: string;
+  /** Where the reasoning comes from. Default: Claude through Claude Code. */
+  readonly provider?: Provider;
+  /** Makes the model for a choice; for tests. Default: the provider's. */
+  readonly makeModel?: (choice: ModelChoice) => Model;
+  /** The vault; for tests. Default: Grafeno at the settings' server. */
+  readonly vault?: Vault;
+  /** The project's tools; for tests. Default: files, commands and the web. */
+  readonly tools?: (workspace: Workspace) => Tool[];
+}
+
+export interface SendOptions {
+  readonly signal?: AbortSignal;
+  readonly onEvent?: (event: ModelEvent) => void;
+}
+
+/**
+ * One run of the agent on a project, behind whatever interface shows it:
+ * memory, tools, the model (which may change), and the conversation, which
+ * is kept on disk so that it can be taken up again.
+ */
+export class AgentSession {
+  /** Asked before a tool that needs permission runs; the interface sets it. */
+  approve: Approver = () => false;
+
+  #agent: Agent | undefined;
+  #choice: ModelChoice;
+  /** The exact model answering, once the provider said. */
+  #modelId: string | undefined;
+  #context: { used: number; window?: number } | undefined;
+  #provider: Provider | undefined;
+  #record: SavedSession;
+  /** The earlier conversation, to give the model with the next message. */
+  #carry: string | undefined;
+  #spentBefore: Usage = NO_USAGE;
+  #turnsBefore = 0;
+  #windows: readonly UsageWindow[] = [];
+
+  private constructor(
+    private readonly options: AgentSessionOptions,
+    readonly memory: MemorySession,
+    readonly vault: Vault,
+    readonly workspace: Workspace,
+    private readonly memoryTools: readonly Tool[],
+    readonly store: SessionStore,
+  ) {
+    const { claudeModel, claudeEffort } = options.config;
+    this.#choice = {
+      ...(claudeModel === undefined ? {} : { model: claudeModel }),
+      ...(claudeEffort === undefined ? {} : { effort: claudeEffort }),
+    };
+    this.#record = store.create(memory.project.name, this.model);
+  }
+
+  static async start(options: AgentSessionOptions): Promise<AgentSession> {
+    const { config } = options;
+    const project = detectProject(options.cwd ?? process.cwd(), config.project);
+    const vault = options.vault ?? grafenoVault(config);
+    const memory = await MemorySession.start({
+      vault,
+      project,
+      palace: config.palace,
+      knownSecrets: [config.agentKey],
+      ...(options.identity ? { agent: options.identity } : {}),
+      ...(options.embedder ? { embedder: options.embedder } : {}),
+    });
+    const workspace = new Workspace(project.path ?? options.cwd ?? process.cwd());
+    const store = options.store ?? new SessionStore(undefined, [config.agentKey]);
+    return new AgentSession(options, memory, vault, workspace, await memory.tools(), store);
+  }
+
+  get config(): Config {
+    return this.options.config;
+  }
+
+  get identity(): AgentName | undefined {
+    return this.options.identity;
+  }
+
+  /** Where the reasoning comes from. */
+  get provider(): Provider {
+    this.#provider ??= this.options.provider ?? new ClaudeCodeProvider();
+    return this.#provider;
+  }
+
+  /** The model asked for (`default` when the provider's own). */
+  get model(): string {
+    return this.#choice.model ?? "default";
+  }
+
+  /** The effort asked for; undefined when the provider's own. */
+  get effort(): string | undefined {
+    return this.#choice.effort;
+  }
+
+  /** The exact model that answered last (such as `claude-opus-5-5`), once known. */
+  get modelId(): string | undefined {
+    return this.#modelId;
+  }
+
+  /** How full the model's context was at the last request, when the provider said. */
+  get context(): { used: number; window?: number } | undefined {
+    return this.#context;
+  }
+
+  /** The conversation being had (and kept). */
+  get conversation(): SavedSession {
+    return this.#record;
+  }
+
+  get usage(): Usage {
+    const now = this.#agent?.usage ?? NO_USAGE;
+    return {
+      inputTokens: this.#spentBefore.inputTokens + now.inputTokens,
+      outputTokens: this.#spentBefore.outputTokens + now.outputTokens,
+      cacheReadTokens: this.#spentBefore.cacheReadTokens + now.cacheReadTokens,
+      cacheWriteTokens: this.#spentBefore.cacheWriteTokens + now.cacheWriteTokens,
+    };
+  }
+
+  get windows(): readonly UsageWindow[] {
+    return this.#agent?.windows.length ? this.#agent.windows : this.#windows;
+  }
+
+  /** Turns this run of the agent took, across models and conversations. */
+  get turns(): number {
+    return this.#turnsBefore + (this.#agent?.turns ?? 0);
+  }
+
+  /** Sends a message; what happens is kept in the conversation as it comes. */
+  async send(text: string, options: SendOptions = {}): Promise<AgentTurn> {
+    const agent = this.#ensureAgent();
+    this.store.add(this.#record, { kind: "user", text });
+    const carried = this.#carry;
+    this.#carry = undefined;
+    const calls = new Map<string, ToolCall>();
+    try {
+      const turn = await agent.turn(carried === undefined ? text : `${carried}\n\n${text}`, {
+        ...(options.signal ? { signal: options.signal } : {}),
+        onEvent: (event) => {
+          if (event.type === "tool_call") calls.set(event.call.id, event.call);
+          if (event.type === "model_info") this.#modelId = event.model;
+          if (event.type === "context") {
+            this.#context = {
+              used: event.used,
+              ...((event.window ?? this.#context?.window) === undefined
+                ? {}
+                : { window: event.window ?? this.#context?.window }),
+            } as { used: number; window?: number };
+          }
+          if (event.type === "tool_result") {
+            const call = calls.get(event.callId);
+            this.store.add(this.#record, {
+              kind: "tool",
+              text: `${call ? describeCall(call) : "tool"}\n${event.outcome.content.slice(0, 2000)}`,
+              ...(event.outcome.isError === true ? { failed: true } : {}),
+            });
+          }
+          options.onEvent?.(event);
+        },
+      });
+      if (turn.result.text !== "") {
+        this.store.add(this.#record, { kind: "assistant", text: turn.result.text });
+      }
+      return turn;
+    } catch (error) {
+      if (error instanceof ModelError && ENDS_CONVERSATION.has(error.kind)) {
+        // The model's conversation ended with this turn (a cancel stops it):
+        // the next one starts from what was said, as data.
+        this.#carry = previousConversation(this.#record.entries) || undefined;
+      } else if (carried !== undefined) {
+        // Not given to the model after all: give it the conversation next time.
+        this.#carry = carried;
+      }
+      throw error;
+    }
+  }
+
+  /** Changes the model; the conversation goes on with the new one. */
+  async setModel(alias: string): Promise<void> {
+    const next = alias === "default" ? undefined : alias;
+    if (next === this.#choice.model) return;
+    await this.#switch({
+      ...withoutModel(this.#choice),
+      ...(next === undefined ? {} : { model: next }),
+    });
+    this.#modelId = undefined;
+    this.#record.model = this.model;
+  }
+
+  /** Changes how hard the model thinks; `default` is the provider's own. */
+  async setEffort(effort: string): Promise<void> {
+    const next = effort === "default" ? undefined : effort;
+    if (next === this.#choice.effort) return;
+    const rest: ModelChoice = this.#choice.model === undefined ? {} : { model: this.#choice.model };
+    await this.#switch({ ...rest, ...(next === undefined ? {} : { effort: next }) });
+  }
+
+  async #switch(choice: ModelChoice): Promise<void> {
+    await this.#dropAgent();
+    this.#choice = choice;
+    this.#carry = previousConversation(this.#record.entries) || undefined;
+  }
+
+  /** Starts a new conversation; the current one stays kept. */
+  async newConversation(): Promise<void> {
+    await this.#dropAgent();
+    this.#record = this.store.create(this.memory.project.name, this.model);
+    this.#carry = undefined;
+  }
+
+  /** The project's kept conversations, the latest first. */
+  conversations(): SessionSummary[] {
+    return this.store.list(this.memory.project.name);
+  }
+
+  /** Takes up a kept conversation: the model gets it with the next message. */
+  async resume(id: string): Promise<SavedSession | undefined> {
+    const saved = this.store.load(this.memory.project.name, id);
+    if (saved === undefined) return undefined;
+    await this.#dropAgent();
+    this.#record = saved;
+    this.#carry = previousConversation(saved.entries) || undefined;
+    return saved;
+  }
+
+  /** Asks the model to save a checkpoint of where the work stands. */
+  async checkpoint(options: SendOptions = {}): Promise<AgentTurn> {
+    return this.send(this.memory.endOfSession(), options);
+  }
+
+  async close(): Promise<void> {
+    await this.#dropAgent();
+  }
+
+  #ensureAgent(): Agent {
+    if (this.#agent) return this.#agent;
+    const { config } = this.options;
+    const model = this.options.makeModel?.(this.#choice) ?? this.provider.create(this.#choice);
+    const own =
+      this.options.tools?.(this.workspace) ??
+      projectTools(this.workspace, { hiddenEnv: ["GRAFENO_AGENT_KEY"] });
+    this.#agent = new Agent({
+      model,
+      system: `${this.memory.systemPrompt(SYSTEM_PROMPT)}\n\n${toolsPrompt(this.workspace)}`,
+      tools: new ToolRegistry(
+        [...own, ...this.memoryTools],
+        (call, tool, decision) => this.approve(call, tool, decision),
+        { redact: [config.agentKey] },
+      ),
+      prepare: (message) => this.memory.beforeTurn(message),
+    });
+    return this.#agent;
+  }
+
+  async #dropAgent(): Promise<void> {
+    const agent = this.#agent;
+    if (!agent) return;
+    this.#agent = undefined;
+    this.#spentBefore = {
+      inputTokens: this.#spentBefore.inputTokens + agent.usage.inputTokens,
+      outputTokens: this.#spentBefore.outputTokens + agent.usage.outputTokens,
+      cacheReadTokens: this.#spentBefore.cacheReadTokens + agent.usage.cacheReadTokens,
+      cacheWriteTokens: this.#spentBefore.cacheWriteTokens + agent.usage.cacheWriteTokens,
+    };
+    this.#turnsBefore += agent.turns;
+    if (agent.windows.length > 0) this.#windows = agent.windows;
+    await agent.close();
+  }
+}
+
+function withoutModel(choice: ModelChoice): ModelChoice {
+  return choice.effort === undefined ? {} : { effort: choice.effort };
+}
+
+/** What a tool call is about, in a few words: `read_file parser.js`. */
+export function describeCall(call: Pick<ToolCall, "name" | "input">): string {
+  const input = call.input;
+  const main = ["path", "command", "url", "pattern", "query", "name", "summary", "text", "id"]
+    .map((key) => input[key])
+    .find((value): value is string => typeof value === "string" && value !== "");
+  const detail = main ?? (Object.keys(input).length > 0 ? JSON.stringify(input) : "");
+  const short = detail.replace(/\s+/g, " ");
+  return `${call.name}${short ? ` ${short.length > 80 ? `${short.slice(0, 79)}…` : short}` : ""}`;
+}

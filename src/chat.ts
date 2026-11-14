@@ -159,7 +159,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
   }
 }
 
-function describeError(error: unknown): string {
+export function describeError(error: unknown): string {
   if (error instanceof ModelError) {
     switch (error.kind) {
       case "usage_limit":
@@ -186,13 +186,13 @@ function describeUsage(agent: Agent): string {
   return lines.join("\n");
 }
 
-function describeWindow(window: UsageWindow): string {
+export function describeWindow(window: UsageWindow): string {
   const used = window.utilization === undefined ? "?" : percent(window.utilization);
   const resets = window.resetsAt ? `; resets ${window.resetsAt.toISOString()}` : "";
   return `Plan window ${window.name}: ${used} used${window.allowed ? "" : " (limit reached)"}${resets}`;
 }
 
-function percent(fraction: number): string {
+export function percent(fraction: number): string {
   return `${String(Math.round(fraction * 100))}%`;
 }
 

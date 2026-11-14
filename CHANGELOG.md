@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- **Include Grafeno**: on first run (or `init --include-grafeno`) the agent
+  can download the official Grafeno build, checked against its checksum,
+  and run it in the background on 127.0.0.1:7811, making its own key; or
+  connect to a Grafeno server the user has (`GRAFENO_MODE`).
+- **Providers**: a provider interface, with Claude (Claude Code) first.
+  `/connect` shows whether it is installed and signed in, and the plan;
+  `/palace` changes the Grafeno connection; `/models` lists models by
+  their exact names and `/effort` sets the effort (`CLAUDE_EFFORT`), both
+  remembered. `/usage` and the panel show the provider's real usage
+  (Claude Code's own `/usage`, which spends nothing).
+- **Desktop layout**: full screen, the conversation in the middle with its
+  own scrolling, a side panel (model, context, plan usage, session,
+  environment, memory) and Grafeno's mark drawn for the terminal.
+- **Terminal interface**: in a terminal, the chat opens a full interface
+  (Ink): the conversation with answers rendered from markdown, the tools
+  used, a box with the slash commands offered as one types, permission
+  prompts, and a status line (agent, project, model, tokens, plan window).
+  Commands: `/help`, `/new`, `/resume`, `/models`, `/connect`, `/usage`,
+  `/status`, `/memory`, `/checkpoint`, `/upkeep`, `/clear`, `/exit`.
+  Conversations are kept on disk per project; resuming one, changing the
+  model or interrupting gives the model the earlier conversation as data,
+  so it works the same with any model. `--plain` (or piped input) keeps
+  the line-by-line chat.
 - **Several agents**: an agent's name is its Grafeno key's name (read with
   `whoami`), recorded on everything it writes. With `--own-only` keys,
   agents share a project's memory but change only what they recorded; a

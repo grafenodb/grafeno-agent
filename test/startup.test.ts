@@ -8,6 +8,7 @@ const config: Config = {
   namespace: "agent",
   model: "fake",
   embedder: "none",
+  grafenoMode: "external",
   palace: "shared",
 };
 

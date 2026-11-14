@@ -115,6 +115,7 @@ async function main(): Promise<void> {
         namespace: NAMESPACE,
         model: "fake",
         embedder: "none",
+        grafenoMode: "external",
         palace: "shared",
       };
       const me = await new Grafeno({ url: grafeno.url, token: secret }).whoami();
@@ -133,6 +134,7 @@ async function main(): Promise<void> {
       namespace: NAMESPACE,
       model: "fake",
       embedder: "none",
+      grafenoMode: "external",
       palace: "shared",
     });
 

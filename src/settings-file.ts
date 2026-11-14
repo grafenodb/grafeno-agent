@@ -49,6 +49,31 @@ export function settingsTemplate(): string {
 }
 
 /**
+ * Sets these variables in the settings file, keeping every other line (and
+ * the comments) as it was; a variable not there yet is added at the end. The
+ * file is made from the template when missing, readable by its owner only.
+ */
+export function updateSettings(
+  values: Readonly<Record<string, string>>,
+  path = settingsPath(),
+): void {
+  const text = existsSync(path) ? readFileSync(path, "utf8") : settingsTemplate();
+  const pending = new Map(Object.entries(values));
+  const lines = text.split(/\r?\n/).map((line) => {
+    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
+    const name = match?.[1];
+    if (name === undefined || !pending.has(name)) return line;
+    const value = pending.get(name) ?? "";
+    pending.delete(name);
+    return `${name}=${value}`;
+  });
+  while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  for (const [name, value] of pending) lines.push(`${name}=${value}`);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${lines.join("\n")}\n`, { mode: 0o600 });
+}
+
+/**
  * Writes the settings file from the template, readable by its owner only.
  * Returns false when one is already there (it is never overwritten).
  */

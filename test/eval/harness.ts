@@ -105,6 +105,7 @@ export async function runScenario(
     namespace: "eval",
     model: "eval",
     embedder: "none",
+    grafenoMode: "external",
     palace: "shared",
   };
   const real = grafenoVault(config);

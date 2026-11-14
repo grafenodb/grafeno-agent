@@ -1,5 +1,10 @@
 /** The agent's settings, read from the environment. */
 export interface Config {
+  /**
+   * `included`: the Grafeno the agent installs and runs itself (on
+   * 127.0.0.1:7811); `external`: a Grafeno server at `grafenoUrl`.
+   */
+  readonly grafenoMode: GrafenoMode;
   /** Base URL of the Grafeno server, without a trailing slash. */
   readonly grafenoUrl: string;
   /** The agent's own Grafeno key. A secret: never log or store it. */
@@ -10,6 +15,8 @@ export interface Config {
   readonly model: string;
   /** For `claude-code`: the Claude model alias (`haiku`, `sonnet`, `opus`…); unset: Claude Code's own. */
   readonly claudeModel?: string;
+  /** For `claude-code`: the effort (`low` … `max`); unset: Claude Code's own. */
+  readonly claudeEffort?: string;
   /** The project the agent works on; unset: the git repository (or folder) it runs in. */
   readonly project?: string;
   /** The embedder for meaning (`e5-small`, local), or `none` for words alone. */
@@ -25,6 +32,16 @@ export interface Config {
 /** The palaces `AGENT_PALACE` may name. */
 export const PALACES = ["shared", "own"] as const;
 export type PalaceMode = (typeof PALACES)[number];
+
+/** Where Grafeno comes from, as `GRAFENO_MODE` names it. */
+export const GRAFENO_MODES = ["external", "included"] as const;
+export type GrafenoMode = (typeof GRAFENO_MODES)[number];
+
+/** Where the included Grafeno listens. */
+export const INCLUDED_GRAFENO_URL = "http://127.0.0.1:7811";
+
+/** The efforts `CLAUDE_EFFORT` may name. */
+const EFFORTS: readonly string[] = ["low", "medium", "high", "xhigh", "max"];
 
 /** The embedders `AGENT_EMBEDDER` may name. */
 export const EMBEDDERS = ["e5-small", "none"] as const;
@@ -58,7 +75,12 @@ function read(env: Record<string, string | undefined>, name: string): string | u
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   const problems: string[] = [];
 
-  const rawUrl = read(env, "GRAFENO_URL") ?? DEFAULTS.grafenoUrl;
+  const mode = read(env, "GRAFENO_MODE") ?? "external";
+  if (!(GRAFENO_MODES as readonly string[]).includes(mode)) {
+    problems.push(`GRAFENO_MODE must be one of ${GRAFENO_MODES.join(", ")}: ${mode}`);
+  }
+  const rawUrl =
+    mode === "included" ? INCLUDED_GRAFENO_URL : (read(env, "GRAFENO_URL") ?? DEFAULTS.grafenoUrl);
   let grafenoUrl = rawUrl;
   try {
     const url = new URL(rawUrl);
@@ -84,6 +106,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 
   const model = read(env, "AGENT_MODEL") ?? DEFAULTS.model;
   const claudeModel = read(env, "CLAUDE_MODEL");
+  const claudeEffort = read(env, "CLAUDE_EFFORT");
+  if (claudeEffort !== undefined && !EFFORTS.includes(claudeEffort)) {
+    problems.push(`CLAUDE_EFFORT must be one of ${EFFORTS.join(", ")}: ${claudeEffort}`);
+  }
   const project = read(env, "AGENT_PROJECT");
   const embedder = read(env, "AGENT_EMBEDDER") ?? DEFAULTS.embedder;
   if (!(EMBEDDERS as readonly string[]).includes(embedder)) {
@@ -97,6 +123,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 
   if (problems.length > 0 || agentKey === undefined) throw new ConfigError(problems);
   return {
+    grafenoMode: mode as GrafenoMode,
     grafenoUrl,
     agentKey,
     namespace,
@@ -104,6 +131,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     embedder,
     palace: palace as PalaceMode,
     ...(claudeModel === undefined ? {} : { claudeModel }),
+    ...(claudeEffort === undefined ? {} : { claudeEffort }),
     ...(project === undefined ? {} : { project }),
   };
 }
@@ -111,7 +139,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 /** The settings as text safe to print: the key is masked. */
 export function describeConfig(config: Config): string {
   return [
-    `server:    ${config.grafenoUrl}`,
+    `server:    ${config.grafenoUrl}${config.grafenoMode === "included" ? " (included)" : ""}`,
     `namespace: ${config.namespace}`,
     `model:     ${config.model}${config.claudeModel === undefined ? "" : ` (${config.claudeModel})`}`,
     `meaning:   ${config.embedder}`,
