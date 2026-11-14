@@ -77,7 +77,7 @@ grafeno-agent init --grafeno-url http://127.0.0.1:7810 --key <key>
 | `GRAFENO_NAMESPACE` | `grafeno-agent`         | Where the agent keeps its memory                       |
 | `AGENT_MODEL`       | `claude-code`           | The model (`claude-code`: your Claude subscription)    |
 | `CLAUDE_MODEL`      | Claude Code's own       | `haiku`, `sonnet`, `opus`, `fable` (set by `/models`)  |
-| `CLAUDE_EFFORT`     | the model's own         | `low` … `max` (set by `/effort`)                       |
+| `AGENT_EFFORT`      | the model's own         | `low` … `max` (set by `/effort`)                       |
 | `AGENT_PROJECT`     | the git repository      | The project whose memory the agent uses                |
 | `AGENT_EMBEDDER`    | `e5-small`              | Meaning for memory (a local model), or `none`          |
 | `AGENT_PALACE`      | `shared`                | `shared` with other agents, or `own` (see below)       |
@@ -130,8 +130,12 @@ The panel hides on narrow windows, or with Ctrl+B.
 
 Keys: Enter sends; `\` then Enter (or Shift+Enter) starts a new line; ↑ ↓
 go through earlier messages; Tab completes a command; PgUp/PgDn scroll the
-conversation; Ctrl+B shows or hides the panel; Esc interrupts the answer;
-Ctrl+C interrupts, or leaves.
+conversation (so does the mouse wheel; select text with Shift and the
+mouse, or set `GRAFENO_AGENT_MOUSE=off`); Ctrl+B shows or hides the panel;
+Esc interrupts the answer; Ctrl+C interrupts, or leaves.
+
+Under each message, a line shows what memory brought to it: how many
+memories and facts, and their names.
 
 Conversations are kept on this computer (`%LOCALAPPDATA%\grafeno-agent\sessions`
 on Windows, `~/.local/state/grafeno-agent/sessions` elsewhere, or
@@ -256,6 +260,7 @@ npm run test:live:model  # the model contract on real Claude (spends a little pl
 npm run eval             # the evaluation suite on the fake model (needs `grafeno` or GRAFENO_BIN)
 npm run eval:real        # the same suite on Claude Haiku (spends plan usage)
 npm run eval:agents      # several agents on one task at once (fake model, Grafeno in memory)
+npm run preview:tui -- 100 30   # the interface at a size, with a scripted answer (no plan usage)
 npm run measure:meaning  # what meaning adds to recall
 ```
 

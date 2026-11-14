@@ -71,6 +71,7 @@ interface Setup {
   readonly tools?: Tool[];
   readonly needsSetup?: boolean;
   readonly start?: () => Promise<AgentSession>;
+  readonly vault?: FakeVault;
 }
 
 function services(setup: Setup): AppServices {
@@ -95,7 +96,7 @@ function services(setup: Setup): AppServices {
         AgentSession.start({
           config,
           identity: { name: "grafeno-agent-test", ownOnly: true },
-          vault: new FakeVault(),
+          vault: setup.vault ?? new FakeVault(),
           store: new SessionStore(join(dir, "sessions"), [config.agentKey]),
           cwd: dir,
           provider,
@@ -318,6 +319,25 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     await type(app, "hello");
     app.stdin.write(ENTER);
     await until(() => seen(app).includes("Not connected yet"), "the refusal");
+    app.unmount();
+  });
+});
+
+describe("memory in the interface", { timeout: 20_000 }, () => {
+  it("shows what memory recalled for a message, under it and in the panel", async () => {
+    const vault = new FakeVault({
+      context: () => ({
+        text: "## Memory\n[1] Parser design (Decision; stated)\nThe parser uses a Pratt design.\n\n## Facts\n- “Parser design” part_of demo",
+        isError: false,
+      }),
+    });
+    const app = render(<App services={services({ turns: [[{ say: "Pratt it is." }]], vault })} />);
+    await ready(app);
+    await type(app, "which parser design?");
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("Pratt it is."), "the answer");
+    expect(seen(app)).toContain("1 recalled, 1 fact · Parser design");
+    await until(() => now(app).includes("last message: 1 recalled"), "the panel");
     app.unmount();
   });
 });

@@ -151,3 +151,66 @@ describe("describeCall", () => {
     expect(describeCall({ name: "current_time", input: {} })).toBe("current_time");
   });
 });
+
+describe("markdown tables", () => {
+  it("reads a table into its header and rows, and shares the width by what each column holds", async () => {
+    const { blocks, cells, columnWidths } = await import("../../src/tui/markdown.js");
+    const read = blocks(
+      "Intro\n\n| File | Purpose |\n|---|:---:|\n| app.tsx | The interface |\n| a\\|b | pipes |\n\nafter",
+    );
+    const table = read.find((b) => b.kind === "table");
+    expect(table).toEqual({
+      kind: "table",
+      header: ["File", "Purpose"],
+      rows: [
+        ["app.tsx", "The interface"],
+        ["a|b", "pipes"],
+      ],
+    });
+    expect(cells("| x | y |")).toEqual(["x", "y"]);
+    // Short columns as wide as what they hold; the last takes the rest.
+    expect(columnWidths(["Language", "Year"], [["TypeScript", "2012, and a long note"]])).toEqual([
+      12,
+      undefined,
+    ]);
+    // A line of pipes that is not a table stays text.
+    expect(blocks("| not a table |").map((b) => b.kind)).toEqual(["text"]);
+  });
+});
+
+describe("what memory recalled", () => {
+  it("reads Grafeno's context: each memory by name, and how many facts", async () => {
+    const { readRecall } = await import("../../src/memory/session.js");
+    const text = [
+      "## Memory",
+      "[1] Phase 9 agent identity decisions (Decision; stated)",
+      "Grafeno Agent phase 9: an agent's name is its key's name…",
+      "",
+      "[2] (Checkpoint)",
+      "Checkpoint of Grafeno Agent roadmap: phases 0 to 8 are done",
+      "",
+      "## Facts",
+      "- “Phase 9…” depends_on “Phase 8…”",
+      "- “Phase 9…” part_of Grafeno Agent project",
+    ].join("\n");
+    expect(readRecall(text)).toEqual({
+      memories: [
+        "Phase 9 agent identity decisions",
+        "Checkpoint of Grafeno Agent roadmap: phases 0 to 8 are done",
+      ],
+      facts: 2,
+    });
+    expect(readRecall("")).toEqual({ memories: [], facts: 0 });
+  });
+});
+
+describe("the mouse wheel", () => {
+  it("reads wheel notches from the terminal's mouse reports, and nothing else", async () => {
+    const { wheelTurns } = await import("../../src/tui/mouse.js");
+    const ESC = String.fromCharCode(27);
+    expect(wheelTurns(`${ESC}[<64;10;5M${ESC}[<64;10;5M${ESC}[<65;10;5M`)).toEqual([1, 1, -1]);
+    // A click is not the wheel; typed text has no reports.
+    expect(wheelTurns(`${ESC}[<0;10;5M${ESC}[<0;10;5m`)).toEqual([]);
+    expect(wheelTurns("hello")).toEqual([]);
+  });
+});

@@ -4,7 +4,7 @@ import { ToolRegistry, type Approver, type Tool } from "../agent/tools.js";
 import type { Config } from "../config.js";
 import type { Embedder } from "../embed/types.js";
 import { detectProject } from "../memory/project.js";
-import { MemorySession, type AgentName } from "../memory/session.js";
+import { MemorySession, type AgentName, type Recall } from "../memory/session.js";
 import { grafenoVault, type Vault } from "../memory/vault.js";
 import { ClaudeCodeProvider } from "../providers/claude-code.js";
 import type { ModelChoice, Provider } from "../providers/types.js";
@@ -52,6 +52,8 @@ export interface AgentSessionOptions {
 export interface SendOptions {
   readonly signal?: AbortSignal;
   readonly onEvent?: (event: ModelEvent) => void;
+  /** Told what memory brought to the message, before the model sees it. */
+  readonly onMemory?: (recall: Recall) => void;
 }
 
 /**
@@ -69,6 +71,7 @@ export class AgentSession {
   #modelId: string | undefined;
   #context: { used: number; window?: number } | undefined;
   #provider: Provider | undefined;
+  #onMemory: ((recall: Recall) => void) | undefined;
   #record: SavedSession;
   /** The earlier conversation, to give the model with the next message. */
   #carry: string | undefined;
@@ -170,6 +173,7 @@ export class AgentSession {
   /** Sends a message; what happens is kept in the conversation as it comes. */
   async send(text: string, options: SendOptions = {}): Promise<AgentTurn> {
     const agent = this.#ensureAgent();
+    this.#onMemory = options.onMemory;
     this.store.add(this.#record, { kind: "user", text });
     const carried = this.#carry;
     this.#carry = undefined;
@@ -288,7 +292,11 @@ export class AgentSession {
         (call, tool, decision) => this.approve(call, tool, decision),
         { redact: [config.agentKey] },
       ),
-      prepare: (message) => this.memory.beforeTurn(message),
+      prepare: async (message) => {
+        const prepared = await this.memory.beforeTurn(message);
+        this.#onMemory?.(this.memory.lastRecall);
+        return prepared;
+      },
     });
     return this.#agent;
   }

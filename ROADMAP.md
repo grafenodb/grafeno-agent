@@ -446,3 +446,9 @@ checkpoints at the same moment and each gets its own back.
 - Seen: models give checkpoints task names of their own, so the default
   `<project>: work of <agent>` is seldom used; `resume` filters by agent,
   so it does not matter.
+
+Found in use (2026-11-14), for Grafeno itself: `context` searches the whole
+namespace, so a project's session can be given another project's memories
+(the live two-agent test project came back when asking about this one).
+`context` and `recall` taking a `palace` to stay in (as `palace_walk` does,
+but with meaning) would let each project's memory stay its own.

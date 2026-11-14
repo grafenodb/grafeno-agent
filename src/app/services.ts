@@ -184,7 +184,7 @@ export function realServices(version: string): AppServices {
           : { CLAUDE_MODEL: choice.model === "default" ? "" : choice.model }),
         ...(choice.effort === undefined
           ? {}
-          : { CLAUDE_EFFORT: choice.effort === "default" ? "" : choice.effort }),
+          : { AGENT_EFFORT: choice.effort === "default" ? "" : choice.effort }),
       });
     },
     async upkeep(session: AgentSession) {

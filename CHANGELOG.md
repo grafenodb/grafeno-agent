@@ -9,9 +9,23 @@
 - **Providers**: a provider interface, with Claude (Claude Code) first.
   `/connect` shows whether it is installed and signed in, and the plan;
   `/palace` changes the Grafeno connection; `/models` lists models by
-  their exact names and `/effort` sets the effort (`CLAUDE_EFFORT`), both
+  their exact names and `/effort` sets the effort (`AGENT_EFFORT`), both
   remembered. `/usage` and the panel show the provider's real usage
   (Claude Code's own `/usage`, which spends nothing).
+- **Memory you can see**: under each message, a line says what memory
+  brought to it (how many memories and facts, and their names); the side
+  panel keeps it for the last message.
+- **Mouse wheel**: it scrolls the conversation (the terminal's mouse
+  reports are read; Shift and the mouse select text;
+  `GRAFENO_AGENT_MOUSE=off` leaves the mouse to the terminal). `/usage`
+  puts each reset on its own line.
+- **From real use**: markdown tables are drawn (short columns whole, the
+  last one wraps); the context bar shows the model's capacity once Claude
+  Code tells it; usage bars line up; the header and footer shorten
+  instead of wrapping; a compact start screen in short windows; the side
+  panel clips instead of squashing lines. The effort setting is now
+  `AGENT_EFFORT` (Claude Code sets `CLAUDE_EFFORT` for its own children).
+  `npm run preview:tui` shows the layout at any size without plan usage.
 - **Desktop layout**: full screen, the conversation in the middle with its
   own scrolling, a side panel (model, context, plan usage, session,
   environment, memory) and Grafeno's mark drawn for the terminal.

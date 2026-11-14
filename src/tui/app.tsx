@@ -6,6 +6,7 @@ import { describeCall, type AgentSession } from "../app/session.js";
 import { describeError } from "../chat.js";
 import type { ToolCall } from "../model/index.js";
 import type { ModelOption, ProviderStatus, ProviderUsage } from "../providers/types.js";
+import type { Recall } from "../memory/session.js";
 import type { Entry } from "../sessions/store.js";
 import { COMMANDS, parseCommand } from "./commands.js";
 import {
@@ -20,6 +21,7 @@ import {
 } from "./labels.js";
 import { Glyph, Logo } from "./logo.js";
 import { Markdown } from "./markdown.js";
+import { useWheel } from "./mouse.js";
 import { PalacePanel } from "./palace.js";
 import { Picker, type PickerItem } from "./picker.js";
 import { Prompt } from "./prompt.js";
@@ -51,6 +53,7 @@ type Item =
       readonly detail?: string;
     }
   | { readonly id: number; readonly kind: "notice"; readonly text: string; readonly tone: Tone }
+  | { readonly id: number; readonly kind: "memory"; readonly recall: Recall }
   | {
       readonly id: number;
       readonly kind: "block";
@@ -94,6 +97,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
   const [usage, setUsage] = useState<ProviderUsage | undefined>(undefined);
   const [models, setModels] = useState<readonly ModelOption[]>([]);
   const [environment, setEnvironment] = useState<Environment>({});
+  const [recall, setRecall] = useState<Recall | undefined>(undefined);
   const [sidebarOn, setSidebarOn] = useState(true);
   const [scroll, setScroll] = useState(0);
   const [, setTick] = useState(0);
@@ -188,6 +192,10 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
       try {
         const turn = await active.send(text, {
           signal: controller.signal,
+          onMemory: (recall) => {
+            setRecall(recall);
+            if (shown !== undefined) push({ kind: "memory", recall });
+          },
           onEvent: (event) => {
             switch (event.type) {
               case "text":
@@ -392,6 +400,11 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
     [session, services, provider, models, usage, status, runTurn, push, notice, leave],
   );
 
+  const onWheel = useCallback((direction: number) => {
+    setScroll((s) => Math.max(0, s + direction * 3));
+  }, []);
+  useWheel(onWheel);
+
   useInput((input, key) => {
     if (approval) {
       if (input === "y" || input === "Y" || input === "s") {
@@ -468,7 +481,13 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
 
   return (
     <Box flexDirection="column" height={rows} width={columns}>
-      <Header session={session} models={models} grafeno={grafeno.mode} busy={busy !== undefined} />
+      <Header
+        session={session}
+        models={models}
+        grafeno={grafeno.mode}
+        busy={busy !== undefined}
+        narrow={!showSidebar}
+      />
       <Box flexDirection="row" flexGrow={1}>
         <Box flexDirection="column" flexGrow={1} paddingX={1}>
           <Viewport scroll={scroll} onClamp={setScroll}>
@@ -477,6 +496,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
                 version={services.version}
                 ready={session !== undefined}
                 starting={phase === "starting"}
+                compact={rows < 34}
               />
             )}
             {items.map((item) => (
@@ -639,6 +659,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
             usage={usage}
             models={models}
             environment={environment}
+            recall={recall}
           />
         )}
       </Box>
@@ -683,29 +704,35 @@ function Header({
   models,
   grafeno,
   busy,
+  narrow,
 }: {
   readonly session: AgentSession | undefined;
   readonly models: readonly ModelOption[];
   readonly grafeno: "included" | "external";
   readonly busy: boolean;
+  readonly narrow: boolean;
 }): ReactNode {
   return (
-    <Box paddingX={1} justifyContent="space-between" flexShrink={0}>
-      <Text>
-        <Glyph /> <Text bold>Grafeno Agent</Text>
-        {session && <Text dimColor> · {session.memory.project.name}</Text>}
-        {session && session.conversation.title !== "" && (
-          <Text dimColor> · {session.conversation.title}</Text>
-        )}
-      </Text>
-      <Text>
+    <Box paddingX={1} justifyContent="space-between" flexShrink={0} gap={2}>
+      <Box flexShrink={1} flexGrow={1} minWidth={10}>
+        <Text wrap="truncate-end">
+          <Glyph /> <Text bold>Grafeno Agent</Text>
+          {session && <Text dimColor> · {session.memory.project.name}</Text>}
+          {session && session.conversation.title !== "" && (
+            <Text dimColor> · {session.conversation.title}</Text>
+          )}
+        </Text>
+      </Box>
+      <Text wrap="truncate-end">
         {busy && <Spinner />}
         {session ? (
           <Text color={theme.brand}> {modelLine(session, models)}</Text>
         ) : (
           <Text dimColor> not connected</Text>
         )}
-        <Text dimColor> · {grafeno === "included" ? "Grafeno included" : "Grafeno server"}</Text>
+        {!narrow && (
+          <Text dimColor> · {grafeno === "included" ? "Grafeno included" : "Grafeno server"}</Text>
+        )}
       </Text>
     </Box>
   );
@@ -715,15 +742,32 @@ function Home({
   version,
   ready,
   starting,
+  compact,
 }: {
   readonly version: string;
   readonly ready: boolean;
   readonly starting: boolean;
+  /** A short window: the mark in one line, not drawn whole. */
+  readonly compact: boolean;
 }): ReactNode {
   return (
-    <Box flexDirection="column" alignItems="center" marginTop={2}>
-      <Logo version={version} tagline="A programming assistant with long-term memory." />
-      <Box marginTop={2} flexDirection="column">
+    <Box flexDirection="column" alignItems="center" marginTop={compact ? 1 : 2}>
+      {compact ? (
+        <Box flexDirection="column" alignItems="center">
+          <Text>
+            <Glyph />{" "}
+            <Text bold color={theme.brand}>
+              G R A F E N O
+            </Text>{" "}
+            <Text bold>Agent</Text>
+            <Text dimColor> v{version}</Text>
+          </Text>
+          <Text dimColor>A programming assistant with long-term memory.</Text>
+        </Box>
+      ) : (
+        <Logo version={version} tagline="A programming assistant with long-term memory." />
+      )}
+      <Box marginTop={compact ? 1 : 2} flexDirection="column">
         {ready ? (
           <>
             <Tip keys="/models" text="choose the model · /effort how hard it thinks" />
@@ -763,12 +807,16 @@ function Footer({
 }): ReactNode {
   const limit = usage?.limits[0];
   return (
-    <Box paddingX={1} justifyContent="space-between" flexShrink={0}>
-      <Text dimColor>
-        enter send · / commands · pgup/pgdn scroll · ctrl+b panel · esc interrupt
-      </Text>
+    <Box paddingX={1} justifyContent="space-between" flexShrink={0} gap={2}>
+      <Box flexShrink={1} minWidth={10}>
+        <Text dimColor wrap="truncate-end">
+          {narrow
+            ? "/ commands · pgup/pgdn · esc stop"
+            : "enter send · / commands · pgup/pgdn scroll · ctrl+b panel · esc interrupt"}
+        </Text>
+      </Box>
       {narrow && session && (
-        <Text>
+        <Text wrap="truncate-start">
           <Text color={theme.brand}>{modelLine(session, models)}</Text>
           {limit && (
             <Text color={theme[usageTone(limit.used)]}>
@@ -819,6 +867,8 @@ function ItemView({ item }: { readonly item: Item }): ReactNode {
           )}
         </Box>
       );
+    case "memory":
+      return <MemoryLine recall={item.recall} />;
     case "notice": {
       const color = {
         info: theme.muted,
@@ -853,6 +903,32 @@ function ItemView({ item }: { readonly item: Item }): ReactNode {
         </Box>
       );
   }
+}
+
+/** What memory brought to a message, in a line under it. */
+function MemoryLine({ recall }: { readonly recall: Recall }): ReactNode {
+  const count = recall.memories.length;
+  if (count === 0 && recall.facts === 0) {
+    return (
+      <Box paddingLeft={2}>
+        <Text color={theme.border}>◇ memory · nothing relevant yet</Text>
+      </Box>
+    );
+  }
+  const names = recall.memories.slice(0, 3).join(" · ");
+  return (
+    <Box paddingLeft={2}>
+      <Text wrap="truncate-end">
+        <Text color={theme.brand}>◆ memory</Text>
+        <Text dimColor>
+          {" "}
+          · {String(count)} recalled
+          {recall.facts > 0 ? `, ${String(recall.facts)} fact${recall.facts === 1 ? "" : "s"}` : ""}
+          {names !== "" ? ` · ${names}${count > 3 ? " …" : ""}` : ""}
+        </Text>
+      </Text>
+    </Box>
+  );
 }
 
 function Working({ label, hint }: { readonly label: string; readonly hint: string }): ReactNode {
@@ -913,7 +989,8 @@ function helpLines(): string[] {
     "  \\ then enter    new line (or shift+enter)",
     "  ↑ ↓             earlier messages; in a list, move",
     "  tab             complete a command",
-    "  pgup / pgdn     scroll the conversation",
+    "  pgup / pgdn     scroll the conversation (or the mouse wheel)",
+    "  shift + mouse   select text to copy",
     "  ctrl+b          show or hide the side panel",
     "  esc             interrupt the answer",
     "  ctrl+c          interrupt, or leave",
@@ -931,8 +1008,9 @@ function usageLines(
       const cells = bar(limit.used, 20);
       const resets = shortResets(limit.resets);
       lines.push(
-        `  ${limit.label.padEnd(20)} ${cells.filled}${cells.empty} ${String(Math.round(limit.used * 100)).padStart(3)}%${resets ? `  resets ${resets}` : ""}`,
+        `  ${limit.label.padEnd(20)} ${cells.filled}${cells.empty} ${String(Math.round(limit.used * 100)).padStart(3)}%`,
       );
+      if (resets) lines.push(`  ${" ".repeat(20)} resets ${resets}`);
     }
     lines.push(`  (as the provider reports it, ${ago(usage.at)})`);
   } else {
@@ -941,7 +1019,7 @@ function usageLines(
   const u = session.usage;
   lines.push(
     "",
-    `This session: ${String(session.turns)} turns`,
+    `This session: ${String(session.turns)} turn${session.turns === 1 ? "" : "s"}`,
     `  input ${compact(u.inputTokens)} · cache ${compact(u.cacheReadTokens)} read, ${compact(u.cacheWriteTokens)} written · output ${compact(u.outputTokens)}`,
   );
   if (session.context) {

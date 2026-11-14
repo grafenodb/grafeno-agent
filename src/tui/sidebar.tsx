@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import type { ReactNode } from "react";
 import type { Environment } from "../app/environment.js";
 import type { GrafenoInfo } from "../app/services.js";
+import type { Recall } from "../memory/session.js";
 import type { AgentSession } from "../app/session.js";
 import type { ModelOption, ProviderStatus, ProviderUsage } from "../providers/types.js";
 import { ago, bar, compact, modelLine, shortPath, shortResets, usageTone } from "./labels.js";
@@ -16,6 +17,8 @@ export interface SidebarProps {
   readonly usage: ProviderUsage | undefined;
   readonly models: readonly ModelOption[];
   readonly environment: Environment;
+  /** What memory brought to the last message. */
+  readonly recall?: Recall | undefined;
 }
 
 /** The side panel: the model, how full its context is, the plan's real usage, where the agent works and its memory. */
@@ -27,6 +30,7 @@ export function Sidebar(props: SidebarProps): ReactNode {
       flexDirection="column"
       width={width}
       flexShrink={0}
+      overflow="hidden"
       borderStyle="single"
       borderTop={false}
       borderRight={false}
@@ -59,12 +63,14 @@ export function Sidebar(props: SidebarProps): ReactNode {
       </Section>
 
       <Section title="Context">
-        {session?.context ? (
+        {session?.context?.window ? (
           <Meter
-            used={session.context.window ? session.context.used / session.context.window : 0}
+            used={session.context.used / session.context.window}
             width={inner}
-            label={`${compact(session.context.used)}${session.context.window ? ` / ${compact(session.context.window)}` : ""} tokens`}
+            label={`${compact(session.context.used)} / ${compact(session.context.window)} ${String(Math.round((session.context.used / session.context.window) * 100))}%`}
           />
+        ) : session?.context ? (
+          <Text>{compact(session.context.used)} tokens</Text>
         ) : (
           <Text dimColor>after the first answer</Text>
         )}
@@ -140,6 +146,15 @@ export function Sidebar(props: SidebarProps): ReactNode {
               palace {session.memory.palace}
               {session.memory.palace === session.memory.project.name ? " (shared)" : ""}
             </Text>
+            {props.recall !== undefined && (
+              <Text>
+                <Text color={theme.brand}>◆</Text> last message:{" "}
+                <Text bold>{String(props.recall.memories.length)}</Text> recalled
+                {props.recall.facts > 0
+                  ? `, ${String(props.recall.facts)} fact${props.recall.facts === 1 ? "" : "s"}`
+                  : ""}
+              </Text>
+            )}
             <Text dimColor>
               agent {session.identity?.name ?? "unnamed"}
               {session.identity?.ownOnly ? " · own-only" : ""}
@@ -163,7 +178,7 @@ function Section({
   readonly children: ReactNode;
 }): ReactNode {
   return (
-    <Box flexDirection="column" marginTop={1}>
+    <Box flexDirection="column" marginTop={1} flexShrink={0}>
       <Text>
         <Text bold color={theme.accent}>
           {title.toUpperCase()}
@@ -175,6 +190,12 @@ function Section({
   );
 }
 
+/** "Session 91%" → ["Session", "91%"]; "17.6k / 200k tokens" stays whole on the right. */
+function splitLabel(label: string): [string, string] {
+  const percent = /^(.*)\s(\d+%)$/.exec(label);
+  return percent ? [percent[1] ?? "", percent[2] ?? ""] : ["", label];
+}
+
 function Meter({
   used,
   width,
@@ -184,13 +205,21 @@ function Meter({
   readonly width: number;
   readonly label: string;
 }): ReactNode {
-  const cells = bar(used, Math.max(6, Math.min(16, width - label.length - 1)));
+  const cells = bar(used, Math.max(6, width));
   const tone = usageTone(used);
+  const [name, value] = splitLabel(label);
   return (
-    <Text>
-      <Text color={theme[tone]}>{cells.filled}</Text>
-      <Text color={theme.border}>{cells.empty}</Text>
-      <Text> {label}</Text>
-    </Text>
+    <Box flexDirection="column">
+      <Box justifyContent="space-between" width={width}>
+        <Text>{name}</Text>
+        <Text color={theme[tone]} bold>
+          {value}
+        </Text>
+      </Box>
+      <Text>
+        <Text color={theme[tone]}>{cells.filled}</Text>
+        <Text color={theme.border}>{cells.empty}</Text>
+      </Text>
+    </Box>
   );
 }

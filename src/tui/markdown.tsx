@@ -54,6 +54,7 @@ type Block =
     }
   | { readonly kind: "quote"; readonly text: string }
   | { readonly kind: "code"; readonly lang: string; readonly lines: string[] }
+  | { readonly kind: "table"; readonly header: string[]; readonly rows: string[][] }
   | { readonly kind: "rule" }
   | { readonly kind: "blank" }
   | { readonly kind: "text"; readonly text: string };
@@ -70,6 +71,15 @@ export function blocks(text: string): Block[] {
       i++;
       while (i < lines.length && !/^\s*```/.test(lines[i] ?? "")) code.push(lines[i++] ?? "");
       out.push({ kind: "code", lang: fence[1] ?? "", lines: code });
+      continue;
+    }
+    if (isRow(line) && isRule(lines[i + 1] ?? "")) {
+      const header = cells(line);
+      const rows: string[][] = [];
+      i += 2;
+      while (i < lines.length && isRow(lines[i] ?? "")) rows.push(cells(lines[i++] ?? ""));
+      i--;
+      out.push({ kind: "table", header, rows });
       continue;
     }
     const heading = /^#{1,6}\s+(.*)$/.exec(line);
@@ -100,6 +110,84 @@ export function blocks(text: string): Block[] {
   }
   // No runs of blank lines.
   return out.filter((block, index) => block.kind !== "blank" || out[index - 1]?.kind !== "blank");
+}
+
+function isRow(line: string): boolean {
+  return /^\s*\|.*\|\s*$/.test(line);
+}
+
+function isRule(line: string): boolean {
+  return /^\s*\|?(\s*:?-{3,}:?\s*\|)+\s*(:?-{3,}:?\s*)?\|?\s*$/.test(line);
+}
+
+/** The cells of a table row: `| a | b |` → ["a", "b"]. */
+export function cells(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split(/(?<!\\)\|/)
+    .map((cell) => cell.trim().replace(/\\\|/g, "|"));
+}
+
+/**
+ * Each column's width in characters, by what it holds, except the last,
+ * which takes the rest of the line (undefined): short columns stay whole,
+ * and the long text wraps in the last one.
+ */
+export function columnWidths(
+  header: readonly string[],
+  rows: readonly (readonly string[])[],
+): (number | undefined)[] {
+  const cap = header.length > 3 ? 24 : 32;
+  return header.map((title, column) => {
+    if (column === header.length - 1) return undefined;
+    const longest = Math.max(title.length, ...rows.map((row) => (row[column] ?? "").length), 3);
+    return Math.min(cap, longest) + 2;
+  });
+}
+
+function Table({
+  header,
+  rows,
+}: {
+  readonly header: readonly string[];
+  readonly rows: readonly (readonly string[])[];
+}): ReactNode {
+  const widths = columnWidths(header, rows);
+  const row = (values: readonly string[], key: string | number, bold = false) => (
+    <Box key={key} flexDirection="row">
+      {widths.map((width, column) => (
+        <Box
+          key={column}
+          paddingRight={1}
+          {...(width === undefined ? { flexGrow: 1, flexBasis: 0 } : { width, flexShrink: 0 })}
+        >
+          {bold ? (
+            <Text bold color={theme.brand}>
+              {values[column] ?? ""}
+            </Text>
+          ) : (
+            <Inline line={values[column] ?? ""} />
+          )}
+        </Box>
+      ))}
+    </Box>
+  );
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={theme.border} paddingX={1}>
+      <Box
+        borderStyle="single"
+        borderTop={false}
+        borderLeft={false}
+        borderRight={false}
+        borderColor={theme.border}
+      >
+        {row(header, "header", true)}
+      </Box>
+      {rows.map((values, index) => row(values, index))}
+    </Box>
+  );
 }
 
 /** A model's answer, in the terminal. */
@@ -150,6 +238,8 @@ export function Markdown({ text }: { readonly text: string }): ReactNode {
                 ))}
               </Box>
             );
+          case "table":
+            return <Table key={index} header={block.header} rows={block.rows} />;
           case "rule":
             return (
               <Text key={index} color={theme.border}>

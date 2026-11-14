@@ -40,7 +40,7 @@ export type GrafenoMode = (typeof GRAFENO_MODES)[number];
 /** Where the included Grafeno listens. */
 export const INCLUDED_GRAFENO_URL = "http://127.0.0.1:7811";
 
-/** The efforts `CLAUDE_EFFORT` may name. */
+/** The efforts `AGENT_EFFORT` may name. */
 const EFFORTS: readonly string[] = ["low", "medium", "high", "xhigh", "max"];
 
 /** The embedders `AGENT_EMBEDDER` may name. */
@@ -106,9 +106,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 
   const model = read(env, "AGENT_MODEL") ?? DEFAULTS.model;
   const claudeModel = read(env, "CLAUDE_MODEL");
-  const claudeEffort = read(env, "CLAUDE_EFFORT");
+  const claudeEffort = read(env, "AGENT_EFFORT");
   if (claudeEffort !== undefined && !EFFORTS.includes(claudeEffort)) {
-    problems.push(`CLAUDE_EFFORT must be one of ${EFFORTS.join(", ")}: ${claudeEffort}`);
+    problems.push(`AGENT_EFFORT must be one of ${EFFORTS.join(", ")}: ${claudeEffort}`);
   }
   const project = read(env, "AGENT_PROJECT");
   const embedder = read(env, "AGENT_EMBEDDER") ?? DEFAULTS.embedder;

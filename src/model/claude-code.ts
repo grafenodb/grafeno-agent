@@ -78,6 +78,8 @@ class ClaudeCodeConversation implements Conversation {
   #reported: string | undefined;
   /** The most context the model takes, once Claude Code said. */
   #window: number | undefined;
+  /** The tokens of the latest request. */
+  #used = 0;
 
   constructor(
     private readonly options: ClaudeCodeOptions,
@@ -279,6 +281,7 @@ class ClaudeCodeConversation implements Conversation {
             (usage.cache_read_input_tokens ?? 0) +
             (usage.cache_creation_input_tokens ?? 0);
           if (used > 0) {
+            this.#used = used;
             turn.channel.push({
               type: "context",
               used,
@@ -313,8 +316,13 @@ class ClaudeCodeConversation implements Conversation {
         break;
       }
       case "result": {
+        const known = this.#window;
         for (const model of Object.values(event.modelUsage ?? {})) {
           if (typeof model.contextWindow === "number") this.#window = model.contextWindow;
+        }
+        // The most the model takes is told only at the end: tell it now.
+        if (this.#window !== undefined && this.#window !== known && this.#used > 0) {
+          turn.channel.push({ type: "context", used: this.#used, window: this.#window });
         }
         this.#finish(turn, event);
         break;

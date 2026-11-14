@@ -264,6 +264,7 @@ ${this.brief}`;
 
   /** The message, with what memory knows about it in front, as data. */
   async beforeTurn(message: string): Promise<string> {
+    this.lastRecall = { memories: [], facts: 0 };
     let answer: VaultAnswer;
     try {
       const embedding = await this.#embed(message, "query");
@@ -277,8 +278,12 @@ ${this.brief}`;
     }
     const text = answer.text.trim();
     if (answer.isError || text === "" || NOTHING_FOUND.test(text)) return message;
+    this.lastRecall = readRecall(text);
     return `<memory>\n${text}\n</memory>\n\n${message}`;
   }
+
+  /** What memory gave the model with the last message. */
+  lastRecall: Recall = { memories: [], facts: 0 };
 
   /**
    * The vector of a text, or nothing when there is no embedder or it
@@ -425,6 +430,38 @@ ${this.brief}`;
     }
     return answer.text;
   }
+}
+
+/** What memory brought to a message: the memories by name, and how many facts. */
+export interface Recall {
+  readonly memories: readonly string[];
+  readonly facts: number;
+}
+
+/**
+ * Reads Grafeno's context text: `[1] Name (Decision; verified)` heads each
+ * memory (an unnamed one shows its first words), and the lines under
+ * "## Facts" are its facts.
+ */
+export function readRecall(text: string): Recall {
+  const memories: string[] = [];
+  let facts = 0;
+  let inFacts = false;
+  const lines = text.split("\n");
+  for (const [index, line] of lines.entries()) {
+    if (/^##\s+Facts/i.test(line)) inFacts = true;
+    else if (/^##\s/.test(line)) inFacts = false;
+    else if (inFacts && /^\s*-\s/.test(line)) facts++;
+    else if (!inFacts) {
+      const head = /^\[\d+\]\s*(.*)$/.exec(line);
+      if (head) {
+        const named = (head[1] ?? "").replace(/\s*\([^)]*\)\s*$/, "").trim();
+        const next = (lines[index + 1] ?? "").trim();
+        memories.push(named !== "" ? named : next.slice(0, 60) || (head[1] ?? "memory"));
+      }
+    }
+  }
+  return { memories, facts };
 }
 
 /** Where in the room a memory of these labels goes. */
