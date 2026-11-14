@@ -6,6 +6,10 @@ import { ToolRegistry } from "./agent/tools.js";
 import { runChat } from "./chat.js";
 import { ConfigError, describeConfig, loadConfig } from "./config.js";
 import { localEmbedder } from "./embed/local.js";
+import { defaultShell, runCommandTool } from "./tools/command.js";
+import { fileTools } from "./tools/files.js";
+import { webFetchTool } from "./tools/web.js";
+import { Workspace } from "./tools/workspace.js";
 import { MemorySession } from "./memory/session.js";
 import { detectProject } from "./memory/project.js";
 import { describeUpkeep, upkeep } from "./memory/upkeep.js";
@@ -58,6 +62,18 @@ async function chat(): Promise<number> {
   const model = createModel(config.model, {
     ...(config.claudeModel === undefined ? {} : { claudeModel: config.claudeModel }),
   });
+  const workspace = new Workspace(project.path ?? process.cwd());
+  const ownTools = [
+    currentTimeTool(),
+    ...fileTools(workspace),
+    runCommandTool(workspace, { shell: defaultShell(), hiddenEnv: ["GRAFENO_AGENT_KEY"] }),
+    webFetchTool(),
+  ];
+  const system = `${memory.systemPrompt(SYSTEM_PROMPT)}
+
+## Your tools
+
+Your file and command tools work in the project folder ${workspace.root}; paths are relative to it. (The folder the model program itself runs in is a private temporary one: ignore it.) Files of secrets (.env, keys, credentials) are never read or written. Writing a file, editing one, running a command that changes anything and fetching a web page all ask the user first; say briefly why before you do them.`;
   await runChat({
     input: process.stdin,
     output: process.stdout,
@@ -65,8 +81,10 @@ async function chat(): Promise<number> {
     makeAgent: (approve) =>
       new Agent({
         model,
-        system: memory.systemPrompt(SYSTEM_PROMPT),
-        tools: new ToolRegistry([currentTimeTool(), ...memoryTools], approve),
+        system,
+        tools: new ToolRegistry([...ownTools, ...memoryTools], approve, {
+          redact: [config.agentKey],
+        }),
         prepare: (message) => memory.beforeTurn(message),
       }),
   });

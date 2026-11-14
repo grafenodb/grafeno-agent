@@ -258,6 +258,33 @@ administrator.
 **Done when** each tool has tests, and every writing tool asks before it
 acts.
 
+**Status (2026-11-14):** done. Each call gets a permission (`free`, `ask`
+or `never`, with a reason) from its tool's rule; `ToolRegistry` asks the
+user for `ask`, refuses `never` whatever is said, and removes the agent's
+key from everything a tool returns. Tools (`src/tools/`), in the project
+folder only (paths, and links, may not lead out of it):
+
+- `read_file`, `list_files`, `search_files`: free; files of secrets
+  (`.env` and its variants except `.env.example`, keys, credentials,
+  `.ssh`) are never read, listed or searched; dependencies and builds are
+  skipped.
+- `write_file`, `edit_file`: ask, showing what changes; never on secrets
+  or git's own files.
+- `run_command`: free for commands that only read and stand alone (`git
+status`, `git diff`, `git log`, `ls`...); ask for any other; never for
+  raised privileges, deleting everything, forced pushes, running what is
+  downloaded, files of secrets, or the environment (which holds the
+  agent's key, hidden from commands anyway). It stops the whole process
+  tree on timeout or cancel. The shell is Git's bash on Windows, or
+  `AGENT_SHELL`.
+- `web_fetch`: ask; never for this computer or its network, credentials in
+  the URL, or redirects followed by itself.
+
+What tools return is marked as data, not instructions. Each tool has
+tests (166 in all); on real Claude the agent read a file, edited it and
+ran a test with permission, and did not try `.env`. These rules are a
+guard, not a sandbox: an allowed command runs with the user's rights.
+
 ## Phase 7 — Evaluation
 
 - Scripted conversations with expected outcomes, run in CI on the fake

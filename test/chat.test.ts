@@ -59,7 +59,7 @@ describe("runChat", () => {
       [[{ call: "write_note", input: { text: "x" } }, { say: (c) => c.results[0]?.content ?? "" }]],
       ["note it", "n"],
     );
-    expect(printed).toContain('write_note wants to run with {"text":"x"}');
+    expect(printed).toContain('The agent wants to write_note with {"text":"x"}');
     expect(printed).toContain("Allow it? [y/N]");
     expect(printed).toContain("did not allow");
   });

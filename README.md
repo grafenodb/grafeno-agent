@@ -62,6 +62,24 @@ the plan's usage windows are; `/exit` or Ctrl+D leaves; Ctrl+C cancels the
 answer being written (with Claude Code, that also ends the conversation:
 the next message starts a new one, and the agent says so).
 
+Run it from the project you want help with: its tools work in that
+folder (the git repository it is in).
+
+| Tool                                      | Permission                                                       |
+| ----------------------------------------- | ---------------------------------------------------------------- |
+| `read_file`, `list_files`, `search_files` | runs freely                                                      |
+| `write_file`, `edit_file`                 | asks, showing the change                                         |
+| `run_command`                             | runs freely when it only reads (`git status`...); asks otherwise |
+| `web_fetch`                               | asks                                                             |
+| memory tools                              | run freely (the memory is the agent's own)                       |
+
+Never allowed, whatever the answer: leaving the project folder, files of
+secrets (`.env`, keys, credentials), raised privileges, deleting
+everything, forced pushes, running code downloaded from the internet, and
+fetching addresses of this computer or its network. These rules guard
+against mistakes; they are not a sandbox: a command you allow runs with
+your rights. Commands run in Git's bash on Windows, or in `AGENT_SHELL`.
+
 ## Memory
 
 What the agent knows lives in Grafeno, in its namespace, one palace per

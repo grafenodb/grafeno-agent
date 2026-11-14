@@ -53,8 +53,12 @@ export async function runChat(options: ChatOptions): Promise<void> {
     return next.done === true ? undefined : next.value;
   }
 
-  const approve: Approver = async (call) => {
-    write(`\n  ? ${call.name} wants to run with ${JSON.stringify(call.input)}\n`);
+  const approve: Approver = async (call, tool, decision) => {
+    const what = tool.describe
+      ? tool.describe(call.input)
+      : `${call.name} with ${JSON.stringify(call.input)}`;
+    const why = decision.reason ? ` (${decision.reason})` : "";
+    write(`\n  ? The agent wants to ${what}\n    It needs your permission${why}.\n`);
     const answer = await readLine("    Allow it? [y/N] ");
     return /^(y|yes|s|si|sí)$/i.test(answer?.trim() ?? "");
   };
