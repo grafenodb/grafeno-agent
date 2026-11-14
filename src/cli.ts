@@ -1,14 +1,12 @@
 #!/usr/bin/env node
 import { existsSync } from "node:fs";
 import { Agent } from "./agent/agent.js";
-import { SYSTEM_PROMPT, currentTimeTool } from "./agent/builtin-tools.js";
+import { SYSTEM_PROMPT } from "./agent/builtin-tools.js";
 import { ToolRegistry } from "./agent/tools.js";
 import { runChat } from "./chat.js";
 import { ConfigError, describeConfig, loadConfig } from "./config.js";
 import { localEmbedder } from "./embed/local.js";
-import { defaultShell, runCommandTool } from "./tools/command.js";
-import { fileTools } from "./tools/files.js";
-import { webFetchTool } from "./tools/web.js";
+import { projectTools, toolsPrompt } from "./tools/index.js";
 import { Workspace } from "./tools/workspace.js";
 import { MemorySession } from "./memory/session.js";
 import { detectProject } from "./memory/project.js";
@@ -63,17 +61,8 @@ async function chat(): Promise<number> {
     ...(config.claudeModel === undefined ? {} : { claudeModel: config.claudeModel }),
   });
   const workspace = new Workspace(project.path ?? process.cwd());
-  const ownTools = [
-    currentTimeTool(),
-    ...fileTools(workspace),
-    runCommandTool(workspace, { shell: defaultShell(), hiddenEnv: ["GRAFENO_AGENT_KEY"] }),
-    webFetchTool(),
-  ];
-  const system = `${memory.systemPrompt(SYSTEM_PROMPT)}
-
-## Your tools
-
-Your file and command tools work in the project folder ${workspace.root}; paths are relative to it. (The folder the model program itself runs in is a private temporary one: ignore it.) Files of secrets (.env, keys, credentials) are never read or written. Writing a file, editing one, running a command that changes anything and fetching a web page all ask the user first; say briefly why before you do them.`;
+  const ownTools = projectTools(workspace, { hiddenEnv: ["GRAFENO_AGENT_KEY"] });
+  const system = `${memory.systemPrompt(SYSTEM_PROMPT)}\n\n${toolsPrompt(workspace)}`;
   await runChat({
     input: process.stdin,
     output: process.stdout,

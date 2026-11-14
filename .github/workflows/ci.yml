@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # The Grafeno release the evaluation runs against.
+  GRAFENO_VERSION: v0.3.0
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -22,3 +26,32 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run ci
+
+  eval:
+    # The evaluation suite on the fake model (no model usage), against a
+    # Grafeno of its own in memory. It fails when a result falls below
+    # test/eval/baseline.json.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Install Grafeno
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/grafeno" && cd "$RUNNER_TEMP/grafeno"
+          gh release download "$GRAFENO_VERSION" -R grafenodb/grafeno \
+            -p 'grafeno-x86_64-unknown-linux-musl.tar.gz*'
+          sha256sum -c grafeno-x86_64-unknown-linux-musl.tar.gz.sha256
+          tar -xzf grafeno-x86_64-unknown-linux-musl.tar.gz ./grafeno
+          echo "GRAFENO_BIN=$RUNNER_TEMP/grafeno/grafeno" >> "$GITHUB_ENV"
+      - run: npm run eval
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-results
+          path: docs/eval/

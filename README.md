@@ -123,4 +123,13 @@ npm run ci               # typecheck, lint, format check, tests, build
 npm test                 # unit tests: no server, no model usage
 npm run test:live        # against the Grafeno server in .env
 npm run test:live:model  # the model contract on real Claude (spends a little plan usage)
+npm run eval             # the evaluation suite on the fake model (needs `grafeno` or GRAFENO_BIN)
+npm run eval:real        # the same suite on Claude Haiku (spends plan usage)
+npm run measure:meaning  # what meaning adds to recall
 ```
+
+The evaluation runs nine scenarios end to end against a Grafeno of its
+own in memory. It records recall, needless memories, duplicates refused,
+tokens and time per turn in `docs/eval/`, and fails when a result falls
+below `test/eval/baseline.json` (`-- --update-baseline` accepts new
+results). Change a prompt or a memory rule, run it, and compare.

@@ -1,0 +1,12 @@
+{
+  "fake": {
+    "passed": 9,
+    "recall": 1,
+    "needless": 0
+  },
+  "claude-code:haiku": {
+    "passed": 9,
+    "recall": 1,
+    "needless": 0
+  }
+}

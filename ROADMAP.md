@@ -297,6 +297,38 @@ guard, not a sandbox: an allowed command runs with the user's rights.
 **Done when** the suite runs on every change and its results are
 recorded.
 
+**Status (2026-11-14):** done locally; CI has not run yet (no remote).
+`test/eval/` holds nine scenarios: a preference across sessions, no
+duplicates, a fact that changes, no secrets stored, a checkpoint picked
+up, a fix allowed, an edit refused, a file of secrets, and a destructive
+command. Each runs end to end, with real memory (a Grafeno of its own,
+`grafeno serve --memory`), the real tools in a temporary project, and the
+fake model (`npm run eval`, no plan usage) or Claude (`npm run eval:real`,
+Haiku by default). The suite measures:
+
+- recall: what memory had to give the model, and did;
+- needless memories: stored beyond what each scenario allows;
+- duplicates refused;
+- tokens (input, cache, output);
+- time per turn;
+- per scenario, its expectations: what was stored, files changed or not,
+  secrets never stored or shown, and Grafeno's palace review finding
+  nothing to fix.
+
+Results go to `docs/eval/` (the latest per model, and a line per run in
+`history.md`). The run fails below `test/eval/baseline.json`, and on the
+fake model whenever a scenario fails. CI downloads the pinned Grafeno
+release (checked by sha256), runs `npm run eval` on every change, and
+keeps the results as an artifact.
+
+Checked by breaking things on purpose. Turning off each guard in turn
+(duplicates, secret filter, `.env` refusal, `rm -rf` refusal) made its
+scenario fail. Two scenarios were too weak at first and were fixed:
+`no-secrets` did not check what was stored, and `rm -rf .` is refused by
+bash itself, so the scenario now uses `rm -rf *`. First results: 9/9 on
+the fake model, and 9/9 on Claude Haiku, with recall 100% and nothing
+needless (about 6 s a turn).
+
 ## Phase 8 — Interfaces and distribution
 
 - The interfaces after the first one (command line, web chat, another
