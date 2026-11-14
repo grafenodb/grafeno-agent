@@ -35,6 +35,14 @@ Put it in `.env` as `GRAFENO_AGENT_KEY`. Never commit `.env`.
 | `GRAFENO_NAMESPACE` | `grafeno-agent`         | Where the agent keeps its memory                |
 | `AGENT_MODEL`       | `claude-code`           | The model adapter (`claude-code`: subscription) |
 | `CLAUDE_MODEL`      | Claude Code's own       | For `claude-code`: `haiku`, `sonnet`, `opus`…   |
+| `AGENT_PROJECT`     | the git repository      | The project whose memory the agent uses         |
+| `AGENT_EMBEDDER`    | `e5-small`              | Meaning for memory (local), or `none`           |
+
+With `e5-small`, the first session downloads a small multilingual model
+(about 130 MB) into `~/.cache/grafeno-agent/models`; it runs on this
+computer, with no service and no API. With it, the memory that answers a
+question reaches the model 93% of the time instead of 63% on the measured
+set (`docs/measurements/`; `npm run measure:meaning` measures it again).
 
 Then check that Grafeno answers and the key works:
 

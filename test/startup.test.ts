@@ -7,6 +7,7 @@ const config: Config = {
   agentKey: "gk_test_0123456789abcdef",
   namespace: "agent",
   model: "fake",
+  embedder: "none",
 };
 
 interface Seen {

@@ -5,6 +5,7 @@ import { SYSTEM_PROMPT, currentTimeTool } from "./agent/builtin-tools.js";
 import { ToolRegistry } from "./agent/tools.js";
 import { runChat } from "./chat.js";
 import { ConfigError, describeConfig, loadConfig } from "./config.js";
+import { localEmbedder } from "./embed/local.js";
 import { MemorySession } from "./memory/session.js";
 import { detectProject } from "./memory/project.js";
 import { describeUpkeep, upkeep } from "./memory/upkeep.js";
@@ -42,6 +43,7 @@ async function chat(): Promise<number> {
     vault: grafenoVault(config),
     project,
     knownSecrets: [config.agentKey],
+    ...(config.embedder === "e5-small" ? { embedder: localEmbedder("e5-small") } : {}),
   });
   const memoryTools = await memory.tools();
   const last = await memory.lastUpkeep();

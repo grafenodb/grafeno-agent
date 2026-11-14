@@ -1,3 +1,4 @@
+import type { Embedder } from "../embed/types.js";
 import type { Tool } from "../agent/tools.js";
 import { findDuplicate } from "./quality.js";
 import { describeSecrets, findSecrets } from "./secrets.js";
@@ -59,6 +60,11 @@ export interface MemorySessionOptions {
   readonly briefBudget?: number;
   /** Tokens for the memory looked up before each message. Default: 600. */
   readonly contextBudget?: number;
+  /**
+   * Turns text into vectors of meaning: memories are stored with theirs and
+   * questions asked with theirs. Without one, memory works by words alone.
+   */
+  readonly embedder?: Embedder;
 }
 
 /**
@@ -193,9 +199,11 @@ ${this.brief}`;
   async beforeTurn(message: string): Promise<string> {
     let answer: VaultAnswer;
     try {
+      const embedding = await this.#embed(message, "query");
       answer = await this.options.vault.call("context", {
         query: message,
         budget: this.options.contextBudget ?? 600,
+        ...(embedding ? { embedding } : {}),
       });
     } catch {
       return message; // Memory unreachable: the turn goes on without it.
@@ -204,6 +212,23 @@ ${this.brief}`;
     if (answer.isError || text === "" || NOTHING_FOUND.test(text)) return message;
     return `<memory>\n${text}\n</memory>\n\n${message}`;
   }
+
+  /**
+   * The vector of a text, or nothing when there is no embedder or it
+   * fails: memory then works by words alone, as it did before.
+   */
+  async #embed(text: string, kind: "query" | "passage"): Promise<number[] | undefined> {
+    const embedder = this.options.embedder;
+    if (!embedder || this.#embedderBroken) return undefined;
+    try {
+      return (await embedder.embed([text], kind))[0];
+    } catch {
+      this.#embedderBroken = true;
+      return undefined;
+    }
+  }
+
+  #embedderBroken = false;
 
   /** The message that asks the model to save where the session stands. */
   endOfSession(): string {
@@ -220,6 +245,7 @@ ${this.brief}`;
   #tool(tool: { name: string; description: string; inputSchema: Record<string, unknown> }): Tool {
     const properties = { ...(tool.inputSchema.properties as Record<string, unknown> | undefined) };
     delete properties.namespace; // The agent's namespace, always.
+    delete properties.embedding; // Vectors are the agent's to compute, not the model's.
     const required = Array.isArray(tool.inputSchema.required)
       ? (tool.inputSchema.required as unknown[]).filter(
           // The namespace is always the agent's; a checkpoint's task has a default.
@@ -244,6 +270,7 @@ ${this.brief}`;
   async #run(name: string, input: Record<string, unknown>): Promise<string> {
     const args: Record<string, unknown> = { ...input };
     delete args.namespace;
+    delete args.embedding;
 
     if (STORING.has(name)) {
       const findings = findSecrets(args, this.options.knownSecrets ?? []);
@@ -281,6 +308,16 @@ ${this.brief}`;
       // Always about the project, so the next session's `resume` finds it.
       args.about = this.projectId;
       args.task ??= `${this.options.project.name}: work`;
+    }
+
+    // Meaning: what is stored gets its vector, and what is asked too.
+    if (name === "remember" && typeof args.text === "string") {
+      const embedding = await this.#embed(args.text, "passage");
+      if (embedding) args.embedding = embedding;
+    }
+    if ((name === "recall" || name === "context") && typeof args.query === "string") {
+      const embedding = await this.#embed(args.query, "query");
+      if (embedding) args.embedding = embedding;
     }
 
     const answer = await this.options.vault.call(name, args);

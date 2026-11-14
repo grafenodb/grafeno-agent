@@ -12,12 +12,20 @@ export interface Config {
   readonly claudeModel?: string;
   /** The project the agent works on; unset: the git repository (or folder) it runs in. */
   readonly project?: string;
+  /** The embedder for meaning (`e5-small`, local), or `none` for words alone. */
+  readonly embedder: string;
 }
+
+/** The embedders `AGENT_EMBEDDER` may name. */
+export const EMBEDDERS = ["e5-small", "none"] as const;
 
 export const DEFAULTS = {
   grafenoUrl: "http://127.0.0.1:7810",
   namespace: "grafeno-agent",
   model: "claude-code",
+  // Measured: with meaning, the right memory reaches the model 93% of the
+  // time instead of 63% (docs/measurements/meaning-2026-11-14.md).
+  embedder: "e5-small",
 } as const;
 
 /** The settings are missing or wrong; `problems` says each one. */
@@ -66,6 +74,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const model = read(env, "AGENT_MODEL") ?? DEFAULTS.model;
   const claudeModel = read(env, "CLAUDE_MODEL");
   const project = read(env, "AGENT_PROJECT");
+  const embedder = read(env, "AGENT_EMBEDDER") ?? DEFAULTS.embedder;
+  if (!(EMBEDDERS as readonly string[]).includes(embedder)) {
+    problems.push(`AGENT_EMBEDDER must be one of ${EMBEDDERS.join(", ")}: ${embedder}`);
+  }
 
   if (problems.length > 0 || agentKey === undefined) throw new ConfigError(problems);
   return {
@@ -73,6 +85,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     agentKey,
     namespace,
     model,
+    embedder,
     ...(claudeModel === undefined ? {} : { claudeModel }),
     ...(project === undefined ? {} : { project }),
   };
@@ -84,6 +97,7 @@ export function describeConfig(config: Config): string {
     `server:    ${config.grafenoUrl}`,
     `namespace: ${config.namespace}`,
     `model:     ${config.model}${config.claudeModel === undefined ? "" : ` (${config.claudeModel})`}`,
+    `meaning:   ${config.embedder}`,
     `key:       ${maskSecret(config.agentKey)}`,
   ].join("\n");
 }

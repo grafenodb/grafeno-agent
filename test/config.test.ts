@@ -10,6 +10,7 @@ describe("loadConfig", () => {
       agentKey: KEY,
       namespace: DEFAULTS.namespace,
       model: DEFAULTS.model,
+      embedder: DEFAULTS.embedder,
     });
   });
 
@@ -21,6 +22,8 @@ describe("loadConfig", () => {
         GRAFENO_NAMESPACE: "work.agent-1",
         AGENT_MODEL: "fake",
         CLAUDE_MODEL: "sonnet",
+        AGENT_PROJECT: "demo",
+        AGENT_EMBEDDER: "none",
       }),
     ).toEqual({
       grafenoUrl: "https://grafeno.example:7810",
@@ -28,7 +31,15 @@ describe("loadConfig", () => {
       namespace: "work.agent-1",
       model: "fake",
       claudeModel: "sonnet",
+      project: "demo",
+      embedder: "none",
     });
+  });
+
+  it("refuses an embedder it does not know", () => {
+    expect(() => loadConfig({ GRAFENO_AGENT_KEY: KEY, AGENT_EMBEDDER: "gpt" })).toThrow(
+      /AGENT_EMBEDDER must be one of e5-small, none/,
+    );
   });
 
   it("treats empty values as unset", () => {

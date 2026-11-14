@@ -222,6 +222,32 @@ Grafeno, and phase 5 measures meaning.
 **Done when** recall improves on a measured set of questions, or the phase
 is closed with the measurement that shows it does not.
 
+**Status (2026-11-14):** done; meaning is kept, on by default. The
+embedder interface is `src/embed/types.ts`. The first embedder runs on
+this computer, with no service and no API: `e5-small`
+(`Xenova/multilingual-e5-small`, quantized, 384 dimensions), through
+transformers.js. It is downloaded once (about 130 MB) into
+`~/.cache/grafeno-agent/models`. Every memory is stored with its vector,
+and every question (`context` before each message, `recall` and `context`
+called by the model) is asked with its own. The model never sees or sends
+vectors. The vectors go in the namespace's own vector graph. Without an
+embedder (`AGENT_EMBEDDER=none`), or when it fails, memory works by words
+alone. Measured on 30 memories and 30 questions in Spanish and English
+(`npm run measure:meaning`, `docs/measurements/meaning-2026-11-14.md`):
+
+- the right memory first: words 60%, with meaning 73% (vector) or 70%
+  (hybrid);
+- in the first three: 63% against 93% (vector) or 90% (hybrid);
+- in what `context` gives the model: 63% against 93%;
+- questions that share the memory's words: 100% either way; questions in
+  other words: 50% → 90%; in the other language: 40% → 90%.
+
+Found: Grafeno's hybrid search left 2 of the 30 out of its first ten that
+vector search alone ranked in its first three, with either fusion. This
+belongs in Grafeno. The measurement runs left wear in the namespace's
+vector graph (removed vectors); `compact` rebuilds it, but it needs an
+administrator.
+
 ## Phase 6 — The agent's own tools
 
 - The tools its purpose needs (files, commands, the web, others), each

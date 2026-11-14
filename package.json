@@ -23,10 +23,12 @@
     "ci": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run build",
     "test:live:model": "vitest run --config vitest.live.config.ts model",
     "chat": "tsx src/cli.ts chat",
-    "upkeep": "tsx src/cli.ts upkeep"
+    "upkeep": "tsx src/cli.ts upkeep",
+    "measure:meaning": "tsx test/eval/measure-meaning.ts"
   },
   "dependencies": {
     "@grafenodb/client": "^0.2.2",
+    "@huggingface/transformers": "^4.3.2",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "zod": "^4.6.7"
   },
