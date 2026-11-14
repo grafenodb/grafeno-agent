@@ -189,6 +189,28 @@ folder), not the project's; the project's tools come in phase 6.
 **Done when** a long scripted run leaves no duplicates, no contradiction
 unflagged, and a palace the review finds nothing to fix in.
 
+**Status (2026-11-14):** done. Before `remember`, the agent recalls and
+compares words (`src/memory/quality.ts`): what memory already holds is not
+stored again, and the model is told which memory holds it (a memory of
+the same name is Grafeno's own update, and goes through). Each memory is
+linked to the project (`part_of`), so the room hangs together. The model
+gets `feedback`, `forget` (facts only, `invalidate` or `retract`; memories
+are never deleted: what stopped being true is marked `obsolete` and
+related with `supersedes`), `palace_reflect`, `find_matches`, `update` and
+`contradictions`, with the policy in its prompt. Loci are made when first
+used, so none sits empty. `grafeno-agent upkeep` reads Grafeno's
+`maintain`, `palace_review` and `contradictions`; it reports everything,
+and with `--apply` carries out only the safe fix with a reason (linking a
+loose room's memories to the project); merging, archiving what may be
+superseded, consolidating and moving between rooms are left to judgment. A
+check that cannot run is reported, never taken as clean. The chat suggests
+upkeep when it has not run for 7 days (recorded on the project's node).
+The long scripted run (three sessions, ten facts, three repeated, one
+changed, a secret) passes against real Grafeno; on real Claude the model
+followed the change policy by itself. Found: Grafeno's `maintain` does not
+flag two memories of identical words without embeddings; that belongs in
+Grafeno, and phase 5 measures meaning.
+
 ## Phase 5 — Meaning (embeddings, optional)
 
 - An embedder interface, with a local model or a provider behind it; the

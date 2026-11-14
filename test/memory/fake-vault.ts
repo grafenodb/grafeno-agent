@@ -61,6 +61,10 @@ export class FakeVault implements Vault {
         this.memories.push({ id, text: String(args.text), labels: args.labels });
         return json({ id, reused: false });
       }
+      case "recall":
+        return json({
+          results: this.memories.map((m) => ({ id: m.id, name: `Memory ${m.id}`, text: m.text })),
+        });
       case "palace_enter":
         return Promise.resolve({ text: "The room holds: nothing yet.", isError: false });
       case "resume":

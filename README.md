@@ -65,6 +65,17 @@ questions; when you leave, it saves a checkpoint, so the next session
 picks up where this one stopped. It never stores keys, passwords or
 tokens: storing them is refused.
 
+It does not store the same thing twice, and when something stops being
+true it marks the old memory obsolete and links the new one to it, instead
+of keeping both. To look after the memory:
+
+```bash
+npm run upkeep            # report duplicates, contradictions, what to rearrange
+npm run upkeep -- --apply # also carry out the safe fixes, each with its reason
+```
+
+The chat reminds you when upkeep has not run for a week.
+
 ## The model
 
 The agent reasons with Claude through your own Claude Code: it starts the

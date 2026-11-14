@@ -77,9 +77,11 @@ describe("the memory tools", () => {
   it("offers only the memory tools, in the agent's namespace", async () => {
     const { session } = await start();
     const tools = await session.tools();
+    // The fake offers merge too: it is not one of the agent's tools.
     expect(tools.map((t) => t.name).sort()).toEqual([
       "checkpoint",
       "context",
+      "forget",
       "palace_anchor",
       "recall",
       "remember",
@@ -98,7 +100,11 @@ describe("the memory tools", () => {
       { signal: new AbortController().signal },
     );
     const stored = vault.called("remember").at(-1);
-    expect(stored).toEqual({ text: "Use Vitest.", labels: ["Decision"] });
+    expect(stored).toEqual({
+      text: "Use Vitest.",
+      labels: ["Decision"],
+      links: [{ label: "part_of", to: session.projectId }],
+    });
     expect(vault.called("palace_anchor").at(-1)).toMatchObject({
       room: ROOM,
       palace: "demo",
