@@ -69,4 +69,10 @@ export interface Provider {
   create(choice: ModelChoice): Model;
   /** How to sign in, in a sentence. */
   readonly signIn: string;
+  /**
+   * For each capability tier, its models in order of preference (ids or
+   * aliases of `models()`): how the orchestrator maps "deep", "standard"
+   * and "light" to this provider without naming models anywhere else.
+   */
+  readonly tiers?: Readonly<Record<"deep" | "standard" | "light", readonly string[]>>;
 }

@@ -8,7 +8,7 @@ session picks up where the last one left off.
 
 ## What you need
 
-- **Node.js 22.18 or later.**
+- **Node.js 26.13 or later** (the current LTS).
 - **Claude Code**, installed and signed in with your Claude subscription:
   run `claude` once and sign in with `/login`. The agent spends that
   plan's usage, exactly as if you asked Claude Code yourself; no API key,

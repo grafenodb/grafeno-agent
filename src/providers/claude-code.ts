@@ -60,6 +60,12 @@ export class ClaudeCodeProvider implements Provider {
   readonly name = "Claude (Claude Code)";
   readonly signIn =
     "Run `claude` in a terminal and sign in with /login (your Claude subscription).";
+  /** Claude Code's aliases always name the latest of each family. */
+  readonly tiers = {
+    deep: ["opus", "fable", "sonnet"],
+    standard: ["sonnet", "opus"],
+    light: ["haiku", "sonnet"],
+  } as const;
   #models: Promise<readonly ModelOption[]> | undefined;
 
   constructor(private readonly run: RunClaude = runClaude("claude")) {}
