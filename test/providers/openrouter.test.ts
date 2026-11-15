@@ -310,6 +310,8 @@ describe("the OpenRouter model", () => {
       const runtime = new OpenRouterRuntime(() => Promise.resolve(KEY), {
         fetch: fetcher,
         env: {},
+        // Retried as for real, without the real waits (they made the test slow and flaky).
+        resilience: { sleep: () => Promise.resolve() },
       });
       const model = runtime.create({});
       // The resilient wrapper retries what may pass; the kind is what matters here.

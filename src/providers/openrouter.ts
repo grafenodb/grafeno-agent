@@ -2,6 +2,7 @@ import { dataDir } from "../data-dir.js";
 import { ModelError } from "../model/errors.js";
 import { resilient } from "../model/index.js";
 import { ChatCompletionsModel } from "../model/openai-chat.js";
+import type { ResilienceOptions } from "../model/resilient.js";
 import type { Model } from "../model/types.js";
 import { ComposedProvider } from "./compose.js";
 import { systemSecretStore, type SecretStore } from "./secrets.js";
@@ -32,6 +33,8 @@ export interface OpenRouterSettings {
   readonly store?: SecretStore;
   readonly fetch?: typeof fetch;
   readonly api?: string;
+  /** How turns are retried; for tests (such as no waits between tries). */
+  readonly resilience?: ResilienceOptions;
 }
 
 /** `free` (the default): only free models, never billed; `all`: models billed per token. */
@@ -286,6 +289,7 @@ export class OpenRouterRuntime implements ProviderRuntime {
         noKey: "No OpenRouter API key: grafeno-agent login openrouter sets one up.",
         ...(this.settings.fetch ? { fetch: this.settings.fetch } : {}),
       }),
+      this.settings.resilience,
     );
   }
 }
