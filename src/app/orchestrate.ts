@@ -95,7 +95,13 @@ function providerOptions(settings: OrchestrateSettings): {
   if (settings.provider && !settings.providers) return { provider: settings.provider };
   const providers = settings.providers ?? chosenProviders();
   const first = providers[0];
-  if (!first) throw new Error("No provider is chosen: set AGENT_PROVIDERS");
+  if (!first) {
+    throw new Error(
+      isAuto(process.env.AGENT_PROVIDERS)
+        ? "Auto includes no provider yet: choose them in /connect (space marks one), or set AGENT_AUTO_PROVIDERS."
+        : "No provider is chosen: set AGENT_PROVIDERS",
+    );
+  }
   return providers.length > 1 ? { provider: first, providers } : { provider: first };
 }
 

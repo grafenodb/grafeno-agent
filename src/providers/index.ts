@@ -56,18 +56,15 @@ export const AUTO = "auto";
 
 /**
  * The providers General Auto may use, in order: those AGENT_AUTO_PROVIDERS
- * names, or by default every provider used through its official CLI and
- * your subscription (never one reached with an API key). Throws on an id
- * it does not know.
+ * names, and none until the user chooses them (in /connect, with space):
+ * Auto never picks providers on its own. Throws on an id it does not know.
  */
 export function autoMembers(env: Record<string, string | undefined> = process.env): string[] {
   const listed = (env.AGENT_AUTO_PROVIDERS ?? "")
     .split(",")
     .map((id) => id.trim())
     .filter(Boolean);
-  if (listed.length === 0) {
-    return Object.keys(KNOWN_PROVIDERS).filter((id) => !API_KEY_PROVIDERS.includes(id));
-  }
+  if (listed.length === 0) return [];
   const unknown = listed.filter((id) => !(id in KNOWN_PROVIDERS));
   if (unknown.length > 0) {
     throw new Error(

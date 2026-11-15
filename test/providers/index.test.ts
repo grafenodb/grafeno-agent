@@ -11,14 +11,14 @@ import {
 } from "../../src/providers/index.js";
 
 describe("choosing providers", () => {
-  it("uses Auto unless AGENT_PROVIDERS says otherwise, with the official CLIs by default", () => {
-    // Nothing set: Auto, with what it includes (the registry keeps the ready ones).
-    expect(providerIds(undefined, {})).toEqual(["claude-code", "codex"]);
-    expect(providerIds(" ", {})).toEqual(["claude-code", "codex"]);
+  it("uses Auto unless AGENT_PROVIDERS says otherwise, with nothing in it until chosen", () => {
+    // Nothing set: Auto, with what the user put in it (nothing yet).
+    expect(providerIds(undefined, {})).toEqual([]);
+    expect(providerIds(" ", { AGENT_AUTO_PROVIDERS: "codex" })).toEqual(["codex"]);
     expect(isAuto(undefined)).toBe(true);
     expect(isAuto("")).toBe(true);
     expect(isAuto("claude-code")).toBe(false);
-    expect(chosenProviders({}).map((p) => p.id)).toEqual(["claude-code", "codex"]);
+    expect(chosenProviders({}).map((p) => p.id)).toEqual([]);
     expect(chosenProviders({ AGENT_PROVIDERS: "claude-code" }).map((p) => p.id)).toEqual([
       "claude-code",
     ]);
@@ -39,7 +39,7 @@ describe("choosing providers", () => {
   });
 
   it("lets the user choose what Auto includes; an API-key provider only when named", () => {
-    expect(autoMembers({})).toEqual(["claude-code", "codex"]);
+    expect(autoMembers({})).toEqual([]);
     expect(API_KEY_PROVIDERS).toEqual(["gemini", "openrouter"]);
     expect(autoMembers({ AGENT_AUTO_PROVIDERS: " claude-code , gemini, gemini " })).toEqual([
       "claude-code",

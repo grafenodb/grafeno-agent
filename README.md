@@ -90,7 +90,7 @@ grafeno-agent init --grafeno-url http://127.0.0.1:7810 --key <key>
 | `AGENT_PALACE`         | `shared`                | `shared` with other agents, or `own` (see below)                          |
 | `AGENT_SHELL`          | Git's bash on Windows   | The shell for commands, with its arguments                                |
 | `AGENT_PROVIDERS`      | `auto`                  | `claude-code`, `codex`, `gemini`, in order, or `auto` (set by `/connect`) |
-| `AGENT_AUTO_PROVIDERS` | the official CLIs       | The providers Auto includes (set in `/connect` with space)                |
+| `AGENT_AUTO_PROVIDERS` | none (you choose)       | The providers Auto includes (set in `/connect` with space)                |
 | `GEMINI_TIER`          | none                    | `free` or `paid`: your Gemini key's tier (set by `login gemini`)          |
 | `OPENROUTER_MODELS`    | `free`                  | `free` (never billed) or `all` (set by `login openrouter`)                |
 | `AGENT_ALLOW_BILLING`  | none                    | Providers allowed to bill by consumption, such as `gemini`                |
@@ -305,12 +305,18 @@ Besides Claude Code, the agent can reason with **Codex CLI**, OpenAI's
 official CLI, signed in with your ChatGPT subscription, and with **Gemini**
 (Google AI Studio) and **OpenRouter**, each with your own API key.
 
-- **Auto uses only what you include.** By default that is the official CLIs
-  on this computer (Claude Code, Codex), so Auto never spends an API key's
-  tokens. In `/connect`, each provider says whether it is in Auto, and
-  **space** includes it or leaves it out (`AGENT_AUTO_PROVIDERS`). When you
-  choose one provider, a run may still move tasks to another, but only to
-  one that Auto includes.
+- **Auto uses only what you include, and starts with nothing.** In
+  `/connect`, each provider says whether it is in Auto, and **space**
+  includes it or leaves it out (`AGENT_AUTO_PROVIDERS`). Type to search the
+  providers by name.
+  - While Auto includes nothing, it says so: choosing it is refused, and a
+    message is answered with the chat's own provider, with a warning.
+  - When you choose one provider, a run may still move tasks to another,
+    but only to one that Auto includes.
+- **The side panel in Auto** shows each provider Auto includes: a plan's
+  usage windows, or an API key's free requests and credit limit. Only calls
+  that spend nothing are used, read at most once a minute. A provider whose
+  API does not report usage (Gemini) says so.
 - **Keys are checked before they are kept.** `grafeno-agent login gemini`
   and `grafeno-agent login openrouter` ask the provider about the key with
   a call that spends nothing: Gemini lists models, OpenRouter reads the

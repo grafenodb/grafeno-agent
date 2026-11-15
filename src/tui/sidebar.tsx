@@ -19,6 +19,23 @@ export interface SidebarProps {
   readonly environment: Environment;
   /** What memory brought to the last message. */
   readonly recall?: Recall | undefined;
+  /**
+   * In Auto: each provider it includes, with its usage when the provider
+   * can say it without spending anything (a plan's windows, an API key's
+   * credits). Shown in place of the chat provider's plan usage.
+   */
+  readonly autoUsage?: readonly AutoUsage[];
+}
+
+/** One of Auto's providers in the panel. */
+export interface AutoUsage {
+  readonly id: string;
+  readonly name: string;
+  readonly usage?: ProviderUsage;
+  /** Reached with an API key (its credits, when the provider reports them). */
+  readonly apiKey: boolean;
+  /** The provider the chat uses now. */
+  readonly current: boolean;
 }
 
 /** The side panel: the model, how full its context is, the plan's real usage, where the agent works and its memory. */
@@ -76,26 +93,59 @@ export function Sidebar(props: SidebarProps): ReactNode {
         )}
       </Section>
 
-      <Section title="Plan usage" note={props.usage ? ago(props.usage.at) : undefined}>
-        {props.usage ? (
-          props.usage.limits
-            .filter((limit) => !/fable/i.test(limit.label) || limit.used > 0)
-            .map((limit) => (
-              <Box key={limit.label} flexDirection="column">
-                <Meter
-                  used={limit.used}
-                  width={inner}
-                  label={`${limit.label} ${String(Math.round(limit.used * 100))}%`}
-                />
-                {limit.resets !== undefined && (
-                  <Text dimColor> resets {shortResets(limit.resets)}</Text>
-                )}
-              </Box>
-            ))
-        ) : (
-          <Text dimColor>checking…</Text>
-        )}
-      </Section>
+      {props.autoUsage && props.autoUsage.length > 0 ? (
+        <Section title="Usage · Auto">
+          {props.autoUsage.map((member) => (
+            <Box key={member.id} flexDirection="column">
+              <Text wrap="truncate-end">
+                <Text bold={member.current} {...(member.current ? { color: theme.brand } : {})}>
+                  {member.name}
+                </Text>
+                <Text dimColor>{member.usage ? ` · ${ago(member.usage.at)}` : ""}</Text>
+              </Text>
+              {member.usage ? (
+                member.usage.limits
+                  .filter((limit) => !/fable/i.test(limit.label) || limit.used > 0)
+                  .map((limit) => (
+                    <Meter
+                      key={limit.label}
+                      used={limit.used}
+                      width={inner}
+                      label={`${limit.label} ${String(Math.round(limit.used * 100))}%`}
+                    />
+                  ))
+              ) : (
+                <Text dimColor wrap="truncate-end">
+                  {member.apiKey
+                    ? "its API does not report usage or credits"
+                    : "no usage report now (not ready?)"}
+                </Text>
+              )}
+            </Box>
+          ))}
+        </Section>
+      ) : (
+        <Section title="Plan usage" note={props.usage ? ago(props.usage.at) : undefined}>
+          {props.usage ? (
+            props.usage.limits
+              .filter((limit) => !/fable/i.test(limit.label) || limit.used > 0)
+              .map((limit) => (
+                <Box key={limit.label} flexDirection="column">
+                  <Meter
+                    used={limit.used}
+                    width={inner}
+                    label={`${limit.label} ${String(Math.round(limit.used * 100))}%`}
+                  />
+                  {limit.resets !== undefined && (
+                    <Text dimColor> resets {shortResets(limit.resets)}</Text>
+                  )}
+                </Box>
+              ))
+          ) : (
+            <Text dimColor>checking…</Text>
+          )}
+        </Section>
+      )}
 
       <Section title="This session">
         {session ? (

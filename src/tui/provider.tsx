@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from "ink";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Provider, ProviderStatus } from "../providers/types.js";
 import { Spinner } from "./spinner.js";
 import { theme } from "./theme.js";
@@ -23,49 +23,92 @@ export interface ProviderPanelProps {
   readonly onDone: (status: ProviderStatus | undefined, provider?: Provider) => void;
 }
 
-/** The providers the agent can reason with, and whether each is ready. */
+/** Whether a provider matches what was typed: its name or its id, in any case. */
+export function matchesProvider(provider: Pick<Provider, "id" | "name">, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  return q === "" || provider.name.toLowerCase().includes(q) || provider.id.includes(q);
+}
+
+/**
+ * The providers the agent can reason with, and whether each is ready.
+ * Typing searches them by name (there will be many); ↑ ↓ choose, Enter
+ * uses one, space includes it in Auto or leaves it out.
+ */
 export function ProviderPanel(props: ProviderPanelProps): ReactNode {
-  const [statuses, setStatuses] = useState<(ProviderStatus | undefined)[]>([]);
+  const [statuses, setStatuses] = useState<ReadonlyMap<string, ProviderStatus>>(new Map());
   const [checking, setChecking] = useState(0);
+  const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
-  const rows = props.providers.length + (props.onAuto ? 1 : 0);
+
+  const shown = useMemo(
+    () => props.providers.filter((p) => matchesProvider(p, query)),
+    [props.providers, query],
+  );
+  const offerAuto =
+    props.onAuto !== undefined &&
+    (query.trim() === "" || "auto".includes(query.trim().toLowerCase()));
+  const rows = shown.length + (offerAuto ? 1 : 0);
+  const at = Math.min(selected, Math.max(0, rows - 1));
+  const autoEmpty = props.autoMembers !== undefined && props.autoMembers.length === 0;
 
   useEffect(() => {
     let live = true;
-    void Promise.all(props.providers.map((p) => p.status())).then((found) => {
-      if (live) setStatuses(found);
-    });
+    void Promise.all(props.providers.map(async (p) => [p.id, await p.status()] as const)).then(
+      (found) => {
+        if (live) setStatuses(new Map(found));
+      },
+    );
     return () => {
       live = false;
     };
   }, [props.providers, checking]);
 
   useInput((input, key) => {
-    if (key.escape) props.onDone(undefined);
-    else if (key.upArrow) setSelected((s) => Math.max(0, s - 1));
-    else if (key.downArrow) setSelected((s) => Math.min(rows - 1, s + 1));
-    else if (input === "r") {
-      setStatuses([]);
+    if (key.escape) {
+      if (query !== "") {
+        setQuery("");
+        setSelected(0);
+      } else props.onDone(undefined);
+    } else if (key.upArrow) setSelected(Math.max(0, at - 1));
+    else if (key.downArrow) setSelected(Math.min(rows - 1, at + 1));
+    else if (key.ctrl && input === "r") {
+      setStatuses(new Map());
       setChecking((c) => c + 1);
-    } else if (input === " " && props.onToggleAuto && selected < props.providers.length) {
-      const chosen = props.providers[selected];
+    } else if (input === " " && props.onToggleAuto && at < shown.length) {
+      const chosen = shown[at];
       if (chosen) props.onToggleAuto(chosen.id);
     } else if (key.return) {
-      if (selected === props.providers.length && props.onAuto) props.onAuto();
-      else props.onDone(statuses[selected], props.providers[selected]);
+      if (at === shown.length && props.onAuto && offerAuto) props.onAuto();
+      else {
+        const chosen = shown[at];
+        if (chosen) props.onDone(statuses.get(chosen.id), chosen);
+      }
+    } else if (key.backspace || key.delete) {
+      setQuery((q) => q.slice(0, -1));
+      setSelected(0);
+    } else if (input && !key.ctrl && !key.meta && input !== " " && !key.tab) {
+      setQuery((q) => q + input);
+      setSelected(0);
     }
   });
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.brand} paddingX={1}>
-      <Text bold color={theme.brand}>
-        Provider
+      <Text>
+        <Text bold color={theme.brand}>
+          Provider
+        </Text>
+        <Text dimColor> · {String(props.providers.length)} known · search: </Text>
+        <Text color={theme.accent}>{query === "" ? "type a name" : query}</Text>
       </Text>
-      {props.providers.map((provider, index) => {
-        const status = statuses[index];
-        const on = index === selected;
+      {shown.length === 0 && (
+        <Text color={theme.warning}>No provider matches “{query}”. esc clears the search.</Text>
+      )}
+      {shown.map((provider, index) => {
+        const status = statuses.get(provider.id);
+        const on = index === at;
         return (
-          <Box key={provider.id} flexDirection="column" marginTop={index === 0 ? 0 : 1}>
+          <Box key={provider.id} flexDirection="column" marginTop={1}>
             <Text {...(on ? { color: theme.accent } : {})} bold={on}>
               {on ? "▸ " : "  "}
               {provider.name}
@@ -109,34 +152,38 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
           </Box>
         );
       })}
-      {props.onAuto && (
+      {offerAuto && (
         <Box flexDirection="column" marginTop={1}>
           <Text
-            {...(selected === props.providers.length ? { color: theme.accent } : {})}
-            bold={selected === props.providers.length}
+            {...(at === shown.length ? { color: theme.accent } : {})}
+            bold={at === shown.length}
           >
-            {selected === props.providers.length ? "▸ " : "  "}
+            {at === shown.length ? "▸ " : "  "}
             Auto{props.auto ? " · in use" : ""}
           </Text>
           <Box paddingLeft={4}>
-            <Text dimColor>
-              The ready providers marked in Auto
-              {props.autoMembers && props.autoMembers.length > 0
-                ? ` (${props.autoMembers.join(", ")})`
-                : ""}
-              : a light model triages each message, answered directly or planned across them.
-            </Text>
+            {autoEmpty ? (
+              <Text color={theme.warning}>
+                No provider is in Auto yet: mark one with space before using Auto.
+              </Text>
+            ) : (
+              <Text dimColor>
+                The ready providers marked in Auto
+                {props.autoMembers ? ` (${props.autoMembers.join(", ")})` : ""}: a light model
+                triages each message, answered directly or planned across them.
+              </Text>
+            )}
           </Box>
         </Box>
       )}
       <Box marginTop={1}>
         <Text dimColor>
-          The chat uses the one chosen here; a run may give tasks to every ready one.
+          The chat uses the one chosen here; a run may give tasks to the ones in Auto.
         </Text>
       </Box>
       <Text dimColor>
-        enter {props.firstRun ? "continue" : "use it"}
-        {props.onToggleAuto ? " · space in Auto or not" : ""} · r check again · esc{" "}
+        type to search · enter {props.firstRun ? "continue" : "use it"}
+        {props.onToggleAuto ? " · space in Auto or not" : ""} · ctrl+r check again · esc{" "}
         {props.firstRun ? "skip" : "close"}
       </Text>
     </Box>

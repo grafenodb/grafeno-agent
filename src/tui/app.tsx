@@ -37,7 +37,7 @@ import { PalacePanel } from "./palace.js";
 import { Picker, type PickerItem } from "./picker.js";
 import { Prompt } from "./prompt.js";
 import { ProviderPanel } from "./provider.js";
-import { Sidebar } from "./sidebar.js";
+import { Sidebar, type AutoUsage } from "./sidebar.js";
 import { Spinner } from "./spinner.js";
 import { theme } from "./theme.js";
 
@@ -121,6 +121,8 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
   // General Auto (B7c): each message is triaged, and may be orchestrated across providers.
   const [auto, setAuto] = useState(() => isAuto(process.env.AGENT_PROVIDERS));
   // The providers Auto includes (AGENT_AUTO_PROVIDERS): by default, the official CLIs only.
+  // In Auto, the usage of each provider it includes, for the side panel.
+  const [autoUsage, setAutoUsage] = useState<readonly AutoUsage[]>([]);
   const [autoIds, setAutoIds] = useState<readonly string[]>(() => {
     try {
       return autoMembers(process.env);
@@ -196,6 +198,36 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
     },
     [provider],
   );
+
+  /**
+   * In Auto, each included provider's usage: read through the providers'
+   * one-minute cache, and only with calls that spend nothing (a plan's
+   * windows, an API key's own record).
+   */
+  const refreshAutoUsage = useCallback(async () => {
+    if (!auto || autoIds.length === 0) {
+      setAutoUsage([]);
+      return;
+    }
+    const members = services.providers.filter((p) => autoIds.includes(p.id));
+    const found = await Promise.all(
+      members.map(async (p) => {
+        const usage = await p.usage().catch(() => undefined);
+        return {
+          id: p.id,
+          name: p.name,
+          apiKey: API_KEY_PROVIDERS.includes(p.id),
+          current: p.id === session?.provider.id,
+          ...(usage ? { usage } : {}),
+        };
+      }),
+    );
+    setAutoUsage(found);
+  }, [auto, autoIds, services, session]);
+
+  useEffect(() => {
+    void refreshAutoUsage();
+  }, [refreshAutoUsage]);
 
   /** Starts a session with the settings as they are now. */
   const connect = useCallback(async () => {
@@ -328,9 +360,10 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         setTick((t) => t + 1);
         void readEnvironment(active.workspace.root).then(setEnvironment);
         void refreshUsage();
+        void refreshAutoUsage();
       }
     },
-    [push, notice, refreshUsage],
+    [push, notice, refreshUsage, refreshAutoUsage],
   );
 
   const leave = useCallback(async () => {
@@ -455,6 +488,9 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
   useEffect(() => {
     launch.current = async (request, signal) => {
       if (orchestration.current) return "A run is already going on: wait for it to end.";
+      if (auto && autoIds.length === 0) {
+        return "Auto includes no provider yet, so no sub-agents can start. Tell the person to choose Auto's providers in /connect (space marks one), or do the work yourself.";
+      }
       const orchestrator = await openOrchestrator(auto, auto ? undefined : provider);
       let planned: Awaited<ReturnType<Orchestrator["plan"]>>;
       try {
@@ -502,7 +538,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         signal.removeEventListener("abort", stop);
       }
     };
-  }, [auto, provider, openOrchestrator, driveRun, push]);
+  }, [auto, autoIds, provider, openOrchestrator, driveRun, push]);
 
   /** What a line typed in the box does. */
   const submit = useCallback(
@@ -534,6 +570,15 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
             "Not connected yet: /palace sets up the memory, /connect the provider.",
             "warning",
           );
+          return;
+        }
+        if (auto && autoIds.length === 0) {
+          // Auto with nothing in it: said, and the chat answers with its own provider.
+          notice(
+            `Auto includes no provider yet: /connect, then space on the ones it may use. Answering with ${session.provider.name} meanwhile.`,
+            "warning",
+          );
+          await runTurn(session, text, text);
           return;
         }
         if (auto) {
@@ -756,6 +801,8 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
       leave,
       openOrchestrator,
       auto,
+      autoIds,
+      agents,
     ],
   );
 
@@ -1111,6 +1158,13 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
                 onAuto={() => {
                   setMode("chat");
                   if (!session) return;
+                  if (autoIds.length === 0) {
+                    notice(
+                      "Auto includes no provider yet: in /connect, mark the ones it may use with space, then choose Auto.",
+                      "warning",
+                    );
+                    return;
+                  }
                   setAuto(true);
                   services.saveChoice({ provider: "auto" });
                   void services.pool().then(async (members) => {
@@ -1241,6 +1295,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
             models={models}
             environment={environment}
             recall={recall}
+            {...(auto ? { autoUsage } : {})}
           />
         )}
       </Box>

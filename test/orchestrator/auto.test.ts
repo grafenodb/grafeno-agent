@@ -133,8 +133,8 @@ describe("General Auto settings", () => {
     expect(isAuto("auto")).toBe(true);
     expect(isAuto(" Auto ")).toBe(true);
     expect(isAuto("claude-code")).toBe(false);
-    // By default, the official CLIs only: no provider reached with an API key.
-    expect(providerIds("auto", {})).toEqual(["claude-code", "codex"]);
+    // Nothing in Auto until the user chooses.
+    expect(providerIds("auto", {})).toEqual([]);
     expect(providerIds("auto", { AGENT_AUTO_PROVIDERS: "codex,openrouter" })).toEqual([
       "codex",
       "openrouter",

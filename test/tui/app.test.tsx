@@ -26,8 +26,16 @@ const config: Config = {
 };
 
 let dir: string;
+let autoBefore: string | undefined;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "ga-tui-"));
+  // Auto with one provider in it: its tests need one (by default it has none).
+  autoBefore = process.env.AGENT_AUTO_PROVIDERS;
+  process.env.AGENT_AUTO_PROVIDERS = "claude-code";
+});
+afterEach(() => {
+  if (autoBefore === undefined) Reflect.deleteProperty(process.env, "AGENT_AUTO_PROVIDERS");
+  else process.env.AGENT_AUTO_PROVIDERS = autoBefore;
 });
 afterEach(() => {
   try {
@@ -719,6 +727,32 @@ describe("sub-agents in the interface", { timeout: 90_000 }, () => {
     await until(() => now(app).includes("Ask anything"), "the main agent's prompt");
     // In Auto (nothing set), sub-agents are not pinned to the chat's provider.
     expect(extras[0]?.provider).toBeUndefined();
+    app.unmount();
+  });
+});
+
+describe("Auto with no provider in it", { timeout: 20_000 }, () => {
+  it("says so, and the chat answers with its own provider", async () => {
+    process.env.AGENT_AUTO_PROVIDERS = "";
+    const asked: string[] = [];
+    const app = render(
+      <App
+        services={services({
+          turns: [[{ say: "Answered-Directly" }]],
+          triage: (message) => {
+            asked.push(message);
+            return Promise.resolve({ route: "direct", reason: "x" });
+          },
+        })}
+      />,
+    );
+    await ready(app);
+    await type(app, "hello");
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("Answered-Directly"), "the answer");
+    expect(seen(app)).toContain("Auto includes no provider yet");
+    // No triage: Auto had nothing to choose from.
+    expect(asked).toEqual([]);
     app.unmount();
   });
 });
