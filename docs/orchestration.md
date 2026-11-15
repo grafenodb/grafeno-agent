@@ -689,9 +689,96 @@ all of them:
   the default affinities), the new settings, and the memory changes
   (compact resume, budgets, revise, renewal, `resume --compact`).
 
-**What is left of phase B, in order:**
+#### Phase B checked against the brief (2026-11-15)
 
-1. Phase B is checked against the brief's §B.1–B.4 and closed.
+Each point of `docs/brief.md` §B.1–B.4, with what shows it.
+
+**§B.1, provider abstraction.** The interfaces are `Provider`
+(`src/providers/types.ts`) and `Model` / `Conversation`
+(`src/model/types.ts`). Each provider's adapter answers for itself, and
+nothing assumes two providers do the same.
+
+| Asked for                  | Where                                                       | Shown by                                                                                                                                |
+| -------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Capability discovery       | `CapabilityRegistry`                                        | `test/providers/registry.test.ts`                                                                                                       |
+| Authentication             | `status().signedIn`, `plan`                                 | both providers' tests; real CLIs, without spending                                                                                      |
+| Models, listed and checked | `models()`; the router uses only the ids offered            | provider tests; `route` falls back by tier                                                                                              |
+| Efforts                    | `efforts(model)`, per model for Codex                       | provider tests                                                                                                                          |
+| Sessions start and end     | `Model.open`, `Conversation.close`                          | the model contract on real Claude (Haiku) and 4/4 on real Codex                                                                         |
+| Streaming                  | `Conversation.send` streams events; `features.streaming`    | model contract                                                                                                                          |
+| Tool execution             | the agent's tools over MCP; `features.agentTools`           | Codex tests; real runs 2 and 3                                                                                                          |
+| Cancellation               | `signal`; `features.keepsConversation`                      | Claude: the turn stops with Claude Code, and the next goes on from the conversation as data; Codex keeps its session (both tested)      |
+| Error recovery             | `ModelError` kinds; `resilient`                             | model and scheduler tests                                                                                                               |
+| Usage and quotas           | `usage()` without spending; `usage_windows`                 | real CLIs: Claude's /usage, Codex's app-server                                                                                          |
+| Availability               | `status()`; the registry sets aside a provider that failed  | registry and fallback tests                                                                                                             |
+| Context window             | `context` events with the window, when the provider says it | **partial:** Claude says it, Codex does not. Its share is estimated, and the run report says so. The registry keeps no window per model |
+| Non-interactive            | `features.nonInteractive`; both run headless                | every run                                                                                                                               |
+
+**§B.2, future adapters.** Claude Code and Codex CLI are built, each only
+through its official CLI and the user's own sign-in. The agent never
+reads, extracts or passes on a provider's credentials. The only secret it
+passes is its own MCP server's token, in an environment variable. A new
+provider is a `Provider` plus a line in `KNOWN_PROVIDERS`. Gemini CLI and
+Grok are not built, as decided: the architecture is ready for them, and
+Gemini comes when its CLI is installed and signed in.
+
+**§B.3, capability registry.**
+
+| Question                          | Answered by                                                                    |
+| --------------------------------- | ------------------------------------------------------------------------------ |
+| Can it program? Can it use tools? | `features.agentTools`: the agent's tools, which are how it programs here       |
+| Can it run in the background?     | `features.nonInteractive`; workers run headless                                |
+| Does it stream?                   | `features.streaming`                                                           |
+| Which efforts?                    | `models[].efforts`, read from the provider                                     |
+| Can it resume sessions?           | `features.keepsConversation`: Claude keeps a live session, Codex `exec resume` |
+| Which usage does it report?       | `features.usageReport`, and `usage()` itself                                   |
+| Is it signed in? Is it available? | `signedIn`, `installed` and the set-aside list, asked again every 5 minutes    |
+
+"Verified, not assumed":
+
+- Sign-in, version, models and efforts are read from the provider, kept
+  with their date, and read again when old or when the version changes.
+- The features are **declared by each adapter** and shown by the model
+  contract on the real CLIs. They are not probed again at run time,
+  because probing would spend the user's quota. This is a limit, and it
+  is written down.
+
+**§B.4, safe fallbacks.**
+
+1. **The cause:** `setAsideFor` reads the error. A usage limit sets the
+   provider aside until its reset; a lost sign-in or a missing CLI sets it
+   aside until checked again. Other errors are retried as in phase A.
+2. **Compatible alternatives:** the router chooses among the ready
+   providers, at the tier the task needs.
+3. **Permissions and limits:** the registry offers only ready providers,
+   and a plan at its limit is never used. The run's policy is the same
+   whatever the provider.
+4. **The checkpoint is kept:** each task keeps its checkpoints in Grafeno,
+   and the next worker gets them.
+5. **Reassigned only when safe:** the `moved` outcome gives the task back
+   without spending an attempt.
+6. **No side effect twice:** a task with a merge in flight
+   (`effectsInFlight`) is never moved. It waits.
+
+Shown by:
+
+- `test/orchestrator/providers.test.ts`, including a run where the first
+  provider hits its limit midway and the second finishes;
+- real run 2, routed away from a plan at 86%.
+
+"Not switching provider against the user's policy":
+
+- Tasks go only to the providers the user chose (`AGENT_PROVIDERS`,
+  `--providers`).
+- `--provider-for` and the affinities are preferences that give way to a
+  plan's limit. A strict "only this provider for this kind" is not offered.
+  If the user wants it, it is one option more.
+
+**The criterion:** every stage's "done when" is shown by tests (B1–B5, B7),
+and the mixed run is recorded (B6). **Phase B is closed**, with these two
+limits written down: no context window per model for providers that do
+not say it, and features declared and shown by the contract rather than
+probed at run time.
 
 **B6 done (2026-11-15):** `run-2026-11-15-6abb642a` ran in General Auto.
 Claude planned and wrote the module, and Codex wrote the tests and the

@@ -504,18 +504,18 @@ The second provider is Codex CLI with the user's ChatGPT plan, decided on
 2026-11-15. The brief's §B.5 had said Claude alone at first; the user
 chose to go on. Stages B1–B6 are in `docs/orchestration.md`.
 
-**Left before phase B is closed:**
+**Closed (2026-11-15).** Checked point by point against the brief's
+§B.1–B.4 in `docs/orchestration.md`:
 
-1. **B6:** one real run where both providers' workers finish, when
-   Claude's window has room.
-2. **B7, "Auto" across providers:**
-   - **What it adds:** a session's provider and model can each be Auto.
-     With provider Auto, every task is orchestrated across all connected
-     providers: the planner and the workers are chosen from a pool of
-     every provider's models, by role and quota.
-   - **The design** is in `docs/orchestration.md` (B7). Decided by the
-     user: a triage per message (direct answer or orchestration), and
-     affinity by role first, with spreading across plans as the
-     tie-break and quota always a hard limit.
-3. **The README:** a providers section, and Codex's own "Auto" in
-   `/models`.
+- B1–B5 and B7 ("Auto" across providers: one pool, affinity by role,
+  triage per message) are shown by tests.
+- B6, a real run where Claude and Codex workers both finished their
+  tasks, is recorded in `docs/measurements/providers-2026-11-15.md`.
+
+Two limits are written down:
+
+- Codex does not say its context window, so its share is estimated.
+- The adapters' features are declared and shown by the model contract on
+  the real CLIs, not probed at run time (that would spend quota).
+
+Gemini CLI and Grok are later adapters on the same interface.
