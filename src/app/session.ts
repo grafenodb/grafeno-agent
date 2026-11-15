@@ -107,6 +107,7 @@ export class AgentSession {
       ...(options.identity ? { agent: options.identity } : {}),
       ...(options.embedder ? { embedder: options.embedder } : {}),
       ...(project.path ? { gitRef: () => gitRef(project.path ?? ".") } : {}),
+      ...(config.memoryLimits ? { limits: config.memoryLimits } : {}),
     });
     const workspace = new Workspace(project.path ?? options.cwd ?? process.cwd());
     const store = options.store ?? new SessionStore(undefined, [config.agentKey]);

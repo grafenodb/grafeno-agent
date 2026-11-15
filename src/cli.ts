@@ -53,7 +53,9 @@ Commands:
           memory, calls no model. --task <name> (a task's checkpoints instead of the
           project's), --project <name>, --budget N (checkpoint tokens, default 500),
           --memory-budget N (default 500), --max-memories N (default 5), --json.
-          Measures go to stderr. Meant for a Claude Code SessionStart hook.`;
+          --level 0 (the checkpoint alone), 1 (and related memories: the default),
+          2 --query "<topic>" (memories about something specific). Measures go to
+          stderr. Meant for a Claude Code SessionStart hook.`;
 
 /** Days between upkeeps before the chat suggests one. */
 const UPKEEP_EVERY_DAYS = 7;
@@ -390,7 +392,10 @@ async function compactResumeCommand(argv: readonly string[]): Promise<number> {
   const agent = flag(argv, "--agent");
   const checkpointBudget = number("--budget");
   const memoryBudget = number("--memory-budget");
-  const maxMemories = number("--max-memories");
+  const level = number("--level");
+  const query = flag(argv, "--query");
+  // Level 0: the checkpoint alone, no memories looked up.
+  const maxMemories = level === 0 ? 0 : number("--max-memories");
   const resumed = await resumeCompact(config, {
     ...(task === undefined ? {} : { task }),
     ...(project === undefined ? {} : { project }),
@@ -398,6 +403,7 @@ async function compactResumeCommand(argv: readonly string[]): Promise<number> {
     ...(checkpointBudget === undefined ? {} : { checkpointBudget }),
     ...(memoryBudget === undefined ? {} : { memoryBudget }),
     ...(maxMemories === undefined ? {} : { maxMemories }),
+    ...(query === undefined ? {} : { query }),
   });
   if (argv.includes("--json")) console.log(JSON.stringify(resumed, null, 2));
   else console.log(resumed.text);

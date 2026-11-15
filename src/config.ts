@@ -1,3 +1,5 @@
+import { parseLimits, type RetrievalLimits } from "./memory/budget.js";
+
 /** The agent's settings, read from the environment. */
 export interface Config {
   /**
@@ -27,6 +29,11 @@ export interface Config {
    * agent alone ("<project> · <agent>"), for agents that do not work together.
    */
   readonly palace: PalaceMode;
+  /**
+   * How much memory may reach the model, from `AGENT_MEMORY_BUDGET`
+   * (`checkpoint=400,session=10000`, …); unset limits keep their defaults.
+   */
+  readonly memoryLimits?: Partial<RetrievalLimits>;
 }
 
 /** The palaces `AGENT_PALACE` may name. */
@@ -121,6 +128,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     problems.push(`AGENT_PALACE must be one of ${PALACES.join(", ")}: ${palace}`);
   }
 
+  const budgetText = read(env, "AGENT_MEMORY_BUDGET");
+  const budget = budgetText === undefined ? undefined : parseLimits(budgetText);
+  if (budget) problems.push(...budget.problems);
+
   if (problems.length > 0 || agentKey === undefined) throw new ConfigError(problems);
   return {
     grafenoMode: mode as GrafenoMode,
@@ -133,6 +144,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     ...(claudeModel === undefined ? {} : { claudeModel }),
     ...(claudeEffort === undefined ? {} : { claudeEffort }),
     ...(project === undefined ? {} : { project }),
+    ...(budget && Object.keys(budget.limits).length > 0 ? { memoryLimits: budget.limits } : {}),
   };
 }
 

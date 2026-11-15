@@ -109,3 +109,16 @@ describe("GRAFENO_MODE", () => {
     );
   });
 });
+
+describe("AGENT_MEMORY_BUDGET", () => {
+  it("sets memory limits, and names a wrong one", () => {
+    expect(
+      loadConfig({ GRAFENO_AGENT_KEY: KEY, AGENT_MEMORY_BUDGET: "checkpoint=300,callsPerTurn=4" })
+        .memoryLimits,
+    ).toEqual({ checkpoint: 300, callsPerTurn: 4 });
+    expect(loadConfig({ GRAFENO_AGENT_KEY: KEY }).memoryLimits).toBeUndefined();
+    expect(() => loadConfig({ GRAFENO_AGENT_KEY: KEY, AGENT_MEMORY_BUDGET: "tokens=5" })).toThrow(
+      /unknown limit "tokens"/,
+    );
+  });
+});

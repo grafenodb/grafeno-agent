@@ -16,6 +16,8 @@ export interface CompactResumeRequest {
   readonly checkpointBudget?: number;
   readonly memoryBudget?: number;
   readonly maxMemories?: number;
+  /** Look memories up by this instead of the task's goal and next action (level 2). */
+  readonly query?: string;
 }
 
 /**
@@ -31,7 +33,12 @@ export async function resumeCompact(
   vault: Vault = grafenoVault(config),
 ): Promise<CompactResume> {
   const started = Date.now();
+  const limits = config.memoryLimits ?? {};
   const budgets = {
+    ...(limits.checkpoint === undefined ? {} : { checkpointBudget: limits.checkpoint }),
+    ...(limits.memories === undefined ? {} : { memoryBudget: limits.memories }),
+    ...(limits.maxMemories === undefined ? {} : { maxMemories: limits.maxMemories }),
+    ...(request.query === undefined ? {} : { query: request.query }),
     ...(request.checkpointBudget === undefined
       ? {}
       : { checkpointBudget: request.checkpointBudget }),

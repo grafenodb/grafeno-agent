@@ -2,6 +2,7 @@ import type { Embedder } from "../embed/types.js";
 import type { Tool } from "../agent/tools.js";
 import { CHECKPOINT_PROPERTIES, packCheckpoint, type CheckpointInput } from "./checkpoint.js";
 import { findDuplicate, normalize } from "./quality.js";
+import { RetrievalBudget, type RetrievalLimits } from "./budget.js";
 import { compactResume, type CompactResume } from "./resume.js";
 import { describeSecrets, findSecrets } from "./secrets.js";
 import { answerId, type Vault, type VaultAnswer } from "./vault.js";
@@ -94,15 +95,12 @@ export interface MemorySessionOptions {
   /** Secrets the agent holds (its own key), never to be stored. */
   readonly knownSecrets?: readonly string[];
   /**
-   * The compact resume at the start: tokens for the checkpoint (default
-   * 500), for related memories (default 500), and how many memories at most
-   * (default 5). Past them, memories are listed by id, not loaded.
+   * How much memory may reach the model (see budget.ts): the compact resume
+   * at the start (checkpoint, memories, maxMemories), each lookup (soft),
+   * the size of an answer and lookups per turn (hard), and what comes on its
+   * own over the session (soft). Unset: the defaults.
    */
-  readonly resumeBudget?: {
-    readonly checkpoint?: number;
-    readonly memories?: number;
-    readonly maxMemories?: number;
-  };
+  readonly limits?: Partial<RetrievalLimits>;
   /** Tokens for the memory looked up before each message. Default: 600. */
   readonly contextBudget?: number;
   /**
@@ -150,6 +148,8 @@ export class MemorySession {
     readonly agentId: string | undefined,
     /** What memory held at the start, as text for the model. */
     readonly brief: string,
+    /** What memory may still bring in, and what it brought: see budget.ts. */
+    readonly retrieval: RetrievalBudget,
     /** The compact resume the brief came from, with its measures; unset without a brief. */
     readonly resumed?: CompactResume,
   ) {}
@@ -185,19 +185,22 @@ export class MemorySession {
       agent === undefined || options.register === false
         ? undefined
         : await agentNode(vault, agent, projectId);
-    if (options.brief === false) return new MemorySession(options, projectId, agentId, "");
+    const retrieval = new RetrievalBudget(options.limits);
+    if (options.brief === false) {
+      return new MemorySession(options, projectId, agentId, "", retrieval);
+    }
 
     // The state to go on from, not the whole palace: the latest checkpoint
     // and a few memories about it, each within a budget.
-    const budget = options.resumeBudget ?? {};
+    const { limits } = retrieval;
     const embedder = options.embedder;
     const resumed = await compactResume({
       vault,
       about: projectId,
       ...(agent ? { agent: agent.name } : {}),
-      ...(budget.checkpoint === undefined ? {} : { checkpointBudget: budget.checkpoint }),
-      ...(budget.memories === undefined ? {} : { memoryBudget: budget.memories }),
-      ...(budget.maxMemories === undefined ? {} : { maxMemories: budget.maxMemories }),
+      checkpointBudget: limits.checkpoint,
+      memoryBudget: limits.memories,
+      maxMemories: limits.maxMemories,
       ...(embedder
         ? {
             embed: async (text: string) => {
@@ -210,7 +213,10 @@ export class MemorySession {
           }
         : {}),
     });
-    return new MemorySession(options, projectId, agentId, resumed.text, resumed);
+    // What the resume showed is in the context: lookups say so instead of repeating it.
+    retrieval.seen(resumed.memories.map((m) => m.id));
+    retrieval.countAutomatic(resumed.text);
+    return new MemorySession(options, projectId, agentId, resumed.text, retrieval, resumed);
   }
 
   get project(): Project {
@@ -317,6 +323,10 @@ ${this.brief}`;
   /** The message, with what memory knows about it in front, as data. */
   async beforeTurn(message: string): Promise<string> {
     this.lastRecall = { memories: [], facts: 0 };
+    this.retrieval.startTurn();
+    // The session's budget for memory on its own is spent: the model may
+    // still look things up when it needs them.
+    if (!this.retrieval.automaticAllowed()) return message;
     let answer: VaultAnswer;
     try {
       const embedding = await this.#embed(message, "query");
@@ -331,6 +341,7 @@ ${this.brief}`;
     const text = answer.text.trim();
     if (answer.isError || text === "" || NOTHING_FOUND.test(text)) return message;
     this.lastRecall = readRecall(text);
+    this.retrieval.countAutomatic(text);
     return `<memory>\n${text}\n</memory>\n\n${message}`;
   }
 
@@ -482,6 +493,11 @@ ${this.brief}`;
       if (embedding) args.embedding = embedding;
     }
 
+    // Lookups within their budgets: refused past the turn's hard limit.
+    const admitted = this.retrieval.admit(name, args);
+    if ("refused" in admitted) throw new Error(admitted.refused);
+    Object.assign(args, admitted.args);
+
     let answer = await this.options.vault.call(name, args);
     // A room named without its palace, and several palaces have one of that
     // name (every project's palace has a "General"): the session's palace.
@@ -510,7 +526,7 @@ ${this.brief}`;
         });
       }
     }
-    return answer.text;
+    return this.retrieval.fit(name, answer);
   }
 }
 

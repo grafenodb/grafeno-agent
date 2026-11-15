@@ -257,9 +257,90 @@ output goes into the session's context before the first message:
   the compact resume and to use `recall` / `get_node` / `palace_enter` only
   when needed.
 
-## Next: stage 3
+## Stage 3: budgets and progressive retrieval (done)
 
-Budgets and progressive retrieval: one budget manager for every memory
-lookup (tokens, items, calls per turn and per session, the size of each
-answer, deduplication, safe cuts, references to what was left out), and the
-levels 0–3, with a deep walk only on request.
+### The Memory Retrieval Budget Manager (`src/memory/budget.ts`)
+
+Every memory tool of scenario A goes through `RetrievalBudget`. It has two
+kinds of limit, and treats them differently:
+
+| Limit                                                                                        | Kind | Default             | Past it                                                                                      |
+| -------------------------------------------------------------------------------------------- | ---- | ------------------- | -------------------------------------------------------------------------------------------- |
+| `resultChars`: the largest answer a lookup may put into the context                          | hard | 12,000 chars        | Cut at a line. The ids it left out are named, with a note to ask more narrowly or `get_node` |
+| `callsPerTurn`: lookups in one turn                                                          | hard | 8                   | Refused, with a reason the model can act on. Stores are not counted                          |
+| One deep look (`palace_map`, `palace_enter`, `palace_walk`, `timeline`) per turn             | hard | 1                   | Refused: use `recall` / `get_node`                                                           |
+| `lookupItems`, `lookupTokens`: what each lookup asks Grafeno for                             | soft | 8 items, 800 tokens | Asked for less. The model may ask for fewer, never more                                      |
+| `sessionTokens`: memory brought in on its own (resume and the `context` before each message) | soft | 20,000              | Nothing more comes on its own. The model may still look things up when it needs them         |
+| `checkpoint`, `memories`, `maxMemories`: the compact resume                                  | soft | 500, 500, 5         | Listed by id                                                                                 |
+
+It also shapes what comes back:
+
+- A search's results become one compact line each,
+  `[id] Name (Labels): text`, without the scores, reasons and
+  justifications.
+- Other structured answers become compact JSON.
+- A memory already shown this session, including the ones in the resume,
+  comes back as `[id] Name: shown earlier this session`.
+- It counts calls, deep calls, refusals, automatic lookups and the ones
+  skipped, tokens (all of them, and the ones brought in on its own), items
+  returned, items deduplicated and cuts. That is `session.retrieval.stats`,
+  for stage 5.
+
+All of it is set with `AGENT_MEMORY_BUDGET`, for example
+`checkpoint=400,callsPerTurn=4,sessionTokens=10000`. An unknown name or a
+bad value is reported like any other setting.
+
+Measured on the live server, the same answers before and after:
+
+| Lookup                                | Before        | After         |
+| ------------------------------------- | ------------- | ------------- |
+| `recall` (Grafeno's default limit)    | ~2,183 tokens | ~1,130 (−48%) |
+| `recall` limit 8                      | ~1,786        | ~892 (−50%)   |
+| `palace_map` (palace "Grafeno Agent") | ~1,732        | ~1,070 (−38%) |
+| `palace_enter` (room Orchestration)   | ~1,402        | ~1,299 (−7%)  |
+
+### Levels
+
+| Level | What                                               | How                                                                                                                       |
+| ----- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| 0     | The latest checkpoint and the next action          | `resume --compact --level 0`: 2 Grafeno calls, no search                                                                  |
+| 1     | And the memories related to the task (the default) | `resume --compact`, and the start of scenario A                                                                           |
+| 2     | Memories about something specific                  | `resume --compact --query "<topic>"`, or the model's `recall` / `get_node` within the lookup budget                       |
+| 3     | Walking the palace                                 | `palace_map`, `palace_enter`, `palace_walk`, `timeline`: never part of a resume, one per turn, within the hard size limit |
+
+The compact resume also leaves out weak matches: memories scoring below half
+of the best match. This fixes what stage 2 noticed. On this task, the
+default resume went from 5 memories (~788 tokens), some from old phases, to
+the 2 that are about this work (~589 tokens). The other refs are still
+listed by id. Level 0 was ~418 tokens.
+
+### Scenario B, honestly
+
+Claude Code talks to Grafeno's MCP server directly, so these budgets do not
+apply to the lookups it makes on its own. What does apply: the hook's
+compact resume (levels 0–2, with no model call), and instructions in
+`CLAUDE.local.md` to look things up narrowly (`recall` with a `limit`,
+`context` with a `budget`) and not to walk the palace to get started. A
+proxy MCP server in front of Grafeno could apply the budgets there as well.
+That is possible, but not built: it is another server to run, and it has
+not been measured as needed.
+
+Tests: `test/memory/budget.test.ts` (13 tests: soft and hard limits, one deep
+look, cuts that name ids, compact lines, once per session, compact JSON,
+`AGENT_MEMORY_BUDGET`, and the budget inside a memory session: refused
+lookups, automatic lookups stopping, the resume counted), the relevance test
+in `resume.test.ts`, and a settings test. The evaluation's fake model now
+reads ids from the compact lines too (`test/eval/scenarios.ts`). Full CI:
+366 tests. `eval` 9/9, `eval:agents` and `eval:orchestration` pass.
+
+## Next: stage 4
+
+Incremental consolidation and the context lifecycle:
+
+- when a decision changes, update it and link the change (`supersedes`), so
+  the old version is not shown as current, while its history is kept;
+- deduplicate by meaning when storing;
+- in scenario A, rotate on its own: when the cache is cold and the
+  conversation is large, save a checkpoint and start a new conversation with
+  the compact resume, never in the middle of a turn, without compacting
+  again and again, and resetting what "shown earlier" means.

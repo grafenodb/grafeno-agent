@@ -12,9 +12,14 @@ const remember = (text: string, label: string): FakeStep => ({
   input: { text, labels: [label], origin: "stated" },
 });
 
-/** The first id in a tool's answer (JSON), such as recall's best match. */
-const firstId = (context: FakeContext, index: number): string =>
-  /"id":\s*"([^"]+)"/.exec(context.results[index]?.content ?? "")?.[1] ?? "";
+/**
+ * The first id in a tool's answer, such as recall's best match: JSON
+ * (`"id": "…"`), or a search's compact lines (`[id] name: text`).
+ */
+const firstId = (context: FakeContext, index: number): string => {
+  const content = context.results[index]?.content ?? "";
+  return (/"id":\s*"([^"]+)"/.exec(content) ?? /^\[([^\]\s]+)\]/m.exec(content))?.[1] ?? "";
+};
 
 const BUGGY = "function add(a, b) {\n  return a - b;\n}\nmodule.exports = { add };\n";
 const TEST =

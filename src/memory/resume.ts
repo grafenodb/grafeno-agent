@@ -76,6 +76,9 @@ export function estimateTokens(text: string): number {
 /** Labels of nodes that are not memories to bring back as such. */
 const NOT_MEMORIES = new Set(["Checkpoint", "Project", "Agent", "Room", "Palace", "Locus"]);
 
+/** Memories scoring below this share of the best match are not brought. */
+const RELEVANCE_FLOOR = 0.5;
+
 /** The most ids listed past the budget. */
 const MORE_LIMIT = 10;
 
@@ -239,9 +242,23 @@ function pickMemories(
   const said = checkpoint
     ? [...checkpoint.decisions, checkpoint.summary, ...checkpoint.progress.completed]
     : [];
-  for (const item of data?.results ?? []) {
-    const node = item as { id?: unknown; name?: unknown; text?: unknown; labels?: unknown };
+  // Only what is close to the best match: a weak match costs tokens and
+  // helps little (the search's scores, when it gives them).
+  const results = data?.results ?? [];
+  const scores = results
+    .map((item) => (item as { score?: unknown }).score)
+    .filter((score): score is number => typeof score === "number" && Number.isFinite(score));
+  const floor = scores.length > 0 ? Math.max(...scores) * RELEVANCE_FLOOR : -Infinity;
+  for (const item of results) {
+    const node = item as {
+      id?: unknown;
+      name?: unknown;
+      text?: unknown;
+      labels?: unknown;
+      score?: unknown;
+    };
     if (typeof node.id !== "string") continue;
+    if (typeof node.score === "number" && node.score < floor) continue;
     const labels = Array.isArray(node.labels) ? node.labels.map(String) : [];
     if (labels.some((label) => NOT_MEMORIES.has(label))) continue;
     const name = typeof node.name === "string" && node.name !== "" ? node.name : undefined;

@@ -200,3 +200,22 @@ describe("compactResume", () => {
     expect(after).toBeLessThan(before * 0.3);
   });
 });
+
+describe("compactResume relevance", () => {
+  it("leaves out weak matches: far below the best one", async () => {
+    const vault = new FakeVault({
+      resume: () => saved(STATE),
+      recall: () =>
+        ok({
+          results: [
+            { ...memory("m1", "Strong match."), score: 2 },
+            { ...memory("m2", "Fair match."), score: 1.2 },
+            { ...memory("m3", "Weak match."), score: 0.4 },
+          ],
+        }),
+    });
+    const resumed = await compactResume({ vault, about: "p" });
+    expect(resumed.memories.map((m) => m.id)).toEqual(["m1", "m2"]);
+    expect(resumed.more).toEqual([]);
+  });
+});
