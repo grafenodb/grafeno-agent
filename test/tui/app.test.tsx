@@ -131,15 +131,30 @@ function render(tree: Parameters<typeof renderInk>[0]): ReturnType<typeof render
 const ENTER = "\r";
 const DOWN = "\u001B[B";
 
-async function until(check: () => boolean, what: string, ms = 5000): Promise<void> {
+async function until(
+  check: () => boolean,
+  what: string | (() => string),
+  ms = 5000,
+): Promise<void> {
   const deadline = Date.now() + ms;
   while (!check()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${typeof what === "string" ? what : what()}`);
+    }
     await new Promise((resolve) => setTimeout(resolve, 40));
   }
 }
 
 type App = ReturnType<typeof render>;
+
+/** Presses a key, again every half second, until `done`: a key sent before a menu listens is lost. */
+async function press(app: App, key: string, done: () => boolean, what: string): Promise<void> {
+  for (let tries = 0; tries < 20 && !done(); tries++) {
+    app.stdin.write(key);
+    await until(done, what, 500).catch(() => undefined);
+  }
+  await until(done, what, 1);
+}
 const seen = (app: App) => app.frames.join("\n");
 const now = (app: App) => app.lastFrame() ?? "";
 
@@ -562,9 +577,16 @@ describe("orchestration in the interface", { timeout: 60_000 }, () => {
     await until(() => now(app).includes("Run this plan?"), "the plan");
     expect(seen(app)).toContain("Goal: Two files");
     expect(seen(app)).toContain("Write alpha");
-    app.stdin.write(ENTER);
+    // Under load a key can arrive before the menu listens for keys (it starts
+    // listening after it is drawn): the choice is pressed until the menu closes.
+    await press(app, ENTER, () => !now(app).includes("Run this plan?"), "the run to start");
     // The last frame, not every frame: joining them all each time slows the run itself.
-    await until(() => now(app).includes("Run report"), "the report", 45_000);
+    await until(
+      () => now(app).includes("Run report"),
+      () => `the report; the screen was:
+${now(app)}`,
+      45_000,
+    );
     expect(now(app)).toContain(": completed");
     expect(now(app)).toContain("git merge grafeno/");
     expect(

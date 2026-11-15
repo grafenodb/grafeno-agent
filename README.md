@@ -87,7 +87,7 @@ grafeno-agent init --grafeno-url http://127.0.0.1:7810 --key <key>
 | `AGENT_EMBEDDER`      | `e5-small`              | Meaning for memory (a local model), or `none`                             |
 | `AGENT_PALACE`        | `shared`                | `shared` with other agents, or `own` (see below)                          |
 | `AGENT_SHELL`         | Git's bash on Windows   | The shell for commands, with its arguments                                |
-| `AGENT_PROVIDERS`     | `claude-code`           | `claude-code`, `codex`, `gemini`, in order, or `auto` (set by `/connect`) |
+| `AGENT_PROVIDERS`     | `auto`                  | `claude-code`, `codex`, `gemini`, in order, or `auto` (set by `/connect`) |
 | `GEMINI_TIER`         | none                    | `free` or `paid`: your Gemini key's tier (set by `login gemini`)          |
 | `AGENT_ALLOW_BILLING` | none                    | Providers allowed to bill by consumption, such as `gemini`                |
 | `AGENT_AFFINITY`      | the defaults below      | Where each task kind goes first in `auto`                                 |
@@ -296,7 +296,7 @@ through Google AI Studio's API and your own key.
   chooses the one the chat uses; the conversation goes on with it.
   `/models` lists that provider's models, starting with **Auto** (its own
   choice). `/usage` shows each one's plan.
-- **Auto** in `/connect` (or `AGENT_PROVIDERS=auto`) uses every ready
+- **Auto**, the default (`AGENT_PROVIDERS=auto`, or nothing set; `/connect` too), uses every ready
   provider. Before each message a light model decides whether to answer
   directly or to plan the request across providers. A question never
   starts several workers.

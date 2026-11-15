@@ -41,15 +41,20 @@ export const PROVIDER_SECRET_ENV = ["GEMINI_API_KEY", "GOOGLE_API_KEY"] as const
 /** The setting's word for General Auto: every known provider, as one pool. */
 export const AUTO = "auto";
 
-/** Whether a setting asks for General Auto (`AGENT_PROVIDERS=auto`). */
+/**
+ * Whether a setting asks for General Auto (`AGENT_PROVIDERS=auto`). An
+ * empty setting is Auto too, the default: every installed and signed-in
+ * provider, found on its own.
+ */
 export function isAuto(setting: string | undefined): boolean {
-  return (setting ?? "").trim().toLowerCase() === AUTO;
+  const value = (setting ?? "").trim().toLowerCase();
+  return value === AUTO || value === "";
 }
 
 /**
  * The ids in a setting such as "claude-code,codex"; throws on one it does
- * not know. "auto" is every known provider (General Auto): the registry
- * then keeps only the ready ones.
+ * not know. "auto", or nothing (the default), is every known provider
+ * (General Auto): the registry then keeps only the ready ones.
  */
 export function providerIds(setting: string | undefined): string[] {
   if (isAuto(setting)) return Object.keys(KNOWN_PROVIDERS);
@@ -57,7 +62,7 @@ export function providerIds(setting: string | undefined): string[] {
     .split(",")
     .map((id) => id.trim())
     .filter(Boolean);
-  const chosen = ids.length > 0 ? [...new Set(ids)] : ["claude-code"];
+  const chosen = [...new Set(ids)];
   const unknown = chosen.filter((id) => !(id in KNOWN_PROVIDERS));
   if (unknown.length > 0) {
     throw new Error(
@@ -68,7 +73,7 @@ export function providerIds(setting: string | undefined): string[] {
 }
 
 /**
- * The providers the user chose (`AGENT_PROVIDERS`, default claude-code),
+ * The providers the user chose (`AGENT_PROVIDERS`, default auto: every known one),
  * in their order of preference: the chat uses the first; a run gives each
  * task to one of them.
  */

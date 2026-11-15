@@ -55,7 +55,7 @@ Commands:
           git worktree; the work lands on an integration branch for you to merge.
           --mode supervised|controlled|extended (default controlled), --workers N
           (default 3), --light (light models, low effort), --yes (no confirmation),
-          --providers claude-code,codex (default AGENT_PROVIDERS), or --providers auto
+          --providers claude-code,codex, or --providers auto (default AGENT_PROVIDERS, auto)
           (General Auto: every ready provider as one pool, each task kind to its
           affinity, AGENT_AFFINITY), --provider-for tests=codex,docs=codex (which
           provider takes a kind of task). Limits for the whole run: --max-tokens N
