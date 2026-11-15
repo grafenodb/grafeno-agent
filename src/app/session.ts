@@ -3,7 +3,7 @@ import { SYSTEM_PROMPT } from "../agent/builtin-tools.js";
 import { ToolRegistry, type Approver, type Tool } from "../agent/tools.js";
 import type { Config } from "../config.js";
 import type { Embedder } from "../embed/types.js";
-import { detectProject } from "../memory/project.js";
+import { detectProject, gitRef } from "../memory/project.js";
 import { MemorySession, type AgentName, type Recall } from "../memory/session.js";
 import { grafenoVault, type Vault } from "../memory/vault.js";
 import { ClaudeCodeProvider } from "../providers/claude-code.js";
@@ -106,6 +106,7 @@ export class AgentSession {
       knownSecrets: [config.agentKey],
       ...(options.identity ? { agent: options.identity } : {}),
       ...(options.embedder ? { embedder: options.embedder } : {}),
+      ...(project.path ? { gitRef: () => gitRef(project.path ?? ".") } : {}),
     });
     const workspace = new Workspace(project.path ?? options.cwd ?? process.cwd());
     const store = options.store ?? new SessionStore(undefined, [config.agentKey]);

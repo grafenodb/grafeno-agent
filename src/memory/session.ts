@@ -1,6 +1,8 @@
 import type { Embedder } from "../embed/types.js";
 import type { Tool } from "../agent/tools.js";
+import { CHECKPOINT_PROPERTIES, packCheckpoint, type CheckpointInput } from "./checkpoint.js";
 import { findDuplicate, normalize } from "./quality.js";
+import { compactResume, type CompactResume } from "./resume.js";
 import { describeSecrets, findSecrets } from "./secrets.js";
 import { answerId, type Vault, type VaultAnswer } from "./vault.js";
 
@@ -91,8 +93,16 @@ export interface MemorySessionOptions {
   readonly palace?: "shared" | "own";
   /** Secrets the agent holds (its own key), never to be stored. */
   readonly knownSecrets?: readonly string[];
-  /** Tokens for the memory brought back at the start. Default: 1500. */
-  readonly briefBudget?: number;
+  /**
+   * The compact resume at the start: tokens for the checkpoint (default
+   * 500), for related memories (default 500), and how many memories at most
+   * (default 5). Past them, memories are listed by id, not loaded.
+   */
+  readonly resumeBudget?: {
+    readonly checkpoint?: number;
+    readonly memories?: number;
+    readonly maxMemories?: number;
+  };
   /** Tokens for the memory looked up before each message. Default: 600. */
   readonly contextBudget?: number;
   /**
@@ -113,13 +123,16 @@ export interface MemorySessionOptions {
   readonly brief?: boolean;
   /** Give the agent a node of its own in memory. Default: true; a worker needs none. */
   readonly register?: boolean;
+  /** The git ref the work is at, saved with each checkpoint. */
+  readonly gitRef?: () => Promise<string | undefined>;
 }
 
 /**
  * The agent's memory policy for one session, with Grafeno:
  *
- * - at the start, the project's palace and room exist, and what the room
- *   holds and the project's latest checkpoint are brought back (`brief`);
+ * - at the start, the project's palace and room exist, and a compact resume
+ *   is brought back (`brief`): the latest checkpoint and a few related
+ *   memories, within budgets, without walking the palace;
  * - before each message, what memory knows about it is looked up
  *   (`context`) and given to the model with the message, as data;
  * - during the turn, the model stores and links what lasts with the memory
@@ -137,6 +150,8 @@ export class MemorySession {
     readonly agentId: string | undefined,
     /** What memory held at the start, as text for the model. */
     readonly brief: string,
+    /** The compact resume the brief came from, with its measures; unset without a brief. */
+    readonly resumed?: CompactResume,
   ) {}
 
   static async start(options: MemorySessionOptions): Promise<MemorySession> {
@@ -172,19 +187,30 @@ export class MemorySession {
         : await agentNode(vault, agent, projectId);
     if (options.brief === false) return new MemorySession(options, projectId, agentId, "");
 
-    const entered = await must(
-      vault.call("palace_enter", {
-        room: ROOM,
-        palace,
-        budget: options.briefBudget ?? 1500,
-      }),
-    );
-
-    const brief = [
-      `What the room "${ROOM}" of the palace "${palace}" holds:\n${entered.text}`,
-      ...(await checkpoints(vault, projectId, agent)),
-    ].join("\n\n");
-    return new MemorySession(options, projectId, agentId, brief);
+    // The state to go on from, not the whole palace: the latest checkpoint
+    // and a few memories about it, each within a budget.
+    const budget = options.resumeBudget ?? {};
+    const embedder = options.embedder;
+    const resumed = await compactResume({
+      vault,
+      about: projectId,
+      ...(agent ? { agent: agent.name } : {}),
+      ...(budget.checkpoint === undefined ? {} : { checkpointBudget: budget.checkpoint }),
+      ...(budget.memories === undefined ? {} : { memoryBudget: budget.memories }),
+      ...(budget.maxMemories === undefined ? {} : { maxMemories: budget.maxMemories }),
+      ...(embedder
+        ? {
+            embed: async (text: string) => {
+              try {
+                return (await embedder.embed([text], "query"))[0];
+              } catch {
+                return undefined;
+              }
+            },
+          }
+        : {}),
+    });
+    return new MemorySession(options, projectId, agentId, resumed.text, resumed);
   }
 
   get project(): Project {
@@ -230,9 +256,11 @@ ${this.#agentsPolicy()}
 - When something stopped being true, do not leave both: store the new memory, relate it to the old one with supersedes (and a reason), and mark the old one with feedback "obsolete". A fact (a relation) that ended is closed with forget, mode "invalidate"; memories themselves are never deleted.
 - Say how memories turned out: feedback "useful" when one helped, "wrong" when it misled, "verified" when you checked it against a source.
 - When unsure what is known, use palace_reflect: keep verified facts, claims and inferences apart, and say plainly what is not known.
-- When the session ends you will be asked to save a checkpoint.
+- When the session ends you will be asked to save a checkpoint: the present state of the work, not a story of the session.
 
 ## What memory held when this session started
+
+It is a compact resume: the latest checkpoint and a few related memories. Go on from its next action. Look up more (recall, get_node, the ids listed) only when the work needs it; do not walk the whole palace to get started.
 
 ${this.brief}`;
   }
@@ -328,7 +356,7 @@ ${this.brief}`;
 
   /** The message that asks the model to save where the session stands. */
   endOfSession(): string {
-    return `The session is ending. Save a checkpoint now with the checkpoint tool: a summary of where the work stands, what was done, what comes next, and the decisions taken. Then reply with one short line.`;
+    return `The session is ending. Save a checkpoint now with the checkpoint tool: the present state of the work (not a story of the session): its goal and status, the one next action, what is pending or blocked, errors still open, the decisions taken and the files that matter. Then reply with one short line.`;
   }
 
   /** The memory tools the model gets, as agent tools. */
@@ -339,7 +367,11 @@ ${this.brief}`;
   }
 
   #tool(tool: { name: string; description: string; inputSchema: Record<string, unknown> }): Tool {
-    const properties = { ...(tool.inputSchema.properties as Record<string, unknown> | undefined) };
+    const properties: Record<string, unknown> = {
+      ...(tool.inputSchema.properties as Record<string, unknown> | undefined),
+      // A checkpoint carries the state of the work: see checkpoint.ts.
+      ...(tool.name === "checkpoint" ? CHECKPOINT_PROPERTIES : {}),
+    };
     delete properties.namespace; // The agent's namespace, always.
     delete properties.embedding; // Vectors are the agent's to compute, not the model's.
     const required = Array.isArray(tool.inputSchema.required)
@@ -408,9 +440,25 @@ ${this.brief}`;
       args.mode ??= "invalidate";
     }
     if (name === "checkpoint") {
+      // In the structured form, in Grafeno's own fields.
+      const refs = [
+        ...(Array.isArray(args.memory_refs) ? (args.memory_refs as unknown[]).map(String) : []),
+        ...this.#stored.slice(-10),
+      ];
+      const gitRef = await this.options.gitRef?.().catch(() => undefined);
+      const packed = packCheckpoint({
+        ...(args as Partial<CheckpointInput>),
+        task: typeof args.task === "string" ? args.task : this.task,
+        summary: typeof args.summary === "string" ? args.summary : "",
+        memory_refs: refs,
+        ...(gitRef === undefined ? {} : { git_ref: gitRef }),
+      });
+      // Grafeno's checkpoint does not take this format's own fields: they are packed.
+      for (const key of Object.keys(CHECKPOINT_PROPERTIES)) Reflect.deleteProperty(args, key);
+      Reflect.deleteProperty(args, "git_ref");
+      Object.assign(args, packed);
       // Always about the project, so the next session's `resume` finds it.
       args.about = this.projectId;
-      args.task ??= this.task;
       // Saved under the agent's own name, never another's.
       const by = this.options.author ?? this.options.agent?.name;
       if (by !== undefined) args.agent = by;
@@ -519,7 +567,7 @@ function dataOf(answer: VaultAnswer): unknown {
 }
 
 /** The project's node, if some agent already made it. */
-async function findProject(vault: Vault, project: Project): Promise<string | undefined> {
+export async function findProject(vault: Vault, project: Project): Promise<string | undefined> {
   const answer = await vault.call("recall", {
     query: project.name,
     labels: ["Project"],
@@ -582,47 +630,6 @@ async function agentNode(
     await vault.call("relate", { from: id, label: "works_on", to: projectId });
   }
   return id;
-}
-
-interface Resumed {
-  found?: boolean;
-  checkpoint?: { id?: string; agent?: string };
-}
-
-/** The latest checkpoints about the project, as text: this agent's own and, when another's is newer, that one. */
-async function checkpoints(
-  vault: Vault,
-  projectId: string,
-  agent: AgentName | undefined,
-): Promise<string[]> {
-  const latest = await resume(vault, { about: projectId });
-  if (!latest) return ["No checkpoint was saved for this project yet: this is its first session."];
-  if (agent === undefined) {
-    return [`The project's latest checkpoint (where the last session left off):\n${latest.text}`];
-  }
-  const mine = await resume(vault, { about: projectId, agent: agent.name });
-  const parts = [
-    mine
-      ? `Your latest checkpoint on the project (where your last session left off):\n${mine.text}`
-      : "You have not saved a checkpoint on this project yet.",
-  ];
-  if (latest.data.checkpoint?.id !== mine?.data.checkpoint?.id) {
-    parts.push(
-      `The project's latest checkpoint, saved by another agent (${latest.data.checkpoint?.agent ?? "unknown"}): it is that agent's work, not yours to redo.\n${latest.text}`,
-    );
-  }
-  return parts;
-}
-
-async function resume(
-  vault: Vault,
-  args: Record<string, unknown>,
-): Promise<{ text: string; data: Resumed } | undefined> {
-  const answer = await vault.call("resume", args);
-  if (answer.isError) return undefined;
-  const data = (dataOf(answer) ?? {}) as Resumed;
-  if (data.found === false) return undefined;
-  return { text: answer.text, data };
 }
 
 async function must(answer: Promise<VaultAnswer>): Promise<VaultAnswer> {

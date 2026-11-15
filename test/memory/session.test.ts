@@ -26,8 +26,10 @@ describe("MemorySession.start", () => {
     ]);
     expect(vault.called("remember")[0]).toMatchObject({ name: "demo", labels: ["Project"] });
     expect(vault.called("resume")).toEqual([{ about: session.projectId }]);
-    expect(session.brief).toContain("The room holds: nothing yet.");
+    // A compact resume: the palace is not walked.
+    expect(vault.called("palace_enter")).toEqual([]);
     expect(session.brief).toContain("first session");
+    expect(session.resumed?.stats.totalTokens).toBeLessThan(100);
   });
 
   it("brings back the project's latest checkpoint", async () => {
@@ -133,9 +135,20 @@ describe("the memory tools", () => {
     await checkpoint?.run({ summary: "Done for today." }, { signal });
     // Seen on real Claude: it passed the room's id as `about`.
     await checkpoint?.run({ summary: "More.", task: "mine", about: "the-room-id" }, { signal });
+    const empty = { done: [], next: [], decisions: [], files: [] };
     expect(vault.called("checkpoint")).toEqual([
-      { summary: "Done for today.", about: session.projectId, task: "demo: work" },
-      { summary: "More.", about: session.projectId, task: "mine" },
+      {
+        ...empty,
+        summary: 'Done for today.\nstate: {"v":1,"status":"in_progress"}',
+        about: session.projectId,
+        task: "demo: work",
+      },
+      {
+        ...empty,
+        summary: 'More.\nstate: {"v":1,"status":"in_progress"}',
+        about: session.projectId,
+        task: "mine",
+      },
     ]);
   });
 
@@ -295,12 +308,18 @@ describe("several agents", () => {
     const vault = new FakeVault({
       resume: (args) =>
         args.agent === "grafeno-agent-review"
-          ? ok({ found: true, checkpoint: { id: "c1", agent: "grafeno-agent-review" }, s: "MINE" })
-          : ok({ found: true, checkpoint: { id: "c2", agent: "grafeno-agent-dev" }, s: "THEIRS" }),
+          ? ok({
+              found: true,
+              checkpoint: { id: "c1", agent: "grafeno-agent-review", task: "t", summary: "MINE" },
+            })
+          : ok({
+              found: true,
+              checkpoint: { id: "c2", agent: "grafeno-agent-dev", task: "t", summary: "THEIRS" },
+            }),
     });
     const session = await startAs(vault);
-    expect(session.brief).toMatch(/Your latest checkpoint[\s\S]*MINE/);
-    expect(session.brief).toMatch(/saved by another agent \(grafeno-agent-dev\)[\s\S]*THEIRS/);
+    expect(session.brief).toMatch(/checkpoint c1, by grafeno-agent-review[\s\S]*Summary: MINE/);
+    expect(session.brief).toMatch(/by another agent \(grafeno-agent-dev\)[\s\S]*THEIRS/);
   });
 
   it("explains a refusal to change another agent's memory", async () => {

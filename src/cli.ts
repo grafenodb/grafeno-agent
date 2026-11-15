@@ -25,6 +25,7 @@ import { createOrchestrator, describePlan, type OrchestrateSettings } from "./ap
 import type { Orchestrator, OrchestratorOptions } from "./orchestrator/orchestrator.js";
 import { AUTONOMY, type Autonomy } from "./orchestrator/policy.js";
 import { describeReport } from "./orchestrator/telemetry.js";
+import { describeResumeStats, resumeCompact } from "./app/resume.js";
 
 const USAGE = `Usage: grafeno-agent <command>
 
@@ -46,7 +47,13 @@ Commands:
           --providers claude-code,codex (default AGENT_PROVIDERS), --provider-for
           tests=codex,docs=codex (which provider takes a kind of task).
   runs [id]  The project's runs, or one run's report.
-  resume <id>  Go on with a paused or waiting run.`;
+  resume <id>  Go on with a paused or waiting run.
+  resume --compact  Print where the project's work stands, compact, for a new session:
+          the latest checkpoint and a few related memories, within budgets. Only reads
+          memory, calls no model. --task <name> (a task's checkpoints instead of the
+          project's), --project <name>, --budget N (checkpoint tokens, default 500),
+          --memory-budget N (default 500), --max-memories N (default 5), --json.
+          Measures go to stderr. Meant for a Claude Code SessionStart hook.`;
 
 /** Days between upkeeps before the chat suggests one. */
 const UPKEEP_EVERY_DAYS = 7;
@@ -341,6 +348,7 @@ async function runsCommand(argv: readonly string[]): Promise<number> {
 }
 
 async function resumeCommand(argv: readonly string[]): Promise<number> {
+  if (argv.includes("--compact")) return compactResumeCommand(argv);
   const id = argv.find((arg) => !arg.startsWith("--"));
   if (!id) {
     console.error("Which run? grafeno-agent runs lists them.");
@@ -355,6 +363,46 @@ async function resumeCommand(argv: readonly string[]): Promise<number> {
   });
   console.log(`Resuming ${id}:`);
   return drive(orchestrator, id);
+}
+
+/**
+ * Prints the compact resume. It never fails a session it starts: when memory
+ * cannot be reached, the text says so and the exit code is still 0.
+ */
+async function compactResumeCommand(argv: readonly string[]): Promise<number> {
+  const number = (name: string) => {
+    const value = flag(argv, name);
+    if (value === undefined) return undefined;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+  };
+  let config: Config;
+  try {
+    config = loadConfig();
+  } catch (error) {
+    console.log(
+      `## Where the work stands\nGrafeno Agent is not set up (${error instanceof Error ? (error.message.split("\n")[0] ?? "") : String(error)}): no checkpoint was loaded.`,
+    );
+    return 0;
+  }
+  const task = flag(argv, "--task");
+  const project = flag(argv, "--project");
+  const agent = flag(argv, "--agent");
+  const checkpointBudget = number("--budget");
+  const memoryBudget = number("--memory-budget");
+  const maxMemories = number("--max-memories");
+  const resumed = await resumeCompact(config, {
+    ...(task === undefined ? {} : { task }),
+    ...(project === undefined ? {} : { project }),
+    ...(agent === undefined ? {} : { agent }),
+    ...(checkpointBudget === undefined ? {} : { checkpointBudget }),
+    ...(memoryBudget === undefined ? {} : { memoryBudget }),
+    ...(maxMemories === undefined ? {} : { maxMemories }),
+  });
+  if (argv.includes("--json")) console.log(JSON.stringify(resumed, null, 2));
+  else console.log(resumed.text);
+  console.error(describeResumeStats(resumed));
+  return 0;
 }
 
 async function main(argv: readonly string[]): Promise<number> {

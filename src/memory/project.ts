@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import type { Project } from "./session.js";
@@ -18,4 +19,19 @@ export function detectProject(cwd: string, named?: string): Project {
     dir = parent;
   }
   return { name: named ?? (basename(start) || "default"), path: start };
+}
+
+/** The commit a folder's repository is at (short), or nothing when it is not one. */
+export function gitRef(dir: string): Promise<string | undefined> {
+  return new Promise((done) => {
+    execFile(
+      "git",
+      ["rev-parse", "--short", "HEAD"],
+      { cwd: dir, timeout: 5000, windowsHide: true },
+      (error, stdout) => {
+        const ref = stdout.trim();
+        done(error || ref === "" ? undefined : ref);
+      },
+    );
+  });
 }
