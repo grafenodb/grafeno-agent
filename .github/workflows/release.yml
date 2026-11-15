@@ -2,12 +2,10 @@ name: Release
 
 # A tag v<version>, only after the whole pipeline (checks and evaluation)
 # is green, and only when the tag matches package.json and CHANGELOG.md
-# has a section for it:
-# - publishes @grafenodb/agent-cli to npm through trusted publishing
-#   (OIDC): no token is stored, and the package gets provenance;
-# - makes a GitHub release with the same package, as
-#   grafenodb-agent-cli-<version>.tgz and as grafeno-agent.tgz (what
-#   releases/latest/download/grafeno-agent.tgz installs).
+# has a section for it, makes a GitHub release with the package, as
+# grafenodb-agent-cli-<version>.tgz and as grafeno-agent.tgz (what
+# releases/latest/download/grafeno-agent.tgz installs). publish.yml
+# publishes the same version to npm.
 # See RELEASING.md: releasing is a decision of the owner.
 on:
   push:
@@ -49,36 +47,3 @@ jobs:
           awk -v v="$version" '$0 ~ "^## " v {on=1; next} /^## / && on {exit} on' CHANGELOG.md > notes.md
           gh release create "$GITHUB_REF_NAME" "$file" grafeno-agent.tgz SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --title "Grafeno Agent $version" --notes-file notes.md
-
-  publish:
-    name: Publish @grafenodb/agent-cli to npm
-    needs: pipeline
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "26"
-          registry-url: "https://registry.npmjs.org"
-      - name: The tag names the package's version
-        run: |
-          version="$(node -p 'require("./package.json").version')"
-          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, package $version"; exit 1; }
-          grep -q "^## $version" CHANGELOG.md || { echo "CHANGELOG.md has no section for $version"; exit 1; }
-          test "$(node -p 'require("./package.json").private === true')" = "false" || { echo "package.json is private"; exit 1; }
-      - name: Already on npm?
-        id: published
-        run: |
-          version="$(node -p 'require("./package.json").version')"
-          if npm view "@grafenodb/agent-cli@$version" version >/dev/null 2>&1; then
-            echo "@grafenodb/agent-cli@$version is already on npm: not published again"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          fi
-      - run: npm ci --no-audit --no-fund
-        if: steps.published.outputs.skip != 'true'
-      - name: Publish
-        if: steps.published.outputs.skip != 'true'
-        run: npm publish

@@ -6,13 +6,13 @@ package (`grafenodb-agent-cli-<version>.tgz`, and `grafeno-agent.tgz` for
 `releases/latest/download/grafeno-agent.tgz`). A release is the owner's
 decision: nothing is published by an agent or a session on its own.
 
-npm trusts the release workflow through trusted publishing (OIDC): no
-token is stored. On npmjs.com, the package's settings name the trusted
-publisher: GitHub Actions, `grafenodb/grafeno-agent`, workflow
-`release.yml`. A package must exist before it can be given one, so its
-first version (0.1.2) was published by hand; the workflow does not
-publish a version that is already on npm, and goes on to the GitHub
-release.
+npm trusts `.github/workflows/publish.yml` through trusted publishing
+(OIDC): no token is stored, and the package gets provenance. On
+npmjs.com, the package's settings name the trusted publisher: GitHub
+Actions, `grafenodb/grafeno-agent`, workflow `publish.yml`. A package
+must exist before it can be given one, so a placeholder (`0.0.0-stage`,
+tagged `stage`) was published first. `publish.yml` does not publish a
+version that is already on npm; `release.yml` makes the GitHub release.
 
 ## Rules
 
@@ -43,4 +43,5 @@ ci` on Node 22.18 and 24) and the evaluation (`npm run eval`, at or above
 
 3. Commit and push; once the pipeline on that commit is green, tag
    `v<version>` and push the tag. The release workflow runs the pipeline
-   again, then publishes to npm and makes the GitHub release.
+   again; then `publish.yml` publishes to npm and `release.yml` makes the
+   GitHub release.

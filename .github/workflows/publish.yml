@@ -1,0 +1,52 @@
+# Publishes @grafenodb/agent-cli to npm when a tag v<version> is pushed,
+# only after the whole pipeline (checks and evaluation) is green, and only
+# when the tag matches package.json and CHANGELOG.md has a section for it.
+# npm trusts this one workflow file through trusted publishing (OIDC): no
+# token is stored, and the package gets provenance. A version already on
+# npm is not published again. release.yml makes the GitHub release.
+# See RELEASING.md: releasing is a decision of the owner.
+name: Publish
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  pipeline:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish @grafenodb/agent-cli to npm
+    needs: pipeline
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+          registry-url: "https://registry.npmjs.org"
+      - name: The tag names the package's version
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, package $version"; exit 1; }
+          grep -q "^## $version" CHANGELOG.md || { echo "CHANGELOG.md has no section for $version"; exit 1; }
+          test "$(node -p 'require("./package.json").private === true')" = "false" || { echo "package.json is private"; exit 1; }
+      - name: Already on npm?
+        id: published
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          if npm view "@grafenodb/agent-cli@$version" version >/dev/null 2>&1; then
+            echo "@grafenodb/agent-cli@$version is already on npm: not published again"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - run: npm ci --no-audit --no-fund
+        if: steps.published.outputs.skip != 'true'
+      - name: Publish
+        if: steps.published.outputs.skip != 'true'
+        run: npm publish
