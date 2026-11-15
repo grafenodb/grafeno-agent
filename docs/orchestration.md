@@ -451,7 +451,7 @@ list was not at hand when this was checked; it should be read against it.
 Phase A is done when the acceptance list of the brief (§A.10) is shown by
 tests and one real run, recorded in `docs/measurements/`.
 
-### Phase B — several providers (design only now)
+### Phase B — several providers (building, from 2026-11-15)
 
 The provider interface grows into a capability registry: per provider and
 model, verified when possible (`status()`, a harmless call), cached with a
@@ -460,8 +460,80 @@ signed in, available, context window, non-interactive mode. Adapters for
 Codex CLI, Gemini CLI and others only through their official CLIs and
 sign-ins. Fallbacks: find the cause, choose a compatible model, check
 policy and quota, keep the checkpoint, reassign only tasks with no
-recorded effect in flight. Nothing of this is built until phase A is
-stable.
+recorded effect in flight.
+
+**Decided with the user (2026-11-15):**
+
+- **Second provider:** Codex CLI (`@openai/codex`, OpenAI's official
+  CLI) with the user's ChatGPT subscription.
+- **No pay-per-token billing, for any provider:** only official CLIs with
+  their own sign-in, subscriptions, free quotas or local models; no paid
+  API keys.
+- **Scope:** the full phase.
+- **Real runs:** small real runs on the second provider's quota are
+  allowed.
+
+**What Codex offers, checked on this computer (codex-cli 0.169.0, ChatGPT
+Plus), without spending:**
+
+- `codex login status` says how it is signed in.
+- `codex debug models` lists the models, each with its efforts.
+- The official `app-server` protocol's `account/rateLimits/read` gives
+  the plan's windows: 5 hours and a week, as a share used and a reset
+  time. The agent never consumes a "reset credit".
+- `codex exec --json` streams JSON events: `thread.started`,
+  `item.started` / `item.completed`, with items `agent_message` and
+  `mcp_tool_call`, and `turn.completed` with token usage.
+
+**Codex as the brain only,** like Claude:
+
+- **Its own tools:** its shell, image viewer and web search are turned
+  off. Its file patches cannot be turned off, so it runs with
+  `--sandbox read-only` in a private temporary folder, where a patch is
+  rejected. In a probe, it called the agent's MCP tool, and its attempt to
+  write a file was refused by the sandbox.
+- **The agent's tools:** they reach Codex as an MCP server
+  (`mcp_servers.agent.url`), with the secret passed in an environment
+  variable (`bearer_token_env_var`), never on the command line.
+
+**Tiers on Codex:** deep `gpt-6-astra`; standard `gpt-6.1-sol`, then
+`gpt-6.1-terra`; light `gpt-6-luna`. As with Claude, these are mapped by
+the provider and never named elsewhere.
+
+| Stage | What                                                                                                                                   | Done when (verified by tests)                                                                                                      |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| B1    | Codex model adapter: `codex exec --json`, conversations by `exec resume`, the agent's tools over MCP, read-only sandbox, errors mapped | The model contract passes on a stand-in `codex`; a patch never reaches the disk; usage limit, sign-in and lost conversation mapped |
+| B2    | Codex provider: status, models with efforts, real usage from the app-server, tiers                                                     | Parsed from recorded outputs; on the real CLI, without spending: signed in, models and windows read                                |
+| B3    | Capability registry: per provider and model, verified when possible, cached with its date in the data folder                           | Capabilities read, cached, refreshed when old or when a provider changes version; a provider not installed or signed out is marked |
+| B4    | Routing across providers: the router picks a provider and model per task from the registry, the profiles and real usage                | Tasks go to the provider set for them, else the preferred one with room; near a limit, to another provider before a lighter tier   |
+| B5    | Fallback: a failure's cause, a compatible model elsewhere, policy and quota checked, the checkpoint kept, only safe reassignment       | A provider at its limit or signed out moves its next attempts elsewhere; a task with an effect in flight is never reassigned       |
+| B6    | Interface and a real mixed run: `/connect` and `/models` across providers, `/usage` for each, `AGENT_PROVIDERS`                        | One run uses Claude and Codex workers together, recorded in `docs/measurements/`                                                   |
+
+Phase B is done when every stage's "done when" is shown by tests and the
+mixed run is recorded.
+
+**Progress (2026-11-15):** B1–B5 are done, and B6 is mostly done.
+
+- **B1** (`src/model/codex.ts`): 21 tests on a stand-in `codex`, and the
+  model contract 4/4 on real Codex.
+- **B2** (`src/providers/codex.ts`): 17 tests; on the real CLI, without
+  spending, it reads the sign-in (ChatGPT Plus), 8 models with their
+  efforts, and the windows.
+- **B3** (`src/providers/registry.ts`): 5 tests.
+- **B4** (`routeAcross` in `router.ts`).
+- **B5** (`WorkerPool` with several providers, the scheduler's `moved`
+  outcome, `store.effectsInFlight`): 9 tests, including a run where the
+  first provider hits its limit midway and the second finishes it.
+- **B6:**
+  - **Done:** `AGENT_PROVIDERS`, `--providers`, `--provider-for`;
+    `/connect` lists every provider and `/usage` shows each chosen one.
+  - **The real runs** are in
+    [`docs/measurements/providers-2026-11-15.md`](measurements/providers-2026-11-15.md).
+    The first found that Codex would not write through the agent's tools,
+    which is fixed. The second completed on Codex, routed there by
+    Claude's real usage (86 %).
+  - **Left:** a run where Claude and Codex workers both finish their
+    tasks, once Claude's window has room.
 
 ### Phase C — the router learns (design only now)
 

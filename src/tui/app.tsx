@@ -5,6 +5,7 @@ import type { AppServices } from "../app/services.js";
 import { describeCall, type AgentSession } from "../app/session.js";
 import { describeError } from "../chat.js";
 import type { ToolCall } from "../model/index.js";
+import { providerIds } from "../providers/index.js";
 import type { ModelOption, ProviderStatus, ProviderUsage } from "../providers/types.js";
 import type { Recall } from "../memory/session.js";
 import type { Entry } from "../sessions/store.js";
@@ -434,16 +435,30 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         case "usage": {
           setBusy("Asking the provider");
           let fresh = usage;
+          // The other providers a run may use (AGENT_PROVIDERS), each with its own plan.
+          const others: { name: string; usage: ProviderUsage | undefined }[] = [];
           try {
             if (provider) {
               usageAt.current = Date.now();
               fresh = (await provider.usage()) ?? usage;
               if (fresh) setUsage(fresh);
             }
+            const chosen = providerIds(process.env.AGENT_PROVIDERS);
+            for (const other of services.providers.slice(1)) {
+              if (!chosen.includes(other.id)) continue;
+              others.push({ name: other.name, usage: await other.usage().catch(() => undefined) });
+            }
           } finally {
             setBusy(undefined);
           }
-          push({ kind: "block", title: "Usage", lines: usageLines(active, fresh, provider?.name) });
+          push({
+            kind: "block",
+            title: "Usage",
+            lines: [
+              ...usageLines(active, fresh, provider?.name),
+              ...others.flatMap((o) => ["", ...limitLines(o.usage, o.name)]),
+            ],
+          });
           break;
         }
         case "status":
@@ -1237,11 +1252,8 @@ function helpLines(): string[] {
   ];
 }
 
-function usageLines(
-  session: AgentSession,
-  usage: ProviderUsage | undefined,
-  providerName?: string,
-): string[] {
+/** A provider's plan windows, as bars. */
+function limitLines(usage: ProviderUsage | undefined, providerName?: string): string[] {
   const lines: string[] = [`${providerName ?? "Provider"}${usage?.note ? ` · ${usage.note}` : ""}`];
   if (usage) {
     for (const limit of usage.limits) {
@@ -1256,6 +1268,15 @@ function usageLines(
   } else {
     lines.push("  The provider did not say its usage.");
   }
+  return lines;
+}
+
+function usageLines(
+  session: AgentSession,
+  usage: ProviderUsage | undefined,
+  providerName?: string,
+): string[] {
+  const lines = limitLines(usage, providerName);
   const u = session.usage;
   lines.push(
     "",

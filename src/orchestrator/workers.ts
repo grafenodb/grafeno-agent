@@ -4,7 +4,15 @@ import { ModelError, type Model, type ModelEvent, type Usage } from "../model/in
 import type { ModelChoice, Provider, ProviderUsage } from "../providers/types.js";
 import { Workspace } from "../tools/workspace.js";
 import type { TaskSpec } from "./plan.js";
-import { route, type Catalog, type Profile, type Route } from "./router.js";
+import { CapabilityRegistry, type Unavailable } from "../providers/registry.js";
+import {
+  route,
+  routeAcross,
+  type Catalog,
+  type Profile,
+  type ProviderEntry,
+  type ProviderRoute,
+} from "./router.js";
 import type { AttemptContext, AttemptOutcome, TaskRunner } from "./scheduler.js";
 import type { TaskRecord } from "./store.js";
 import { runGit } from "./worktrees.js";
@@ -76,7 +84,19 @@ export interface AttemptMetrics {
 }
 
 export interface WorkerPoolOptions {
+  /** The provider, when there is one; `providers` wins when given. */
   readonly provider: Provider;
+  /** Several providers, in order of preference (phase B): each task goes to one with room. */
+  readonly providers?: readonly Provider[];
+  /** What the providers can do; made from `providers` when not given. */
+  readonly registry?: CapabilityRegistry;
+  /** A provider for some task kinds, when it is ready. */
+  readonly providerFor?: Partial<Record<TaskSpec["kind"], string>>;
+  /**
+   * Whether a task has an irreversible effect started and not finished (a
+   * merge): such a task is never given to another provider.
+   */
+  readonly effectInFlight?: (runId: string, taskId: string) => boolean;
   /** Where each task works: its own worktree (phase A5); by default the given folder. */
   readonly workspaceFor: (task: TaskRecord, context: AttemptContext) => Promise<Workspace>;
   /** The project's tools for a workspace (files, commands…). */
@@ -116,45 +136,135 @@ export interface WorkerPoolOptions {
  */
 export class WorkerPool implements TaskRunner {
   readonly #active = new Map<string, ActiveWorker>();
-  #catalog: Promise<Catalog> | undefined;
-  #usage: { value: ProviderUsage | undefined; at: number } | undefined;
+  readonly #catalogs = new Map<string, Promise<Catalog>>();
+  readonly #usages = new Map<string, { value: ProviderUsage | undefined; at: number }>();
+  readonly #providers: readonly Provider[];
+  readonly #registry: CapabilityRegistry | undefined;
 
-  constructor(private readonly options: WorkerPoolOptions) {}
+  constructor(private readonly options: WorkerPoolOptions) {
+    this.#providers = options.providers ?? [options.provider];
+    // One provider and no registry: as in phase A, nothing is asked of its status.
+    this.#registry =
+      options.registry ??
+      (this.#providers.length > 1
+        ? new CapabilityRegistry({ providers: this.#providers })
+        : undefined);
+  }
 
   get active(): readonly ActiveWorker[] {
     return [...this.#active.values()];
   }
 
-  /** What the provider offers, asked once. */
-  catalog(): Promise<Catalog> {
-    this.#catalog ??= (async () => {
-      const { provider } = this.options;
-      const models = await provider.models();
-      const tiers = provider.tiers ?? {
-        deep: models.map((m) => m.id),
-        standard: models.map((m) => m.id),
-        light: [...models].reverse().map((m) => m.id),
-      };
-      return { models, efforts: provider.efforts(), tiers };
-    })();
-    return this.#catalog;
+  /** Whether tasks may go to more than one provider. */
+  get multiple(): boolean {
+    return this.#registry !== undefined;
   }
 
-  /** The provider's real usage, asked at most once a minute. */
-  async usage(): Promise<ProviderUsage | undefined> {
-    if (this.#usage && Date.now() - this.#usage.at < 60_000) return this.#usage.value;
-    const value = await this.options.provider.usage().catch(() => undefined);
-    this.#usage = { value, at: Date.now() };
+  /** What a provider offers, asked once (the first provider by default). */
+  catalog(id: string = this.#first().id): Promise<Catalog> {
+    let known = this.#catalogs.get(id);
+    if (!known) {
+      known = (async () => {
+        const provider = this.#provider(id);
+        const models = await provider.models();
+        const tiers = provider.tiers ?? {
+          deep: models.map((m) => m.id),
+          standard: models.map((m) => m.id),
+          light: [...models].reverse().map((m) => m.id),
+        };
+        return { models, efforts: provider.efforts(), tiers };
+      })();
+      this.#catalogs.set(id, known);
+    }
+    return known;
+  }
+
+  /** A provider's real usage, asked at most once a minute (the first provider by default). */
+  async usage(id: string = this.#first().id): Promise<ProviderUsage | undefined> {
+    const known = this.#usages.get(id);
+    if (known && Date.now() - known.at < 60_000) return known.value;
+    const value = await this.#provider(id)
+      .usage()
+      .catch(() => undefined);
+    this.#usages.set(id, { value, at: Date.now() });
     return value;
   }
 
   /** The route a task would take now: for the plan view, and for tests. */
-  async routeFor(task: TaskSpec): Promise<Route> {
-    const usage = await this.usage();
-    return route(task, await this.catalog(), {
-      ...(this.options.profiles ? { profiles: this.options.profiles } : {}),
-      ...(usage ? { usage } : {}),
+  async routeFor(task: TaskSpec): Promise<ProviderRoute> {
+    const profiles = this.options.profiles ? { profiles: this.options.profiles } : {};
+    if (!this.#registry) {
+      const provider = this.#first();
+      const usage = await this.usage(provider.id);
+      const chosen = route(task, await this.catalog(provider.id), {
+        ...profiles,
+        ...(usage ? { usage } : {}),
+      });
+      return chosen.kind === "run" ? { ...chosen, provider: provider.id } : chosen;
+    }
+    const ready = (await this.#registry.ready()).filter((c) =>
+      this.#providers.some((p) => p.id === c.id),
+    );
+    const entries: ProviderEntry[] = await Promise.all(
+      ready.map(async (c) => {
+        const usage = await this.usage(c.id);
+        return { id: c.id, catalog: await this.catalog(c.id), ...(usage ? { usage } : {}) };
+      }),
+    );
+    return routeAcross(task, entries, {
+      ...profiles,
+      ...(this.options.providerFor ? { providerFor: this.options.providerFor } : {}),
     });
+  }
+
+  /**
+   * The outcome of a failed attempt. With several providers, one that
+   * cannot take the task now (its limit, its sign-in) is set aside, and the
+   * task goes back to be given to another without spending an attempt:
+   * unless no other is ready, or the task has an irreversible effect
+   * started (then it waits, as in phase A).
+   */
+  async #fallback(
+    error: unknown,
+    outcome: AttemptOutcome,
+    provider: Provider,
+    task: TaskRecord,
+    context: AttemptContext,
+  ): Promise<AttemptOutcome> {
+    const registry = this.#registry;
+    const aside = setAsideFor(error);
+    if (!registry || !aside) return outcome;
+    registry.setAside(provider.id, aside);
+    context.note("provider_set_aside", {
+      provider: provider.id,
+      reason: aside.reason,
+      ...(aside.until ? { until: aside.until.toISOString() } : {}),
+    });
+    if (this.options.effectInFlight?.(context.runId, task.id) === true) {
+      context.note("not_moved", { reason: "an effect of the task is in flight" });
+      return outcome;
+    }
+    // Another provider must be ready (installed, signed in, not set aside).
+    const others = (await registry.ready()).filter(
+      (c) => c.id !== provider.id && this.#providers.some((p) => p.id === c.id),
+    );
+    if (others.length === 0) return outcome;
+    return {
+      status: "moved",
+      reason: `${provider.id} cannot take it now (${aside.reason}); another provider will`,
+    };
+  }
+
+  #first(): Provider {
+    const first = this.#providers[0];
+    if (!first) throw new Error("No provider");
+    return first;
+  }
+
+  #provider(id: string): Provider {
+    const found = this.#providers.find((p) => p.id === id);
+    if (!found) throw new Error(`Unknown provider ${id}`);
+    return found;
   }
 
   async run(task: TaskRecord, context: AttemptContext): Promise<AttemptOutcome> {
@@ -165,12 +275,25 @@ export class WorkerPool implements TaskRunner {
         reason: `held: ${chosen.reason}${chosen.resets ? `; it resets ${chosen.resets}` : ""}`,
       };
     }
+    const provider = this.#provider(chosen.provider);
     const name = workerName(context.runId, task.id, context.attempt);
+    // With several providers, the model is named with its provider: for the
+    // reports, and for phase C to learn which does what best.
+    const modelLabel = this.multiple ? `${provider.id}/${chosen.model}` : chosen.model;
     context.assign({
       worker: name,
-      model: chosen.model,
+      model: modelLabel,
       ...(chosen.effort ? { effort: chosen.effort } : {}),
     });
+    if (this.multiple) {
+      context.note("routed", {
+        provider: provider.id,
+        model: chosen.model,
+        ...(chosen.effort ? { effort: chosen.effort } : {}),
+        tier: chosen.tier,
+        reasons: chosen.reasons,
+      });
+    }
     const workspace = await this.options.workspaceFor(task, context);
     const memory = await this.options.memoryFor?.(task, name, context);
     const choice: ModelChoice = {
@@ -185,7 +308,7 @@ export class WorkerPool implements TaskRunner {
       this.options.approverFor?.(task, name, context) ?? this.options.approve ?? (() => false);
     const makeAgent = () =>
       new Agent({
-        model: this.options.makeModel?.(choice) ?? this.options.provider.create(choice),
+        model: this.options.makeModel?.(choice) ?? provider.create(choice),
         system: workerSystem(task.spec, workspace, memory?.brief),
         tools: new ToolRegistry(
           [...this.options.tools(workspace), ...(memory?.tools ?? [])],
@@ -224,7 +347,7 @@ export class WorkerPool implements TaskRunner {
     this.#active.set(name, {
       name,
       task: task.id,
-      model: chosen.model,
+      model: modelLabel,
       tier: chosen.tier,
       started: new Date(),
       ...(chosen.effort ? { effort: chosen.effort } : {}),
@@ -286,7 +409,7 @@ export class WorkerPool implements TaskRunner {
         }
       }
     } catch (error) {
-      outcome = outcomeOf(error);
+      outcome = await this.#fallback(error, outcomeOf(error), provider, task, context);
     } finally {
       this.#active.delete(name);
       this.options.onChange?.(this.active);
@@ -298,7 +421,7 @@ export class WorkerPool implements TaskRunner {
       kind: task.spec.kind,
       complexity: task.spec.complexity,
       worker: name,
-      model: chosen.model,
+      model: modelLabel,
       tier: chosen.tier,
       ms: Date.now() - started,
       rounds,
@@ -372,6 +495,20 @@ async function gitChanges(workspace: Workspace): Promise<string[]> {
 }
 
 /** A worker's name in Grafeno and the logs: it says which run, task and attempt. */
+/**
+ * Why a provider should be set aside after this error, and until when: its
+ * plan's limit (until it resets, or half an hour) or its sign-in (until it
+ * is checked again). Other errors are the task's, not the provider's.
+ */
+function setAsideFor(error: unknown): Unavailable | undefined {
+  if (!(error instanceof ModelError)) return undefined;
+  if (error.kind === "usage_limit") {
+    return { reason: error.message, until: error.resetsAt ?? new Date(Date.now() + 30 * 60_000) };
+  }
+  if (error.kind === "setup") return { reason: error.message };
+  return undefined;
+}
+
 export function workerName(runId: string, taskId: string, attempt: number): string {
   const run = runId.replace(/^run-/, "").slice(-8);
   return `worker-${run}-${taskId}-${String(attempt)}`;

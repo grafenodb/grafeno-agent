@@ -48,9 +48,23 @@ export interface ModelChoice {
   readonly effort?: string;
 }
 
+/** What a provider's adapter can do, as it declares it (the registry verifies the rest). */
+export interface ProviderFeatures {
+  /** The agent's tools reach it (over MCP); it never uses its own. */
+  readonly agentTools: boolean;
+  /** It streams events while it works. */
+  readonly streaming: boolean;
+  /** A cancelled turn leaves the conversation able to go on. */
+  readonly keepsConversation: boolean;
+  /** It reports the plan's real usage without spending any. */
+  readonly usageReport: boolean;
+  /** It runs without a person at a terminal. */
+  readonly nonInteractive: boolean;
+}
+
 /**
- * Where the reasoning comes from: Claude through Claude Code today, other
- * providers later. Each says whether it is ready, which models and efforts
+ * Where the reasoning comes from: Claude through Claude Code, Codex through
+ * the Codex CLI, others later. Each says whether it is ready, which models and efforts
  * it has, and how much of the user's plan is used.
  */
 export interface Provider {
@@ -75,4 +89,6 @@ export interface Provider {
    * and "light" to this provider without naming models anywhere else.
    */
   readonly tiers?: Readonly<Record<"deep" | "standard" | "light", readonly string[]>>;
+  /** What its adapter can do. */
+  readonly features?: ProviderFeatures;
 }

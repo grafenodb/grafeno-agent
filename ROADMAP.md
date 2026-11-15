@@ -452,3 +452,54 @@ namespace, so a project's session can be given another project's memories
 (the live two-agent test project came back when asking about this one).
 `context` and `recall` taking a `palace` to stay in (as `palace_walk` does,
 but with meaning) would let each project's memory stay its own.
+
+## Orchestration — phases A to D
+
+The user's brief is [`docs/brief.md`](docs/brief.md); the design and each
+stage's progress are in [`docs/orchestration.md`](docs/orchestration.md);
+real runs are in [`docs/measurements/`](docs/measurements/).
+
+| Phase | What                                                         | Status (2026-11-15)                                                    |
+| ----- | ------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| A     | Several Claude Code workers under a deterministic scheduler  | **Done** (A1–A9), with one open item below                             |
+| B     | Several providers: Codex CLI next to Claude Code             | **In progress**: B1–B5 done; B6 (interface, a real mixed run) underway |
+| C     | A router that learns from real metrics                       | Design only; the metrics it needs are recorded since A8                |
+| D     | Long autonomous runs: replanning, a supervisor, cross review | Design only                                                            |
+
+### Phase A against the brief's acceptance list (§A.10)
+
+| #   | Criterion                                             | Shown by                                                                                                             |
+| --- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| 1   | One message asks for a complex task                   | `grafeno-agent run "<request>"`, `/orchestrate <request>`; the real runs of 2026-11-15                               |
+| 2   | Claude makes a valid structured plan                  | Planner and checker (`plan.ts`, `planner.ts`, 10 tests); the real runs' plans                                        |
+| 3   | The scheduler finds dependencies and parallelism      | `scheduler.ts` (13 tests); in the real run, tests and docs ran at once after the module                              |
+| 4   | At least three independent Claude Code workers        | Three workers, each its own session, in the real run; three at once in `orchestrator.test.ts`                        |
+| 5   | Different supported models or efforts                 | Real run: Sonnet low and Haiku low; tests: three tiers and efforts                                                   |
+| 6   | File isolation per worker                             | A git worktree and branch per task (`worktrees.ts`, 11 tests on a real repository)                                   |
+| 7   | Grafeno shares relevant knowledge between workers     | `npm run eval:orchestration` (a decision reaches the workers after it, with attribution), in CI                      |
+| 8   | Checkpoints and operational states are recorded       | SQLite store with runs, tasks, events and effects; a Grafeno checkpoint per task                                     |
+| 9   | Failures are detected and safe runs recovered         | Fix loop from failed checks, bounded retries, recovery of attempts a dead process left; the first real run's failure |
+| 10  | Integration tests run                                 | Pipeline tests on real git, `eval:orchestration` on a real Grafeno, the real runs                                    |
+| 11  | Changes integrate without overwriting the user's work | An integration branch per run; the user's branch, HEAD and uncommitted changes untouched (tested, and in real runs)  |
+| 12  | Permissions and quotas are respected                  | The policy engine (11 tests); the provider's limit pauses the run without spending an attempt                        |
+| 13  | An interrupted task can be continued                  | Resume from another process (tested); `grafeno-agent resume <id>`                                                    |
+| 14  | Automated tests of the main components                | 335 tests in `npm run ci`, plus the evals                                                                            |
+
+**Open item:** §A.9 asks for real isolation for untrusted commands ("string
+checks are not a sandbox"). Phase A decided, with the user (D2 a), on
+worktrees, the policy engine and the existing guard, documented as _not_ a
+sandbox, behind a `CommandRunner` interface so that a container runner
+(Docker or Podman) can be plugged in. That runner is still to be built.
+
+**Smaller gaps:**
+
+- Criterion 7 is shown on a real Grafeno with the fake model; in the small
+  real runs, workers stored no memories of their own, only checkpoints.
+- Criterion 13 is tested with the fake model; it has not yet been done on
+  a real run.
+
+### Phase B
+
+The second provider is Codex CLI with the user's ChatGPT plan, decided on
+2026-11-15. The brief's §B.5 had said Claude alone at first; the user
+chose to go on. Stages B1–B6 are in `docs/orchestration.md`.

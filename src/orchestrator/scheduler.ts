@@ -13,7 +13,9 @@ export type AttemptOutcome =
   /** It will not work by trying again. */
   | { readonly status: "failed"; readonly reason: string }
   /** The provider's usage limit is reached: the run waits, the task is not to blame. */
-  | { readonly status: "quota"; readonly reason: string; readonly resetsAt?: Date };
+  | { readonly status: "quota"; readonly reason: string; readonly resetsAt?: Date }
+  /** Its provider cannot take it now; another one will: the task is not to blame. */
+  | { readonly status: "moved"; readonly reason: string };
 
 export interface AttemptContext {
   readonly runId: string;
@@ -290,6 +292,12 @@ export class Scheduler {
           reason: outcome.reason,
           ...(outcome.resetsAt ? { resetsAt: outcome.resetsAt } : {}),
         };
+        break;
+      case "moved":
+        // Given to another provider: back, without spending an attempt, and the run goes on.
+        this.#move(runId, task.id, "ready", outcome.reason, {
+          attempts: Math.max(0, task.attempts - 1),
+        });
         break;
       case "retry":
         if (task.attempts < maxAttempts) this.#move(runId, task.id, "ready", outcome.reason);

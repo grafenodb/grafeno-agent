@@ -300,7 +300,10 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     await until(() => now(app).includes("Include Grafeno"), "the memory choice");
     expect(now(app)).toContain("Connect to a Grafeno server");
     app.stdin.write(ENTER);
-    await until(() => now(app).includes("More providers will appear here"), "the provider step");
+    await until(
+      () => now(app).includes("AGENT_PROVIDERS chooses which are used"),
+      "the provider step",
+    );
     await until(() => now(app).includes("Signed in · Fake Pro"), "the provider status");
     app.stdin.write(ENTER);
     await ready(app);

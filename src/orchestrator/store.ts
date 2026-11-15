@@ -84,6 +84,8 @@ export interface OperationalStore {
     data?: Record<string, unknown>,
   ): EffectStatus;
   finishEffect(key: string): void;
+  /** The keys of the run's effects started and not finished (a crash, or one in flight). */
+  effectsInFlight(runId: string): string[];
   close(): void;
 }
 
@@ -331,6 +333,13 @@ export class SqliteStore implements OperationalStore {
     this.#db
       .prepare("UPDATE effects SET status = 'done', done = ? WHERE key = ?")
       .run(new Date().toISOString(), key);
+  }
+
+  effectsInFlight(runId: string): string[] {
+    const rows = this.#db
+      .prepare("SELECT key FROM effects WHERE run_id = ? AND status = 'started'")
+      .all(runId) as { key: string }[];
+    return rows.map((row) => row.key);
   }
 
   close(): void {

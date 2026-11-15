@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { CapabilityRegistry } from "../providers/registry.js";
 import { join } from "node:path";
 import type { Tool } from "../agent/tools.js";
 import type { Embedder } from "../embed/types.js";
@@ -48,6 +49,15 @@ export interface OrchestratorOptions {
   readonly maxWorkers?: number;
   readonly maxAttempts?: number;
   readonly attemptTimeoutMs?: number;
+  /**
+   * Several providers, in order of preference (phase B): each task goes to
+   * one that is ready and has room; one that hits its limit or loses its
+   * sign-in is set aside and its tasks go to another. `provider` alone is
+   * phase A's single provider.
+   */
+  readonly providers?: readonly Provider[];
+  /** A provider for some task kinds, when it is ready. */
+  readonly providerFor?: Partial<Record<TaskKind, string>>;
   /** Profiles per task kind (tier and effort); for example, all light for a cheap run. */
   readonly profiles?: Partial<Record<TaskKind, Profile>>;
   /** The planner's model and effort; default: what the router gives an architecture task. */
@@ -79,6 +89,8 @@ export class Orchestrator {
   readonly worktrees: WorktreeManager;
   readonly policy: Policy;
   readonly pool: WorkerPool;
+  /** What each provider can do, when there are several. */
+  readonly registry: CapabilityRegistry | undefined;
   readonly pipeline: TaskPipeline;
   #scheduler: Scheduler | undefined;
 
@@ -92,8 +104,18 @@ export class Orchestrator {
     });
     this.policy = new Policy({ mode: options.mode ?? "controlled" });
     const secrets = options.secrets ?? [];
+    const providers = options.providers ?? [options.provider];
+    this.registry =
+      providers.length > 1
+        ? new CapabilityRegistry({ providers, file: join(root, "capabilities.json") })
+        : undefined;
     this.pool = new WorkerPool({
       provider: options.provider,
+      ...(providers.length > 1 ? { providers } : {}),
+      ...(this.registry ? { registry: this.registry } : {}),
+      ...(options.providerFor ? { providerFor: options.providerFor } : {}),
+      effectInFlight: (runId, taskId) =>
+        this.store.effectsInFlight(runId).some((key) => key.endsWith(`:${taskId}`)),
       workspaceFor: (task, context) => this.pipeline.workspaceFor(task, context),
       tools:
         options.tools ??

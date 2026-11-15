@@ -80,7 +80,9 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
         );
       })}
       <Box marginTop={1}>
-        <Text dimColor>More providers will appear here.</Text>
+        <Text dimColor>
+          AGENT_PROVIDERS chooses which are used, in order: the chat uses the first.
+        </Text>
       </Box>
       <Text dimColor>
         enter {props.firstRun ? "continue" : "use it"} · r check again · esc{" "}

@@ -66,6 +66,14 @@ export class ClaudeCodeProvider implements Provider {
     standard: ["sonnet", "opus"],
     light: ["haiku", "sonnet"],
   } as const;
+  readonly features = {
+    agentTools: true,
+    streaming: true,
+    // Cancelling stops Claude Code, and the conversation with it.
+    keepsConversation: false,
+    usageReport: true,
+    nonInteractive: true,
+  } as const;
   #models: Promise<readonly ModelOption[]> | undefined;
 
   constructor(private readonly run: RunClaude = runClaude("claude")) {}

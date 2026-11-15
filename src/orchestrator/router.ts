@@ -152,3 +152,91 @@ function mostUsed(usage: ProviderUsage | undefined) {
   if (!usage || usage.limits.length === 0) return undefined;
   return [...usage.limits].sort((a, b) => b.used - a.used)[0];
 }
+
+/** One provider the router may choose, as the registry knows it now. */
+export interface ProviderEntry {
+  readonly id: string;
+  readonly catalog: Catalog;
+  readonly usage?: ProviderUsage;
+}
+
+export interface AcrossOptions extends RouterOptions {
+  /** A provider for some task kinds (when it is ready), before the order of preference. */
+  readonly providerFor?: Partial<Record<TaskKind, string>>;
+}
+
+/** A route that also names its provider. */
+export type ProviderRoute =
+  | (Extract<Route, { kind: "run" }> & { readonly provider: string })
+  | Extract<Route, { kind: "hold" }>;
+
+/**
+ * Chooses a provider, then its model and effort, for a task. The providers
+ * come ready (installed, signed in, not set aside) in the order of
+ * preference. A task kind set to one provider goes there. Otherwise the
+ * first provider with room takes it. Near a limit, another provider with
+ * room is chosen before going a tier lighter; when every one is near its
+ * limit, the one with the most room takes it, a tier lighter; when every
+ * one has reached it, the task holds until the earliest reset.
+ */
+export function routeAcross(
+  task: TaskSpec,
+  providers: readonly ProviderEntry[],
+  options: AcrossOptions = {},
+): ProviderRoute {
+  if (providers.length === 0) return { kind: "hold", reason: "no provider is ready" };
+  const lighter = options.lighterAbove ?? 0.8;
+  const hold = options.holdAbove ?? 0.95;
+  const wanted = options.providerFor?.[task.kind];
+  const ordered = wanted
+    ? [...providers.filter((p) => p.id === wanted), ...providers.filter((p) => p.id !== wanted)]
+    : [...providers];
+  const used = (p: ProviderEntry) => mostUsed(p.usage)?.used ?? 0;
+  const why = (p: ProviderEntry, first: string) =>
+    p.id === wanted ? `${task.kind} tasks go to ${p.id}` : first;
+
+  // A provider with room, in order.
+  for (const [index, entry] of ordered.entries()) {
+    if (used(entry) >= lighter) continue;
+    const chosen = route(task, entry.catalog, { ...options, ...withUsage(entry) });
+    if (chosen.kind === "hold") continue;
+    const skipped = ordered.slice(0, index).map((p) => `${p.id} is near its limit`);
+    return {
+      ...chosen,
+      provider: entry.id,
+      reasons: [
+        ...skipped,
+        why(entry, index === 0 ? `${entry.id} is the first choice` : `${entry.id} has room`),
+        ...chosen.reasons,
+      ],
+    };
+  }
+  // Every one near its limit: the one with the most room, a tier lighter (route does it).
+  const open = ordered.filter((p) => used(p) < hold).sort((a, b) => used(a) - used(b));
+  for (const entry of open) {
+    const chosen = route(task, entry.catalog, { ...options, ...withUsage(entry) });
+    if (chosen.kind === "hold") continue;
+    return {
+      ...chosen,
+      provider: entry.id,
+      reasons: [
+        `every provider is near its limit: ${entry.id} has the most room`,
+        ...chosen.reasons,
+      ],
+    };
+  }
+  // Every one at its limit: wait for the first to reset.
+  const limits = ordered.map((p) => ({ p, limit: mostUsed(p.usage) }));
+  const first = limits.find((l) => l.limit?.resets !== undefined);
+  return {
+    kind: "hold",
+    reason: `every provider has reached its limit (${limits
+      .map((l) => `${l.p.id} ${String(Math.round((l.limit?.used ?? 0) * 100))}%`)
+      .join(", ")})`,
+    ...(first?.limit?.resets === undefined ? {} : { resets: first.limit.resets }),
+  };
+}
+
+function withUsage(entry: ProviderEntry): { usage?: ProviderUsage } {
+  return entry.usage ? { usage: entry.usage } : {};
+}

@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { TASK_KINDS } from "./orchestrator/plan.js";
+import { KNOWN_PROVIDERS, providerForKinds, providerIds } from "./providers/index.js";
+import type { Provider } from "./providers/types.js";
 import { existsSync, readFileSync } from "node:fs";
 import { Agent } from "./agent/agent.js";
 import { SYSTEM_PROMPT } from "./agent/builtin-tools.js";
@@ -39,7 +42,9 @@ Commands:
   run "<request>"  Plan the request and run it with several workers, each in its own
           git worktree; the work lands on an integration branch for you to merge.
           --mode supervised|controlled|extended (default controlled), --workers N
-          (default 3), --light (light models, low effort), --yes (no confirmation).
+          (default 3), --light (light models, low effort), --yes (no confirmation),
+          --providers claude-code,codex (default AGENT_PROVIDERS), --provider-for
+          tests=codex,docs=codex (which provider takes a kind of task).
   runs [id]  The project's runs, or one run's report.
   resume <id>  Go on with a paused or waiting run.`;
 
@@ -218,6 +223,16 @@ function runSettings(argv: readonly string[]): OrchestrateSettings {
     ...(mode === undefined ? {} : { mode: mode as Autonomy }),
     workers: Number.isFinite(workers) && workers >= 1 ? Math.floor(workers) : 3,
     light: argv.includes("--light"),
+    ...(flag(argv, "--provider-for") === undefined
+      ? {}
+      : { providerFor: providerForKinds(flag(argv, "--provider-for"), TASK_KINDS) }),
+    ...(flag(argv, "--providers") === undefined
+      ? {}
+      : {
+          providers: providerIds(flag(argv, "--providers")).map((id) =>
+            (KNOWN_PROVIDERS[id] as () => Provider)(),
+          ),
+        }),
   };
 }
 
@@ -267,7 +282,9 @@ function printChanges(): Pick<OrchestratorOptions, "onChange"> {
 async function orchestrateCommand(argv: readonly string[]): Promise<number> {
   const request = argv
     .filter(
-      (arg, i) => !arg.startsWith("--") && !["--mode", "--workers"].includes(argv[i - 1] ?? ""),
+      (arg, i) =>
+        !arg.startsWith("--") &&
+        !["--mode", "--workers", "--providers", "--provider-for"].includes(argv[i - 1] ?? ""),
     )
     .join(" ")
     .trim();

@@ -1,6 +1,6 @@
 {
-  "date": "2026-11-15T00:54:47.620Z",
-  "commit": "ebf6b38+changes",
+  "date": "2026-11-15T01:40:33.765Z",
+  "commit": "9951709+changes",
   "model": "fake",
   "summary": {
     "passed": 9,
@@ -8,7 +8,7 @@
     "recall": 1,
     "needless": 0,
     "duplicatesRefused": 1,
-    "inputTokens": 1807,
+    "inputTokens": 1801,
     "outputTokens": 93,
     "cacheTokens": 0,
     "msPerTurn": 7
@@ -24,7 +24,7 @@
       "duplicatesRefused": 0,
       "turns": [
         {
-          "ms": 15,
+          "ms": 18,
           "inputTokens": 77,
           "outputTokens": 2,
           "cacheTokens": 0
@@ -47,13 +47,13 @@
       "duplicatesRefused": 1,
       "turns": [
         {
-          "ms": 11,
+          "ms": 10,
           "inputTokens": 18,
           "outputTokens": 2,
           "cacheTokens": 0
         },
         {
-          "ms": 6,
+          "ms": 5,
           "inputTokens": 122,
           "outputTokens": 5,
           "cacheTokens": 0
@@ -70,19 +70,19 @@
       "duplicatesRefused": 0,
       "turns": [
         {
-          "ms": 15,
+          "ms": 13,
           "inputTokens": 248,
           "outputTokens": 2,
           "cacheTokens": 0
         },
         {
-          "ms": 20,
+          "ms": 19,
           "inputTokens": 126,
           "outputTokens": 5,
           "cacheTokens": 0
         },
         {
-          "ms": 3,
+          "ms": 4,
           "inputTokens": 338,
           "outputTokens": 5,
           "cacheTokens": 0
@@ -99,7 +99,7 @@
       "duplicatesRefused": 0,
       "turns": [
         {
-          "ms": 3,
+          "ms": 2,
           "inputTokens": 21,
           "outputTokens": 13,
           "cacheTokens": 0
@@ -122,13 +122,13 @@
           "cacheTokens": 0
         },
         {
-          "ms": 5,
+          "ms": 6,
           "inputTokens": 95,
           "outputTokens": 2,
           "cacheTokens": 0
         },
         {
-          "ms": 4,
+          "ms": 2,
           "inputTokens": 12,
           "outputTokens": 10,
           "cacheTokens": 0
@@ -180,7 +180,7 @@
       "turns": [
         {
           "ms": 3,
-          "inputTokens": 377,
+          "inputTokens": 371,
           "outputTokens": 12,
           "cacheTokens": 0
         }
@@ -196,7 +196,7 @@
       "duplicatesRefused": 0,
       "turns": [
         {
-          "ms": 4,
+          "ms": 3,
           "inputTokens": 127,
           "outputTokens": 8,
           "cacheTokens": 0

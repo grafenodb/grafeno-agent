@@ -14,7 +14,7 @@ import {
   stopIncluded,
 } from "../grafeno/included.js";
 import { describeUpkeep, upkeep } from "../memory/upkeep.js";
-import { ClaudeCodeProvider } from "../providers/claude-code.js";
+import { allProviders } from "../providers/index.js";
 import type { ModelChoice, Provider } from "../providers/types.js";
 import { settingsPath, updateSettings } from "../settings-file.js";
 import { checkGrafeno } from "../startup.js";
@@ -99,7 +99,8 @@ export async function prepareGrafeno(config: Config, env = process.env): Promise
 export function realServices(version: string): AppServices {
   let embedder: Promise<Embedder | undefined> | undefined;
   const env = process.env;
-  const providers: Provider[] = [new ClaudeCodeProvider()];
+  // Every known provider, the chosen ones (AGENT_PROVIDERS) first: the chat uses the first.
+  const providers: Provider[] = allProviders(env);
 
   /** Saves settings to the file and to this run. */
   const save = (values: Record<string, string>) => {
