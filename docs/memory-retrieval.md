@@ -333,14 +333,122 @@ in `resume.test.ts`, and a settings test. The evaluation's fake model now
 reads ids from the compact lines too (`test/eval/scenarios.ts`). Full CI:
 366 tests. `eval` 9/9, `eval:agents` and `eval:orchestration` pass.
 
-## Next: stage 4
+## Stage 4: incremental consolidation and the context lifecycle (done)
 
-Incremental consolidation and the context lifecycle:
+### A memory that changed: `revise`
 
-- when a decision changes, update it and link the change (`supersedes`), so
-  the old version is not shown as current, while its history is kept;
-- deduplicate by meaning when storing;
-- in scenario A, rotate on its own: when the cache is cold and the
-  conversation is large, save a checkpoint and start a new conversation with
-  the compact resume, never in the middle of a turn, without compacting
-  again and again, and resetting what "shown earlier" means.
+Before, the model needed three calls when a decision was taken again or a
+fact changed: `remember` the new version, `relate` it with `supersedes`, and
+mark the old one with `feedback` "obsolete". Now one tool does it:
+`revise { old, text, reason }`.
+
+- The new memory is stored with `sources: [old]`, for provenance, linked to
+  the project, with the old memory's labels unless others are given, and
+  anchored in its locus.
+- It relates to the old one with `supersedes` and the reason.
+- The old one is marked obsolete, and kept for its history.
+- With an own-only key, a memory another agent recorded is not marked: the
+  `supersedes` relation says it is replaced.
+- A step that fails is reported, not swallowed.
+
+The system prompt now tells the model to use `revise`. The new evaluation
+scenario `decision-revised` runs it against a real Grafeno, across three
+sessions: the new decision is given, and the old one is not. That scenario
+found a real bug before release: Grafeno's `feedback` takes `note`, not
+`reason`. The old memory was never marked, and the error was ignored. Both
+are fixed. `eval` is now 10/10.
+
+### Close in meaning: told, not refused
+
+Measured with e5-small, the embedder Grafeno Agent uses, on sample pairs:
+
+| Pair                                             | Cosine       |
+| ------------------------------------------------ | ------------ |
+| The same fact, reworded                          | 0.979, 0.887 |
+| An almost exact copy                             | 0.974        |
+| A fact that changed (npm → pnpm)                 | 0.943        |
+| A decision that changed (worktrees → containers) | 0.940        |
+| Related but different                            | 0.848        |
+| Unrelated                                        | 0.776        |
+
+Meaning alone cannot tell "the same" from "changed": a change scores higher
+than one rewording. So a memory is never refused on meaning. When a new
+memory is at 0.93 or more from one already there (the top three a vector
+search finds, other than checkpoints and project or agent nodes), the
+model is told which one it is and chooses:
+
+- it replaces it: `revise`;
+- it says the same: nothing more;
+- it is different: `remember` again with `distinct: true`.
+
+The word-based duplicate check is unchanged. Without an embedder, storing
+works as before.
+
+### The Context Lifecycle Manager (scenario A)
+
+`src/app/lifecycle.ts` decides when to renew the conversation, and
+`AgentSession.send` applies it before a message, never in the middle of a
+turn. It renews:
+
+- when the prompt cache has gone cold (60 minutes without a message) and the
+  context holds at least 50k tokens: finding 1;
+- when the context is 80% of the model's window or more;
+- and never twice within 2 messages, so renewing cannot loop.
+
+Renewing:
+
+1. `carryCheckpoint` saves a checkpoint by code, carrying the latest one
+   forward: goal, status, next action, pending and blocked work, decisions,
+   files and errors stay as they were. The memories stored since and the
+   git ref are added. The summary says why the conversation was renewed,
+   replacing an earlier such line rather than piling them up. Nothing is
+   saved when nothing changed.
+2. The compact resume is built again, and the budget starts over: "shown
+   earlier" no longer applies, because the new conversation has not seen it.
+3. The old agent is closed. The new conversation starts from the new resume
+   and the last 3,000 characters of the old one. The old one stays in the
+   saved conversation.
+4. A notice says it happened and why, in the conversation and in the
+   terminal interface.
+
+It can be turned off with `lifecycle: false`. Renewal does not keep the
+model's internal reasoning: whatever the next conversation needs has to be
+in the checkpoint, the memories and the carried end of the conversation.
+
+Tests:
+
+- `test/app/lifecycle.test.ts`: the rule (no measure, too soon, nearly
+  full, a cold cache with a large context, a small context, a warm cache)
+  and a whole session. After 90 minutes with a 151k context, the checkpoint
+  is carried forward with the new memory, a new conversation starts from
+  the resume, and the end of the old one is carried. It does not renew
+  while warm, nor when turned off.
+- `test/memory/consolidation.test.ts`: `revise` (all four steps, another
+  agent's memory, missing ids and secrets), close in meaning (told, then
+  stored as distinct; not close; no embedder), carrying a checkpoint (state
+  kept, a single renewal line, refs and git ref added, nothing saved when
+  nothing changed) and rebuilding the resume.
+
+Full CI: 381 tests. `eval` 10/10, `eval:agents` and `eval:orchestration`
+pass.
+
+### What this stage does not do
+
+- Contradictions that nobody marked are still found by `upkeep` (words and
+  `contradictions`). Nothing runs in the background.
+- Scenario B, Claude Code used directly: renewing is the user's to do
+  (start a new session; the hook brings the resume). Claude Code's own
+  history cannot be renewed from outside.
+
+## Next: stage 5
+
+Metrics and the comparison:
+
+- `memory_retrieval_*`, `resume_duration_ms`, `checkpoint_size_tokens`,
+  `session_rotation_count`, and the model's input and output tokens, in
+  one place;
+- a `grafeno-agent memory audit` command;
+- the comparison of the old start, the compact resume and progressive
+  retrieval on the same tasks, including the plan's window utilization from
+  Claude Code's `usage_windows` around a resume, and whether the agent can
+  go on with the task.

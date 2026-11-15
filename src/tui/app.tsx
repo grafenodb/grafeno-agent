@@ -218,6 +218,9 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
       try {
         const turn = await active.send(text, {
           signal: controller.signal,
+          onRenewal: (text) => {
+            notice(text, "info");
+          },
           onMemory: (recall) => {
             setRecall(recall);
             if (shown !== undefined) push({ kind: "memory", recall });

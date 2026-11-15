@@ -4,6 +4,7 @@ import { ToolRegistry, type Approver, type Tool } from "../agent/tools.js";
 import type { Config } from "../config.js";
 import type { Embedder } from "../embed/types.js";
 import { detectProject, gitRef } from "../memory/project.js";
+import { DEFAULT_LIFECYCLE, shouldRenew, type LifecyclePolicy } from "./lifecycle.js";
 import { MemorySession, type AgentName, type Recall } from "../memory/session.js";
 import { grafenoVault, type Vault } from "../memory/vault.js";
 import { ClaudeCodeProvider } from "../providers/claude-code.js";
@@ -47,13 +48,26 @@ export interface AgentSessionOptions {
   readonly vault?: Vault;
   /** The project's tools; for tests. Default: files, commands and the web. */
   readonly tools?: (workspace: Workspace) => Tool[];
+  /**
+   * When to renew the conversation (see lifecycle.ts); `false`: never.
+   * Default: after a pause that leaves the cache cold with a large context,
+   * or when the context is nearly full.
+   */
+  readonly lifecycle?: Partial<LifecyclePolicy> | false;
+  /** The clock; for tests. */
+  readonly now?: () => Date;
 }
+
+/** Characters of the conversation carried into a renewed one. */
+const RENEWAL_CARRY = 3000;
 
 export interface SendOptions {
   readonly signal?: AbortSignal;
   readonly onEvent?: (event: ModelEvent) => void;
   /** Told what memory brought to the message, before the model sees it. */
   readonly onMemory?: (recall: Recall) => void;
+  /** Told when the conversation was renewed before this message, and why. */
+  readonly onRenewal?: (notice: string) => void;
 }
 
 /**
@@ -78,6 +92,10 @@ export class AgentSession {
   #spentBefore: Usage = NO_USAGE;
   #turnsBefore = 0;
   #windows: readonly UsageWindow[] = [];
+  /** When the last message ended. */
+  #lastActivity: Date | undefined;
+  #turnsSinceRenewal = 0;
+  #renewals = 0;
 
   private constructor(
     private readonly options: AgentSessionOptions,
@@ -172,8 +190,51 @@ export class AgentSession {
     return this.#turnsBefore + (this.#agent?.turns ?? 0);
   }
 
+  /** Conversations renewed so far in this run. */
+  get renewals(): number {
+    return this.#renewals;
+  }
+
+  /**
+   * Renews the conversation before a message when keeping it would cost
+   * more than starting again (lifecycle.ts): a checkpoint carries the state
+   * forward, the compact resume is built again, and the new conversation
+   * gets the end of the old one. Never in the middle of a turn: only here,
+   * before a message is sent.
+   */
+  async #renewIfDue(options: SendOptions): Promise<void> {
+    const policy = this.options.lifecycle;
+    if (policy === false || this.#agent === undefined) return;
+    const decision = shouldRenew(
+      {
+        ...(this.#lastActivity ? { lastActivity: this.#lastActivity } : {}),
+        now: this.#now(),
+        ...(this.#context ? { context: this.#context } : {}),
+        turnsSinceRenewal: this.#turnsSinceRenewal,
+      },
+      { ...DEFAULT_LIFECYCLE, ...policy },
+    );
+    if (!decision.renew) return;
+    const saved = await this.memory.carryCheckpoint(decision.reason).catch(() => false);
+    await this.memory.refreshResume().catch(() => undefined);
+    const tail = previousConversation(this.#record.entries, RENEWAL_CARRY);
+    await this.#dropAgent();
+    this.#carry = tail || undefined;
+    this.#context = undefined;
+    this.#turnsSinceRenewal = 0;
+    this.#renewals++;
+    const notice = `Started a fresh conversation: ${decision.reason}. It goes on from ${saved ? "a checkpoint saved just now" : "the latest checkpoint"}, the compact resume and the end of the conversation.`;
+    this.store.add(this.#record, { kind: "notice", text: notice });
+    options.onRenewal?.(notice);
+  }
+
+  #now(): Date {
+    return this.options.now?.() ?? new Date();
+  }
+
   /** Sends a message; what happens is kept in the conversation as it comes. */
   async send(text: string, options: SendOptions = {}): Promise<AgentTurn> {
+    await this.#renewIfDue(options);
     const agent = this.#ensureAgent();
     this.#onMemory = options.onMemory;
     this.store.add(this.#record, { kind: "user", text });
@@ -219,6 +280,9 @@ export class AgentSession {
         this.#carry = carried;
       }
       throw error;
+    } finally {
+      this.#lastActivity = this.#now();
+      this.#turnsSinceRenewal++;
     }
   }
 

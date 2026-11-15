@@ -64,7 +64,13 @@ export class FakeVault implements Vault {
       }
       case "recall":
         return json({
-          results: this.memories.map((m) => ({ id: m.id, name: `Memory ${m.id}`, text: m.text })),
+          // As Grafeno answers: with each node's labels.
+          results: this.memories.map((m) => ({
+            id: m.id,
+            name: `Memory ${m.id}`,
+            text: m.text,
+            ...(Array.isArray(m.labels) ? { labels: m.labels as unknown[] } : {}),
+          })),
         });
       case "palace_enter":
         return Promise.resolve({ text: "The room holds: nothing yet.", isError: false });

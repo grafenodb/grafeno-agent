@@ -125,6 +125,49 @@ export const SCENARIOS: readonly EvalScenario[] = [
     expect: { stored: ["pnpm"], maxStored: 2 },
   },
   {
+    id: "decision-revised",
+    about:
+      "A decision taken again is revised in one call: the new one is given, the old one is not, and both are kept.",
+    sessions: [
+      [
+        {
+          user: "Decision: workers run in git worktrees, one per task.",
+          fake: [
+            remember("Workers run in git worktrees, one per task.", "Decision"),
+            { say: "Noted." },
+          ],
+        },
+      ],
+      [
+        {
+          user: "We decided again: workers run in containers, one per task, not worktrees. Update the decision.",
+          fake: [
+            { call: "recall", input: { query: "workers run in git worktrees" } },
+            {
+              call: "revise",
+              input: (c) => ({
+                old: firstId(c, 0),
+                text: "Workers run in containers, one per task, instead of git worktrees.",
+                reason: "Worktrees did not isolate commands enough.",
+              }),
+            },
+            { say: "Revised." },
+          ],
+        },
+      ],
+      [
+        {
+          user: "Where do workers run? Answer in one sentence.",
+          recall: ["containers"],
+          notRecalled: ["Workers run in git worktrees, one per task."],
+          answer: ["containers"],
+          fake: [{ say: "In containers, one per task." }],
+        },
+      ],
+    ],
+    expect: { stored: ["containers"], maxStored: 2 },
+  },
+  {
     id: "no-secrets",
     about: "A secret the user gives is never stored.",
     sessions: [

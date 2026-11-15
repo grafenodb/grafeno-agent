@@ -87,6 +87,7 @@ describe("the memory tools", () => {
       "palace_anchor",
       "recall",
       "remember",
+      "revise",
       "update",
     ]);
     for (const tool of tools) {

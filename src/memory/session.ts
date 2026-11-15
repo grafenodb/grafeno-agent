@@ -1,7 +1,12 @@
 import type { Embedder } from "../embed/types.js";
 import type { Tool } from "../agent/tools.js";
-import { CHECKPOINT_PROPERTIES, packCheckpoint, type CheckpointInput } from "./checkpoint.js";
-import { findDuplicate, normalize } from "./quality.js";
+import {
+  CHECKPOINT_PROPERTIES,
+  packCheckpoint,
+  readCheckpoint,
+  type CheckpointInput,
+} from "./checkpoint.js";
+import { findClose, findDuplicate, normalize } from "./quality.js";
 import { RetrievalBudget, type RetrievalLimits } from "./budget.js";
 import { compactResume, type CompactResume } from "./resume.js";
 import { describeSecrets, findSecrets } from "./secrets.js";
@@ -33,6 +38,13 @@ export const MEMORY_TOOLS = [
   "forget",
   "contradictions",
 ] as const;
+
+/** `remember`'s own flag: store although a memory close in meaning exists. */
+const DISTINCT_PROPERTY = {
+  type: "boolean",
+  description:
+    "Store it although a memory close in meaning exists, once you were told of it and it is a different memory.",
+} as const;
 
 /** Tools that store something: what they are given is checked for secrets first. */
 const STORING = new Set([
@@ -146,13 +158,27 @@ export class MemorySession {
     readonly projectId: string,
     /** The agent's own node, when it has a name: where it keeps its own marks. */
     readonly agentId: string | undefined,
-    /** What memory held at the start, as text for the model. */
-    readonly brief: string,
+    brief: string,
     /** What memory may still bring in, and what it brought: see budget.ts. */
     readonly retrieval: RetrievalBudget,
-    /** The compact resume the brief came from, with its measures; unset without a brief. */
-    readonly resumed?: CompactResume,
-  ) {}
+    resumed?: CompactResume,
+  ) {
+    this.#brief = brief;
+    this.#resumed = resumed;
+  }
+
+  #brief: string;
+  #resumed: CompactResume | undefined;
+
+  /** What memory held when the conversation started, as text for the model. */
+  get brief(): string {
+    return this.#brief;
+  }
+
+  /** The compact resume the brief came from, with its measures; unset without a brief. */
+  get resumed(): CompactResume | undefined {
+    return this.#resumed;
+  }
 
   static async start(options: MemorySessionOptions): Promise<MemorySession> {
     const { vault, project, agent } = options;
@@ -190,33 +216,72 @@ export class MemorySession {
       return new MemorySession(options, projectId, agentId, "", retrieval);
     }
 
-    // The state to go on from, not the whole palace: the latest checkpoint
-    // and a few memories about it, each within a budget.
-    const { limits } = retrieval;
-    const embedder = options.embedder;
-    const resumed = await compactResume({
-      vault,
-      about: projectId,
-      ...(agent ? { agent: agent.name } : {}),
-      checkpointBudget: limits.checkpoint,
-      memoryBudget: limits.memories,
-      maxMemories: limits.maxMemories,
-      ...(embedder
-        ? {
-            embed: async (text: string) => {
-              try {
-                return (await embedder.embed([text], "query"))[0];
-              } catch {
-                return undefined;
-              }
-            },
-          }
-        : {}),
-    });
-    // What the resume showed is in the context: lookups say so instead of repeating it.
-    retrieval.seen(resumed.memories.map((m) => m.id));
-    retrieval.countAutomatic(resumed.text);
+    const resumed = await resumeFor(options, projectId, retrieval);
     return new MemorySession(options, projectId, agentId, resumed.text, retrieval, resumed);
+  }
+
+  /**
+   * Builds the compact resume again, for a new conversation: the latest
+   * checkpoint and memories as they are now. What the old conversation was
+   * shown is not in the new one, so the budget starts over.
+   */
+  async refreshResume(): Promise<CompactResume | undefined> {
+    if (this.options.brief === false) return undefined;
+    this.retrieval.reset();
+    const resumed = await resumeFor(this.options, this.projectId, this.retrieval);
+    this.#brief = resumed.text;
+    this.#resumed = resumed;
+    return resumed;
+  }
+
+  /**
+   * Saves a checkpoint by code before a conversation is renewed, carrying
+   * the latest one forward: its goal, status, next action, pending and
+   * blocked work, decisions, files and errors stay as they were; the memories
+   * stored since and the git ref are added, and the summary says why the
+   * conversation was renewed. Nothing is saved when nothing changed since the
+   * latest checkpoint. Returns whether one was saved.
+   */
+  async carryCheckpoint(reason: string): Promise<boolean> {
+    const { vault, agent } = this.options;
+    const answer = await vault.call("resume", {
+      about: this.projectId,
+      ...(agent ? { agent: agent.name } : {}),
+    });
+    const data = (answer.isError ? undefined : dataOf(answer)) as
+      { found?: boolean; checkpoint?: unknown } | undefined;
+    const latest = data?.found === false ? undefined : readCheckpoint(data?.checkpoint);
+    const gitRef = await this.options.gitRef?.().catch(() => undefined);
+    const known = new Set(latest?.memoryRefs ?? []);
+    const fresh = this.#stored.filter((id) => !known.has(id));
+    if (fresh.length === 0 && (gitRef === undefined || gitRef === latest?.gitRef)) return false;
+
+    const ref = gitRef ?? latest?.gitRef;
+    const summary = (latest?.summary ?? "").replace(/\n?Conversation renewed: .*$/s, "").trim();
+    const packed = packCheckpoint({
+      task: latest?.task.id || this.task,
+      summary: `${summary === "" ? "No summary was saved." : summary}\nConversation renewed: ${reason}.`,
+      ...(latest?.task.goal ? { goal: latest.task.goal } : {}),
+      status: latest?.task.status ?? "in_progress",
+      ...(latest?.task.nextAction ? { next_action: latest.task.nextAction } : {}),
+      next: latest
+        ? [...(latest.task.nextAction ? [latest.task.nextAction] : []), ...latest.progress.pending]
+        : [],
+      done: latest?.progress.completed ?? [],
+      blocked: latest?.progress.blocked ?? [],
+      decisions: latest?.decisions ?? [],
+      files: latest?.files ?? [],
+      errors: latest?.errors ?? [],
+      memory_refs: [...known, ...fresh].slice(-20),
+      ...(ref === undefined ? {} : { git_ref: ref }),
+    });
+    const by = this.options.author ?? agent?.name;
+    const saved = await vault.call("checkpoint", {
+      ...packed,
+      about: this.projectId,
+      ...(by === undefined ? {} : { agent: by }),
+    });
+    return !saved.isError;
   }
 
   get project(): Project {
@@ -259,7 +324,7 @@ ${this.#agentsPolicy()}
 - Store what will matter in a later session: decisions and why, facts about the project, the user's preferences, open questions. Use remember with a label (Decision, Fact, Preference, Question, Task), a short name, and origin (stated when the user said it, observed when you saw it, inferred when you concluded it). Link related memories with relate. Look first (recall) so you do not store the same thing twice.
 - Do not store what only matters to this conversation, and never store keys, passwords or tokens: storing them is refused.
 - Storing what memory already holds is refused, and you are told which memory holds it: use update on that one if something about it changed.
-- When something stopped being true, do not leave both: store the new memory, relate it to the old one with supersedes (and a reason), and mark the old one with feedback "obsolete". A fact (a relation) that ended is closed with forget, mode "invalidate"; memories themselves are never deleted.
+- When something stopped being true (a decision taken again, a fact that changed), do not leave both: call revise with the old memory's id, the new text and the reason. It stores the new version, relates it with supersedes and marks the old one obsolete, in one call. A fact (a relation) that ended is closed with forget, mode "invalidate"; memories themselves are never deleted.
 - Say how memories turned out: feedback "useful" when one helped, "wrong" when it misled, "verified" when you checked it against a source.
 - When unsure what is known, use palace_reflect: keep verified facts, claims and inferences apart, and say plainly what is not known.
 - When the session ends you will be asked to save a checkpoint: the present state of the work, not a story of the session.
@@ -374,7 +439,117 @@ ${this.brief}`;
   async tools(): Promise<Tool[]> {
     const offered = await this.options.vault.tools();
     const wanted = new Set<string>(MEMORY_TOOLS);
-    return offered.filter((tool) => wanted.has(tool.name)).map((tool) => this.#tool(tool));
+    const tools = offered.filter((tool) => wanted.has(tool.name)).map((tool) => this.#tool(tool));
+    if (offered.some((tool) => tool.name === "remember")) tools.push(this.#reviseTool());
+    return tools;
+  }
+
+  /**
+   * `revise`: a memory that changed, in one call instead of three. The new
+   * memory is stored (from the old one, its sources), relates to the old one
+   * with `supersedes` and the reason, and the old one is marked obsolete
+   * (when this agent may mark it). The old one is kept, for its history, but
+   * is no longer given as current.
+   */
+  #reviseTool(): Tool {
+    return {
+      name: "revise",
+      description:
+        "Replace a memory that changed (a decision taken again, a fact that is no longer true) with its new version, in one call: the new memory supersedes the old one, which is marked obsolete and kept for its history. Use it instead of remember + relate + feedback.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          old: { type: "string", description: "Id of the memory that changed." },
+          text: { type: "string", description: "What is true now, in plain language." },
+          reason: { type: "string", description: "Why it changed, in a few words." },
+          name: { type: "string", description: "A short name for the new memory." },
+          labels: {
+            type: "array",
+            items: { type: "string" },
+            description: "Its kind (Decision, Fact, Preference...); default: the old one's.",
+          },
+          origin: {
+            type: "string",
+            enum: ["stated", "observed", "inferred", "verified"],
+            description: "How it is known.",
+          },
+        },
+        required: ["old", "text", "reason"],
+      },
+      writes: false,
+      run: (input) => this.#revise(input),
+    };
+  }
+
+  async #revise(input: Record<string, unknown>): Promise<string> {
+    const { vault } = this.options;
+    const old = typeof input.old === "string" ? input.old : "";
+    const text = typeof input.text === "string" ? input.text.trim() : "";
+    const reason = typeof input.reason === "string" ? input.reason.trim() : "";
+    if (old === "" || text === "" || reason === "") {
+      throw new Error("revise needs old (an id), text and reason.");
+    }
+    const findings = findSecrets(
+      { text, reason, name: input.name },
+      this.options.knownSecrets ?? [],
+    );
+    if (findings.length > 0) throw new Error(describeSecrets(findings));
+    const node = await vault.call("get_node", { id: old });
+    if (node.isError) throw new Error(`No memory ${old} to revise: ${node.text}`);
+    const oldData = (dataOf(node) ?? {}) as {
+      labels?: unknown;
+      provenance?: { recorded_by?: unknown };
+    };
+    const labels = Array.isArray(input.labels)
+      ? input.labels.map(String)
+      : Array.isArray(oldData.labels)
+        ? oldData.labels.map(String).filter((label) => label !== "Memory")
+        : [];
+    const embedding = await this.#embed(text, "passage");
+    const made = await vault.call("remember", {
+      text,
+      ...(typeof input.name === "string" && input.name !== "" ? { name: input.name } : {}),
+      ...(labels.length > 0 ? { labels } : {}),
+      ...(typeof input.origin === "string" ? { origin: input.origin } : {}),
+      sources: [old],
+      links: [{ label: "part_of", to: this.projectId }],
+      ...(this.options.author === undefined ? {} : { props: { author: this.options.author } }),
+      ...(embedding ? { embedding } : {}),
+    });
+    const id = made.isError ? undefined : answerId(made);
+    if (id === undefined) throw new Error(`Memory refused the new version: ${made.text}`);
+    if (!this.#stored.includes(id)) this.#stored.push(id);
+    const related = await vault.call("relate", {
+      from: id,
+      label: "supersedes",
+      to: old,
+      reason,
+      ...(this.options.author === undefined ? {} : { props: { author: this.options.author } }),
+    });
+    if (related.isError) {
+      throw new Error(
+        `Stored the new version ${id}, but could not relate it to ${old}: ${related.text}. Relate them with supersedes before going on.`,
+      );
+    }
+    const recorded = oldData.provenance?.recorded_by;
+    const by = typeof recorded === "string" ? recorded : undefined;
+    const agent = this.options.agent;
+    const mayMark = !(agent?.ownOnly === true && by !== undefined && by !== agent.name);
+    const marked = mayMark
+      ? await vault.call("feedback", { id: old, verdict: "obsolete", note: reason })
+      : undefined;
+    await vault.call("palace_anchor", {
+      memory: id,
+      room: ROOM,
+      palace: this.palace,
+      locus: locusFor(labels),
+    });
+    if (marked?.isError === true) {
+      return `Revised: ${id} supersedes ${old}, but marking ${old} obsolete failed: ${marked.text}.`;
+    }
+    return mayMark
+      ? `Revised: ${id} supersedes ${old}, which is marked obsolete and kept for its history.`
+      : `Revised: ${id} supersedes ${old}. That one was recorded by another agent (${by}), so it is not marked; the supersedes relation says it is replaced.`;
   }
 
   #tool(tool: { name: string; description: string; inputSchema: Record<string, unknown> }): Tool {
@@ -382,6 +557,7 @@ ${this.brief}`;
       ...(tool.inputSchema.properties as Record<string, unknown> | undefined),
       // A checkpoint carries the state of the work: see checkpoint.ts.
       ...(tool.name === "checkpoint" ? CHECKPOINT_PROPERTIES : {}),
+      ...(tool.name === "remember" ? { distinct: DISTINCT_PROPERTY } : {}),
     };
     delete properties.namespace; // The agent's namespace, always.
     delete properties.embedding; // Vectors are the agent's to compute, not the model's.
@@ -427,6 +603,21 @@ ${this.brief}`;
       }
       if (known) {
         return `Already in memory, not stored again: ${known.id}${known.name ? ` (${known.name})` : ""}: "${known.text}". If something about it changed, use update on that id.`;
+      }
+      // Close in meaning to a memory already there: the model is told and
+      // chooses, since meaning cannot tell "the same" from "changed".
+      const distinct = args.distinct === true;
+      delete args.distinct;
+      const embedding = await this.#embed(args.text, "passage");
+      if (embedding) args.embedding = embedding;
+      const embedder = this.options.embedder;
+      if (embedding && !distinct && embedder) {
+        const close = await findClose(this.options.vault, embedder, args.text, embedding).catch(
+          () => undefined,
+        );
+        if (close) {
+          return `Not stored yet: memory ${close.id}${close.name ? ` (${close.name})` : ""} is close in meaning: "${close.text}". If yours replaces it, call revise with old "${close.id}". If it says the same, nothing more is needed. If it is a different memory, call remember again with distinct: true.`;
+        }
       }
       // Linked to the project, so the room's memories hang together.
       const links = Array.isArray(args.links) ? [...(args.links as unknown[])] : [];
@@ -484,7 +675,7 @@ ${this.brief}`;
     }
 
     // Meaning: what is stored gets its vector, and what is asked too.
-    if (name === "remember" && typeof args.text === "string") {
+    if (name === "remember" && typeof args.text === "string" && args.embedding === undefined) {
       const embedding = await this.#embed(args.text, "passage");
       if (embedding) args.embedding = embedding;
     }
@@ -652,4 +843,37 @@ async function must(answer: Promise<VaultAnswer>): Promise<VaultAnswer> {
   const result = await answer;
   if (result.isError) throw new Error(`Memory refused: ${result.text}`);
   return result;
+}
+
+/** The compact resume for a session: within its budget, counted as memory brought on its own. */
+async function resumeFor(
+  options: MemorySessionOptions,
+  projectId: string,
+  retrieval: RetrievalBudget,
+): Promise<CompactResume> {
+  const { limits } = retrieval;
+  const embedder = options.embedder;
+  const resumed = await compactResume({
+    vault: options.vault,
+    about: projectId,
+    ...(options.agent ? { agent: options.agent.name } : {}),
+    checkpointBudget: limits.checkpoint,
+    memoryBudget: limits.memories,
+    maxMemories: limits.maxMemories,
+    ...(embedder
+      ? {
+          embed: async (text: string) => {
+            try {
+              return (await embedder.embed([text], "query"))[0];
+            } catch {
+              return undefined;
+            }
+          },
+        }
+      : {}),
+  });
+  // What the resume showed is in the context: lookups say so instead of repeating it.
+  retrieval.seen(resumed.memories.map((m) => m.id));
+  retrieval.countAutomatic(resumed.text);
+  return resumed;
 }

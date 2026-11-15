@@ -1,3 +1,4 @@
+import type { Embedder } from "../embed/types.js";
 import type { Vault } from "./vault.js";
 
 /** Lower case, words only, single spaces. */
@@ -75,4 +76,89 @@ export async function findDuplicate(
     }
   }
   return undefined;
+}
+
+/**
+ * Meaning this close (cosine, e5-small) is worth a word to the model before
+ * storing. Measured (docs/memory-retrieval.md, stage 4): the same fact
+ * reworded scored 0.887–0.979, a fact that changed 0.940–0.943, related but
+ * different facts 0.848, unrelated 0.776. Meaning cannot tell "the same"
+ * from "changed", so a close memory is never refused on meaning alone: the
+ * model is told, and chooses (revise it, leave it, or store it as distinct).
+ */
+export const CLOSE = 0.93;
+
+/** Labels of nodes that are not memories to compare with. */
+const NOT_MEMORIES = new Set(["Checkpoint", "Project", "Agent"]);
+
+/**
+ * A memory close in meaning to `text`, found with its vector, when there is
+ * one at or above `CLOSE`. Undefined when nothing is close or meaning is not
+ * available.
+ */
+export async function findClose(
+  vault: Vault,
+  embedder: Pick<Embedder, "embed">,
+  text: string,
+  embedding: readonly number[],
+): Promise<(KnownMemory & { closeness: number }) | undefined> {
+  const answer = await vault.call("recall", {
+    query: text,
+    embedding: [...embedding],
+    limit: 3,
+    depth: 0,
+  });
+  if (answer.isError) return undefined;
+  const list = ((answer.data ?? safeParse(answer.text)) as { results?: unknown[] } | undefined)
+    ?.results;
+  const candidates: KnownMemory[] = [];
+  for (const item of list ?? []) {
+    const memory = item as { id?: unknown; name?: unknown; text?: unknown; labels?: unknown };
+    if (typeof memory.id !== "string" || typeof memory.text !== "string") continue;
+    const labels = Array.isArray(memory.labels) ? memory.labels.map(String) : [];
+    if (labels.some((label) => NOT_MEMORIES.has(label))) continue;
+    candidates.push({
+      id: memory.id,
+      text: memory.text,
+      ...(typeof memory.name === "string" ? { name: memory.name } : {}),
+    });
+  }
+  if (candidates.length === 0) return undefined;
+  const vectors = await embedder.embed(
+    candidates.map((c) => c.text),
+    "passage",
+  );
+  let best: (KnownMemory & { closeness: number }) | undefined;
+  for (const [index, candidate] of candidates.entries()) {
+    const vector = vectors[index];
+    if (!vector) continue;
+    const closeness = cosine(embedding, vector);
+    if (closeness >= CLOSE && (best === undefined || closeness > best.closeness)) {
+      best = { ...candidate, closeness };
+    }
+  }
+  return best;
+}
+
+/** How alike two vectors point, from -1 to 1. */
+export function cosine(a: readonly number[], b: readonly number[]): number {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    const x = a[i] ?? 0;
+    const y = b[i] ?? 0;
+    dot += x * y;
+    na += x * x;
+    nb += y * y;
+  }
+  return na === 0 || nb === 0 ? 0 : dot / Math.sqrt(na * nb);
+}
+
+function safeParse(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
+  }
 }

@@ -145,6 +145,18 @@ export class RetrievalBudget {
     return { ...this.#stats };
   }
 
+  /**
+   * A new conversation: nothing is in its context yet, so nothing was
+   * "shown earlier", and memory may come on its own again. What was spent
+   * stays counted in the stats.
+   */
+  reset(): void {
+    this.#seen.clear();
+    this.#turnCalls = 0;
+    this.#turnDeep = 0;
+    this.#stats.automaticTokens = 0;
+  }
+
   /** A new turn: the per-turn limit starts again. */
   startTurn(): void {
     this.#turnCalls = 0;
