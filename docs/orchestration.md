@@ -1258,6 +1258,66 @@ resume <id>`. Pause and cancel work only inside the process that runs
     completing; a whole run in `extended` that fails, replans by itself,
     keeps the completed task and completes; and `controlled` asking, with
     a no meaning nothing changes. Full CI: 455, and all evaluations pass.
+- **D4, background runs and the supervisor (done, 2026-11-15):**
+  - **The store is the way between processes.** A `supervisors` table holds,
+    for each run:
+    - the pid of the process running it, and its heartbeat;
+    - an order waiting for it (pause, cancel);
+    - whether it was started in the background, and its folder and
+      settings, to resume it.
+  - **The orchestrator owns what it runs.** While it runs a run, it records
+    its pid, beats its heart every 3 seconds, and takes the orders sent
+    to it: pause (what runs finishes) or cancel (what runs stops). When it
+    stops, it says so. This is true for every run, so `pause` and `cancel`
+    work from another terminal on a run in the foreground too.
+  - **Liveness** (`src/orchestrator/supervisor.ts`) sorts a run into three
+    states:
+    - `running`: the owner is alive and its heart beat in the last minute;
+    - `interrupted`: the run is still running in its store, with no live
+      owner (a reboot, a crash);
+    - `stopped`.
+
+    `grafeno-agent runs` shows it for each run.
+
+  - **`run "<request>" --background`** plans in the terminal (asking, or
+    `--yes`), stores the run, and starts a detached Grafeno Agent: `resume
+<id> --yes --owner=background`, with the same settings and its output
+    in `logs/<run>.log` in the data folder. The terminal may close.
+    `resume <id> --background` does the same for an existing run.
+  - **No one at a terminal:** a background run asks no questions. What
+    needs a person waits in review, and a failed run replans on its own
+    only in `extended`.
+  - **`pause <id>` and `cancel <id>`** send the order through the store.
+    Cancelling a run that no process runs cancels it in the store at once.
+  - **After a reboot:** the next start of `grafeno-agent` (any command but
+    help and version) finds the interrupted background runs of every
+    project and starts each again, detached, in its own folder. It marks
+    the run as live at once, so a second start does not resume it twice.
+  - **Notifications:** when a background run ends, is paused or needs a
+    person, a desktop notification says so:
+    - Windows: a toast through PowerShell's own WinRT, with the text passed
+      in environment variables, never in the script;
+    - Linux: `notify-send`;
+    - macOS: `osascript`.
+
+    No packages are added, and a system without one is not an error.
+
+  - **Checked for real, without spending:** a detached launch started its
+    process, which received its arguments and wrote its log, and a
+    PowerShell toast was sent on Windows 11. That the toast showed was
+    seen by the user, not by a test.
+  - Tests: `test/orchestrator/supervisor.test.ts` (8) covers:
+    - the store between two connections (an order taken once);
+    - liveness (a live owner, a dead process, a stopped heart, a stopped
+      run);
+    - finding interrupted background runs across projects, leaving
+      foreground and live ones alone;
+    - the detached launch's command, folder and log;
+    - each system's notification, with the text kept out of the script;
+    - a real orchestrator obeying a pause and a cancel sent from another
+      connection.
+
+    Full CI: 463, and all evaluations pass.
 
 ## 5. Risks and limits
 

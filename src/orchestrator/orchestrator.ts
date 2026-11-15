@@ -36,6 +36,11 @@ export function dataDir(env: Record<string, string | undefined> = process.env): 
   return join(env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"), "grafeno-agent");
 }
 
+/** Where a project's runs are kept, in the data folder. */
+export function runStoreFile(root: string, project: string): string {
+  return join(root, "runs", `${folderOf(project)}.db`);
+}
+
 function folderOf(name: string): string {
   return name.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 60) || "_";
 }
@@ -98,6 +103,19 @@ export interface OrchestratorOptions {
   readonly explore?: boolean | { readonly share?: number; readonly random?: () => number };
   /** Limits for the whole run (phase D2): tokens, work time, failed attempts. */
   readonly limits?: RunLimits;
+  /**
+   * Phase D4: how this process owns the runs it runs. It always records its
+   * pid and beats its heart in the store, and takes orders (pause, cancel)
+   * sent from another process. `background`: started by `--background`, so
+   * resumed on its own after a reboot, in `cwd`, with `args`.
+   */
+  readonly owner?: {
+    readonly background?: boolean;
+    readonly cwd?: string;
+    readonly args?: readonly string[];
+    /** How often the heart beats and orders are read. Default: 3 seconds. */
+    readonly heartbeatMs?: number;
+  };
   /** For tests. */
   readonly store?: OperationalStore;
   readonly tools?: (workspace: Workspace) => Tool[];
@@ -277,14 +295,34 @@ export class Orchestrator {
           }
         : {}),
     });
-    const cpu = process.cpuUsage();
     this.#scheduler = scheduler;
+    const cpu = process.cpuUsage();
+    // Phase D4: this process owns the run while it runs it.
+    const owner = this.options.owner ?? {};
+    this.store.supervise(runId, {
+      pid: process.pid,
+      background: owner.background === true,
+      ...(owner.cwd ? { cwd: owner.cwd } : {}),
+      ...(owner.args ? { args: owner.args } : {}),
+    });
+    const obey = () => {
+      const order = this.store.takeControl(runId);
+      if (order === "pause") scheduler.pause();
+      else if (order === "cancel") scheduler.cancel();
+    };
+    obey();
+    const beat = setInterval(() => {
+      this.store.heartbeat(runId, process.pid);
+      obey();
+    }, owner.heartbeatMs ?? 3000);
     try {
       const state = await scheduler.run(runId);
       if (state === "completed" || state === "cancelled") await this.pipeline.finish(runId);
       return state;
     } finally {
       this.#scheduler = undefined;
+      clearInterval(beat);
+      this.store.unsupervise(runId);
       // What this process used while it ran the run, where Node can measure it
       // (phase D2): its own memory and CPU, not the providers' processes.
       const spent = process.cpuUsage(cpu);

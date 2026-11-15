@@ -87,6 +87,20 @@ export interface OperationalStore {
   /** The keys of the run's effects started and not finished (a crash, or one in flight). */
   effectsInFlight(runId: string): string[];
   /**
+   * Phase D4: the process that runs a run says so, and beats its heart
+   * while it does; another process sends it an order (pause, cancel)
+   * through here.
+   */
+  supervise(runId: string, owner: SupervisorClaim): void;
+  heartbeat(runId: string, pid: number): void;
+  /** The owner stopped running the run (it ended, paused, or was cancelled). */
+  unsupervise(runId: string): void;
+  supervisor(runId: string): Supervisor | undefined;
+  /** Another process asks the owner to pause or cancel. */
+  requestControl(runId: string, control: Control): void;
+  /** The owner takes the order sent to it, once. */
+  takeControl(runId: string): Control | undefined;
+  /**
    * Replans part of a run (phase D3), in one transaction: the replaced tasks
    * are cancelled (their history kept, their reason saying they were
    * replaced), the new ones are added, and the run's plan and order become
@@ -100,6 +114,27 @@ export interface OperationalStore {
     replaced: readonly string[],
   ): void;
   close(): void;
+}
+
+/** An order to the process that runs a run. */
+export type Control = "pause" | "cancel";
+
+/** Who runs a run, as it said when it started. */
+export interface SupervisorClaim {
+  readonly pid: number;
+  /** Started by `--background`: resumed on its own after a reboot. */
+  readonly background: boolean;
+  /** The project's folder, and the settings, to resume it there. */
+  readonly cwd?: string;
+  readonly args?: readonly string[];
+}
+
+export interface Supervisor extends SupervisorClaim {
+  /** Unset when no process runs it now. */
+  readonly pid: number;
+  readonly running: boolean;
+  readonly heartbeat?: string;
+  readonly control?: Control;
 }
 
 /** The reason a task replaced by a new plan carries: it neither failed nor blocks the run. */
@@ -143,6 +178,15 @@ CREATE TABLE IF NOT EXISTS events (
   data TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_by_run ON events (run_id, seq);
+CREATE TABLE IF NOT EXISTS supervisors (
+  run_id TEXT PRIMARY KEY,
+  pid INTEGER,
+  heartbeat TEXT,
+  control TEXT,
+  background INTEGER NOT NULL DEFAULT 0,
+  cwd TEXT,
+  args TEXT
+);
 CREATE TABLE IF NOT EXISTS effects (
   key TEXT PRIMARY KEY,
   run_id TEXT NOT NULL,
@@ -189,6 +233,82 @@ export class SqliteStore implements OperationalStore {
       "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;",
     );
     this.#db.exec(SCHEMA);
+  }
+
+  supervise(runId: string, owner: SupervisorClaim): void {
+    this.#db
+      .prepare(
+        `INSERT INTO supervisors (run_id, pid, heartbeat, control, background, cwd, args)
+         VALUES (?, ?, ?, NULL, ?, ?, ?)
+         ON CONFLICT(run_id) DO UPDATE SET pid = excluded.pid, heartbeat = excluded.heartbeat,
+           background = excluded.background, cwd = COALESCE(excluded.cwd, cwd),
+           args = COALESCE(excluded.args, args)`,
+      )
+      .run(
+        runId,
+        owner.pid,
+        new Date().toISOString(),
+        owner.background ? 1 : 0,
+        owner.cwd ?? null,
+        owner.args ? JSON.stringify(owner.args) : null,
+      );
+  }
+
+  heartbeat(runId: string, pid: number): void {
+    this.#db
+      .prepare("UPDATE supervisors SET heartbeat = ? WHERE run_id = ? AND pid = ?")
+      .run(new Date().toISOString(), runId, pid);
+  }
+
+  unsupervise(runId: string): void {
+    this.#db
+      .prepare(
+        "UPDATE supervisors SET pid = NULL, heartbeat = NULL, control = NULL WHERE run_id = ?",
+      )
+      .run(runId);
+  }
+
+  supervisor(runId: string): Supervisor | undefined {
+    const row = this.#db.prepare("SELECT * FROM supervisors WHERE run_id = ?").get(runId) as
+      | {
+          pid: number | null;
+          heartbeat: string | null;
+          control: string | null;
+          background: number;
+          cwd: string | null;
+          args: string | null;
+        }
+      | undefined;
+    if (!row) return undefined;
+    return {
+      pid: row.pid ?? 0,
+      running: row.pid !== null,
+      background: row.background === 1,
+      ...(row.heartbeat ? { heartbeat: row.heartbeat } : {}),
+      ...(row.control === "pause" || row.control === "cancel" ? { control: row.control } : {}),
+      ...(row.cwd ? { cwd: row.cwd } : {}),
+      ...(row.args ? { args: JSON.parse(row.args) as string[] } : {}),
+    };
+  }
+
+  requestControl(runId: string, control: Control): void {
+    this.#db
+      .prepare(
+        `INSERT INTO supervisors (run_id, control) VALUES (?, ?)
+         ON CONFLICT(run_id) DO UPDATE SET control = excluded.control`,
+      )
+      .run(runId, control);
+  }
+
+  takeControl(runId: string): Control | undefined {
+    return this.#atomic(() => {
+      const row = this.#db
+        .prepare("SELECT control FROM supervisors WHERE run_id = ?")
+        .get(runId) as { control: string | null } | undefined;
+      if (row?.control !== "pause" && row?.control !== "cancel") return undefined;
+      this.#db.prepare("UPDATE supervisors SET control = NULL WHERE run_id = ?").run(runId);
+      return row.control;
+    });
   }
 
   replan(

@@ -23,7 +23,7 @@ import { runTui } from "./tui/run.js";
 import { createInterface } from "node:readline/promises";
 import { createOrchestrator, describePlan, type OrchestrateSettings } from "./app/orchestrate.js";
 import type { Orchestrator, OrchestratorOptions } from "./orchestrator/orchestrator.js";
-import { AUTONOMY, type Autonomy } from "./orchestrator/policy.js";
+import { AUTONOMY, type Autonomy, type Question } from "./orchestrator/policy.js";
 import { describeReport } from "./orchestrator/telemetry.js";
 import { describeResumeStats, resumeCompact } from "./app/resume.js";
 import { describeReplan } from "./orchestrator/replan.js";
@@ -54,6 +54,11 @@ Commands:
   runs [id]  The project's runs, or one run's report.
   resume <id>  Go on with a paused or waiting run (the same limit flags, higher, let a
           run paused by one go on).
+  run "<request>" --background  Plan it here, then a detached process runs it: this terminal
+          may close. A desktop notification says when it ends or needs a person.
+  pause <id> | cancel <id>  Ask the process running a run (here or in the background) to
+          pause (finish what runs) or cancel it. After a reboot, an interrupted background
+          run is resumed when grafeno-agent next starts.
   replan <id> [--yes]  New tasks in place of what failed in a run, and what depends on it,
           from the planner, checked by code; completed work is kept. Shown first;
           then the run goes on. In --mode extended a run replans on its own (at most
@@ -291,12 +296,19 @@ async function confirm(question: string): Promise<boolean> {
 }
 
 /** Runs a run to where it stops, printing what happens. */
-async function drive(orchestrator: Orchestrator, runId: string, yes = false): Promise<number> {
+async function drive(
+  orchestrator: Orchestrator,
+  runId: string,
+  yes = false,
+  background = false,
+): Promise<number> {
   // A task that fails for good is replanned (phase D3): on its own in the
-  // extended mode, else after asking (or with --yes).
+  // extended mode, else after asking (or with --yes). In the background
+  // there is no one to ask: only the extended mode replans.
   const state = await orchestrator.runWithReplans(
     runId,
     async (proposal) => {
+      if (background) return false;
       console.log("");
       for (const line of describeReplan(proposal)) console.log(line);
       return yes || (await confirm("\nReplan what failed this way?"));
@@ -318,6 +330,19 @@ async function drive(orchestrator: Orchestrator, runId: string, yes = false): Pr
     console.log(`\nThe run is ${state}. Go on with: grafeno-agent resume ${runId}`);
   } else if (state === "failed") {
     console.log(`\nThe run failed. Replan what failed with: grafeno-agent replan ${runId}`);
+  }
+  if (background) {
+    // Phase D4: a background run tells the person when it ends or needs them.
+    const { notify } = await import("./orchestrator/supervisor.js");
+    const needs =
+      state === "waiting"
+        ? "it needs a person"
+        : state === "paused"
+          ? "it is paused"
+          : state === "failed"
+            ? "it failed"
+            : state;
+    await notify("Grafeno Agent", `Run ${runId}: ${needs}. grafeno-agent runs ${runId}`);
   }
   orchestrator.close();
   return state === "completed" ? 0 : 1;
@@ -375,6 +400,22 @@ async function orchestrateCommand(argv: readonly string[]): Promise<number> {
     return 0;
   }
   const { run, uncommitted } = await orchestrator.start(request, planned);
+  if (argv.includes("--background")) {
+    // Phase D4: a detached process owns the run; this terminal may close.
+    orchestrator.close();
+    const { startBackground } = await import("./orchestrator/supervisor.js");
+    const { dataDir } = await import("./orchestrator/orchestrator.js");
+    const { log } = startBackground(run.id, {
+      cwd: process.cwd(),
+      dataDir: dataDir(),
+      args: settingsArgs(argv),
+    });
+    console.log(`\nRunning ${run.id} in the background. Its log: ${log}`);
+    console.log(
+      `  grafeno-agent runs ${run.id}    how it goes\n  grafeno-agent pause ${run.id}   finish what runs, start nothing new\n  grafeno-agent cancel ${run.id}  stop it\n  grafeno-agent resume ${run.id}  go on (add --background to keep it in the background)`,
+    );
+    return 0;
+  }
   if (uncommitted.length > 0) {
     console.log(
       `\nNote: ${String(uncommitted.length)} changed files are not committed; the run starts from your last commit and does not see them.`,
@@ -394,9 +435,18 @@ async function runsCommand(argv: readonly string[]): Promise<number> {
   } else {
     const runs = orchestrator.runs();
     if (runs.length === 0) console.log("No runs in this project yet.");
+    const { liveness } = await import("./orchestrator/supervisor.js");
     for (const run of runs) {
+      // Phase D4: whether a process works on it now, or it was interrupted.
+      const live = liveness(orchestrator.store, run.id);
+      const who =
+        live.liveness === "running"
+          ? `live (pid ${String(live.supervisor?.pid ?? "?")}${live.supervisor?.background ? ", background" : ""})`
+          : live.liveness === "interrupted"
+            ? "interrupted: grafeno-agent resume to go on"
+            : "";
       console.log(
-        `${run.id}  ${run.state.padEnd(10)} ${run.created.slice(0, 16).replace("T", " ")}  ${run.request.slice(0, 60)}`,
+        `${run.id}  ${run.state.padEnd(10)} ${run.created.slice(0, 16).replace("T", " ")}  ${run.request.slice(0, 60)}${who ? `  [${who}]` : ""}`,
       );
     }
   }
@@ -411,15 +461,38 @@ async function resumeCommand(argv: readonly string[]): Promise<number> {
     console.error("Which run? grafeno-agent runs lists them.");
     return 2;
   }
+  const background = argv.includes("--owner=background");
+  if (argv.includes("--background")) {
+    const { startBackground } = await import("./orchestrator/supervisor.js");
+    const { dataDir } = await import("./orchestrator/orchestrator.js");
+    const { log } = startBackground(id, {
+      cwd: process.cwd(),
+      dataDir: dataDir(),
+      args: settingsArgs(argv),
+    });
+    console.log(`Resuming ${id} in the background. Its log: ${log}`);
+    return 0;
+  }
   const orchestrator = await createOrchestrator(runSettings(argv), {
     ...printChanges(),
-    ask: async (question) =>
-      confirm(
-        `\n  ? ${question.worker ?? "The run"} wants to ${question.action} (${question.reason}). Allow it?`,
-      ),
+    // In the background there is no one at a terminal: what needs a person waits for review.
+    ...(background
+      ? {
+          owner: {
+            background: true,
+            cwd: process.cwd(),
+            args: settingsArgs(argv),
+          },
+        }
+      : {
+          ask: async (question: Question) =>
+            confirm(
+              `\n  ? ${question.worker ?? "The run"} wants to ${question.action} (${question.reason}). Allow it?`,
+            ),
+        }),
   });
-  console.log(`Resuming ${id}:`);
-  return drive(orchestrator, id);
+  console.log(`Resuming ${id}${background ? " in the background" : ""}:`);
+  return drive(orchestrator, id, argv.includes("--yes"), background);
 }
 
 /**
@@ -495,6 +568,99 @@ async function routerCommand(argv: readonly string[]): Promise<number> {
   return 0;
 }
 
+/** The run settings on a command line, to give a background process the same ones. */
+function settingsArgs(argv: readonly string[]): string[] {
+  const out: string[] = [];
+  const valued = [
+    "--mode",
+    "--workers",
+    "--providers",
+    "--provider-for",
+    "--max-tokens",
+    "--max-work",
+    "--max-retries",
+  ];
+  for (const [i, arg] of argv.entries()) {
+    if (valued.includes(arg) && argv[i + 1] !== undefined) out.push(arg, argv[i + 1] ?? "");
+    if (arg === "--light") out.push(arg);
+  }
+  return out;
+}
+
+/** Sends a run's owner an order (phase D4): pause or cancel, from any terminal. */
+async function controlCommand(
+  control: "pause" | "cancel",
+  argv: readonly string[],
+): Promise<number> {
+  const id = argv.find((arg) => !arg.startsWith("--"));
+  if (!id) {
+    console.error("Which run? grafeno-agent runs lists them.");
+    return 2;
+  }
+  const { dataDir, runStoreFile } = await import("./orchestrator/orchestrator.js");
+  const { SqliteStore } = await import("./orchestrator/store.js");
+  const { liveness } = await import("./orchestrator/supervisor.js");
+  const project = detectProject(process.cwd(), process.env.AGENT_PROJECT);
+  const store = new SqliteStore(runStoreFile(dataDir(), project.name));
+  try {
+    const run = store.run(id);
+    if (!run) {
+      console.error(`No run ${id} in ${project.name}. grafeno-agent runs lists them.`);
+      return 1;
+    }
+    const live = liveness(store, id);
+    if (live.liveness !== "running") {
+      if (control === "cancel" && run.state !== "completed" && run.state !== "cancelled") {
+        for (const task of store.tasks(id)) {
+          if (task.state !== "completed" && task.state !== "cancelled") {
+            store.transition(id, task.id, "cancelled", { reason: "the run was cancelled" });
+          }
+        }
+        store.setRunState(id, "cancelled");
+        console.log(`${id} is cancelled (no process was running it).`);
+        return 0;
+      }
+      console.log(`No process runs ${id} now (${run.state}): there is nothing to ${control}.`);
+      return 0;
+    }
+    store.requestControl(id, control);
+    console.log(
+      control === "pause"
+        ? `Asked ${id} to pause: what runs finishes, nothing new starts.`
+        : `Asked ${id} to cancel: what runs is stopped.`,
+    );
+    return 0;
+  } finally {
+    store.close();
+  }
+}
+
+/**
+ * Phase D4: background runs interrupted by a reboot (or a crash) are resumed
+ * the same way, in their own folder, when Grafeno Agent next starts.
+ */
+async function resumeInterrupted(): Promise<void> {
+  const { dataDir } = await import("./orchestrator/orchestrator.js");
+  const { interruptedRuns, startBackground } = await import("./orchestrator/supervisor.js");
+  const { SqliteStore } = await import("./orchestrator/store.js");
+  for (const run of interruptedRuns(dataDir())) {
+    if (!run.supervisor.cwd) continue;
+    const { log, pid } = startBackground(run.runId, {
+      cwd: run.supervisor.cwd,
+      dataDir: dataDir(),
+      ...(run.supervisor.args ? { args: run.supervisor.args } : {}),
+    });
+    // Seen as live at once, so another start does not resume it twice.
+    const store = new SqliteStore(run.file);
+    try {
+      store.supervise(run.runId, { pid, background: true });
+    } finally {
+      store.close();
+    }
+    console.error(`Resumed ${run.runId} in the background: its process had stopped. Log: ${log}`);
+  }
+}
+
 /** Replans what failed in a run (phase D3), after showing it, then goes on with the run. */
 async function replanCommand(argv: readonly string[]): Promise<number> {
   const id = argv.find((arg) => !arg.startsWith("--"));
@@ -533,6 +699,13 @@ async function main(argv: readonly string[]): Promise<number> {
   loadSettings({ fromSource: import.meta.url.endsWith(".ts") });
 
   const command = argv[0] ?? "chat";
+  // Phase D4: interrupted background runs go on (not from a background process itself).
+  if (
+    !argv.includes("--owner=background") &&
+    !["help", "--help", "-h", "version", "--version", "-v"].includes(command)
+  ) {
+    await resumeInterrupted().catch(() => undefined);
+  }
   switch (command) {
     case "chat":
       return chat(argv.includes("--plain"));
@@ -557,6 +730,10 @@ async function main(argv: readonly string[]): Promise<number> {
       return routerCommand(argv.slice(1));
     case "replan":
       return replanCommand(argv.slice(1));
+    case "pause":
+      return controlCommand("pause", argv.slice(1));
+    case "cancel":
+      return controlCommand("cancel", argv.slice(1));
     case "help":
     case "--help":
     case "-h":
