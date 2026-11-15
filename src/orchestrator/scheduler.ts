@@ -63,6 +63,11 @@ export interface SchedulerOptions {
   readonly attemptTimeoutMs?: number;
   /** Told of what happens, as it happens (the store keeps it too). */
   readonly onChange?: (change: SchedulerChange) => void;
+  /**
+   * A run-wide limit (phase D2): why nothing new may start, or undefined
+   * while there is room. Checked before tasks start; what runs finishes.
+   */
+  readonly limit?: (runId: string) => string | undefined;
 }
 
 export type SchedulerChange =
@@ -89,12 +94,14 @@ class Stop extends Error {
  * run another process left. No model decides anything here.
  */
 export class Scheduler {
-  readonly #options: Required<Omit<SchedulerOptions, "onChange">> &
-    Pick<SchedulerOptions, "onChange">;
+  readonly #options: Required<Omit<SchedulerOptions, "onChange" | "limit">> &
+    Pick<SchedulerOptions, "onChange" | "limit">;
   readonly #running = new Map<string, { controller: AbortController; done: Promise<void> }>();
   #pausing = false;
   #cancelling = false;
   #quota: { reason: string; resetsAt?: Date } | undefined;
+  /** A run-wide limit reached: why the run pauses. */
+  #limited: string | undefined;
 
   constructor(options: SchedulerOptions) {
     this.#options = {
@@ -122,10 +129,12 @@ export class Scheduler {
     this.#pausing = false;
     this.#cancelling = false;
     this.#quota = undefined;
+    this.#limited = undefined;
     if (run.state !== "running") this.#setRun(runId, "running", "resumed");
     this.#recover(runId);
 
     for (;;) {
+      if (!this.#holding()) this.#limited = this.#options.limit?.(runId);
       if (!this.#holding()) {
         this.#promote(runId);
         this.#startReady(runId);
@@ -138,7 +147,9 @@ export class Scheduler {
 
   /** Whether nothing new may start: pausing, cancelling, or held by the provider's limit. */
   #holding(): boolean {
-    return this.#pausing || this.#cancelling || this.#quota !== undefined;
+    return (
+      this.#pausing || this.#cancelling || this.#quota !== undefined || this.#limited !== undefined
+    );
   }
 
   /** Starts nothing new; what runs finishes, then the run is paused. */
@@ -350,6 +361,7 @@ export class Scheduler {
         : "";
       return this.#setRun(runId, "paused", `the provider's usage limit is reached${when}`);
     }
+    if (this.#limited) return this.#setRun(runId, "paused", this.#limited);
     if (this.#pausing) return this.#setRun(runId, "paused", "paused");
     this.#promote(runId);
     const tasks = store.tasks(runId);

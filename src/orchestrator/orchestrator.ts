@@ -10,6 +10,7 @@ import type { ModelChoice, Provider } from "../providers/types.js";
 import { projectTools } from "../tools/index.js";
 import type { Workspace } from "../tools/workspace.js";
 import type { RouterMode } from "./learned.js";
+import { limitReached, type RunLimits } from "./limits.js";
 import { MetricsStore } from "./metrics.js";
 import { computeStats } from "./stats.js";
 import { workerMemory } from "./memory.js";
@@ -94,6 +95,8 @@ export interface OrchestratorOptions {
    * learn from. Off unless set (`AGENT_ROUTER_EXPLORE=true`), as decided.
    */
   readonly explore?: boolean | { readonly share?: number; readonly random?: () => number };
+  /** Limits for the whole run (phase D2): tokens, work time, failed attempts. */
+  readonly limits?: RunLimits;
   /** For tests. */
   readonly store?: OperationalStore;
   readonly tools?: (workspace: Workspace) => Tool[];
@@ -267,7 +270,13 @@ export class Orchestrator {
       ...(this.options.maxAttempts ? { maxAttempts: this.options.maxAttempts } : {}),
       ...(this.options.attemptTimeoutMs ? { attemptTimeoutMs: this.options.attemptTimeoutMs } : {}),
       ...(this.options.onChange ? { onChange: this.options.onChange } : {}),
+      ...(this.options.limits
+        ? {
+            limit: (id: string) => limitReached(this.store, id, this.options.limits ?? {}),
+          }
+        : {}),
     });
+    const cpu = process.cpuUsage();
     this.#scheduler = scheduler;
     try {
       const state = await scheduler.run(runId);
@@ -275,6 +284,16 @@ export class Orchestrator {
       return state;
     } finally {
       this.#scheduler = undefined;
+      // What this process used while it ran the run, where Node can measure it
+      // (phase D2): its own memory and CPU, not the providers' processes.
+      const spent = process.cpuUsage(cpu);
+      const memory = process.memoryUsage();
+      this.store.event(runId, "resources", {
+        rssMb: Math.round(memory.rss / 1_048_576),
+        heapMb: Math.round(memory.heapUsed / 1_048_576),
+        cpuUserMs: Math.round(spent.user / 1000),
+        cpuSystemMs: Math.round(spent.system / 1000),
+      });
       // What the run taught, for phase C; a failure here never fails the run.
       try {
         this.metrics?.recordRun(this.store, runId, this.options.project.name);

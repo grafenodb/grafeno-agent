@@ -50,7 +50,16 @@ export type Approver = (
 export interface ToolRegistryOptions {
   /** Secrets that must never reach the model: replaced in every tool's output. */
   readonly redact?: readonly string[];
+  /**
+   * The longest a tool's result may be, in characters, for any tool (phase
+   * D2): longer ones keep their start and end. Default: 100,000. Tools that
+   * cut their own output sooner (commands, files) are not changed.
+   */
+  readonly maxResultChars?: number;
 }
+
+/** The default cap on any tool's result. */
+export const MAX_RESULT_CHARS = 100_000;
 
 const NAME = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -68,6 +77,7 @@ export function permissionOf(tool: Tool, input: Record<string, unknown>): Permis
 export class ToolRegistry implements ToolHost {
   readonly #tools = new Map<string, Tool>();
   readonly #redact: readonly string[];
+  readonly #maxResult: number;
 
   constructor(
     tools: readonly Tool[] = [],
@@ -75,6 +85,7 @@ export class ToolRegistry implements ToolHost {
     options: ToolRegistryOptions = {},
   ) {
     this.#redact = (options.redact ?? []).filter((secret) => secret.length >= 8);
+    this.#maxResult = options.maxResultChars ?? MAX_RESULT_CHARS;
     for (const tool of tools) this.add(tool);
   }
 
@@ -139,6 +150,10 @@ export class ToolRegistry implements ToolHost {
   #clean(text: string): string {
     let clean = text;
     for (const secret of this.#redact) clean = clean.split(secret).join("[secret removed]");
+    if (clean.length > this.#maxResult) {
+      const half = Math.floor(this.#maxResult / 2);
+      clean = `${clean.slice(0, half)}\n... (${String(clean.length - this.#maxResult)} characters left out: ask for less) ...\n${clean.slice(-half)}`;
+    }
     return clean;
   }
 }

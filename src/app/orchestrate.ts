@@ -3,6 +3,7 @@ import { detectProject } from "../memory/project.js";
 import { grafenoVault } from "../memory/vault.js";
 import { Orchestrator, type OrchestratorOptions } from "../orchestrator/orchestrator.js";
 import { exploreOn, routerMode } from "../orchestrator/learned.js";
+import type { RunLimits } from "../orchestrator/limits.js";
 import { TASK_KINDS, type TaskKind } from "../orchestrator/plan.js";
 import type { Planned } from "../orchestrator/planner.js";
 import type { Autonomy } from "../orchestrator/policy.js";
@@ -27,6 +28,8 @@ export interface OrchestrateSettings {
    * kind; default: AGENT_PROVIDERS=auto.
    */
   readonly auto?: boolean;
+  /** Limits for the whole run (phase D2). */
+  readonly limits?: RunLimits;
   readonly cwd?: string;
 }
 
@@ -49,6 +52,7 @@ export async function createOrchestrator(
     ...providerOptions(settings),
     ...(settings.providerFor ? { providerFor: settings.providerFor } : {}),
     router: routerMode(process.env.AGENT_ROUTER),
+    ...(settings.limits ? { limits: settings.limits } : {}),
     explore: exploreOn(process.env.AGENT_ROUTER_EXPLORE),
     ...((settings.auto ?? isAuto(process.env.AGENT_PROVIDERS))
       ? { auto: true, affinity: affinityFor(process.env.AGENT_AFFINITY, TASK_KINDS) }

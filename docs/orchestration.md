@@ -1191,6 +1191,40 @@ resume <id>`. Pause and cancel work only inside the process that runs
   (`maxAttempts`). A provider that stays down never gets one model more
   than the limit. Full CI: 442, and all evaluations pass.
 
+- **D2, limits for the whole run (done, 2026-11-15):**
+  - `RunLimits` (`src/orchestrator/limits.ts`) has three limits:
+    - `tokens`: input + output, as reported;
+    - `workMs`: the attempts' time, added up;
+    - `retries`: attempts that did not complete through the model's doing,
+      not a plan's limit or a move.
+
+    They count what the run's attempts recorded, across every process that
+    worked on it, so a resumed run keeps its count.
+
+  - The scheduler checks them before starting tasks. When one is reached,
+    nothing new starts, what runs finishes, and the run pauses, naming the
+    limit and how far ("the run's token limit is reached: 1,200 of 1,000
+    reported tokens (resume with a higher --max-tokens)"). Resuming with
+    the same limit stays paused; a higher one goes on.
+  - Flags: `run` and `resume` take `--max-tokens N`, `--max-work M`
+    (minutes) and `--max-retries N`.
+  - **Every tool's result is capped** at 100,000 characters by the tool
+    registry: the start and the end are kept, with what was left out.
+    Commands (30,000) and files (by lines) already cut sooner, and are not
+    changed.
+  - **Memory and CPU:** when the orchestrating process stops running a run,
+    it records its memory and CPU, and the run's report shows them. The
+    providers' own processes are not measured: Node has no portable way to
+    do it without a dependency, and the report says so.
+  - The per-attempt limits from phase A are unchanged: workers at once,
+    the attempt's time, tokens per attempt, the context budget, attempts
+    per task and the plans' own limits.
+  - Tests: `test/orchestrator/limits.test.ts` (6) covers the counting,
+    each limit, a run that pauses with its reason, resuming at the same and
+    at a higher limit, the run's retries pausing before a task runs out of
+    its own attempts, the report's resources and the cap on tool results.
+    Full CI: 448, and all evaluations pass.
+
 ## 5. Risks and limits
 
 - **Quota.** Parallel workers spend the plan faster. The router reads the

@@ -49,6 +49,12 @@ export interface RunReport {
    * and whether its choice was used (learned mode) or only recorded (shadow).
    */
   readonly learned: { readonly differed: number; readonly applied: number };
+  /**
+   * What the orchestrating process used, the last time it ran the run
+   * (phase D2): its memory and CPU, where Node can measure them. The
+   * providers' own processes are not included.
+   */
+  readonly resources?: { readonly rssMb: number; readonly cpuMs: number };
 }
 
 /**
@@ -121,6 +127,7 @@ export function runReport(store: OperationalStore, runId: string): RunReport {
     },
     estimated:
       metrics.some((m) => m.windowEstimated && m.contextPeak > 0) || renewedOnEstimate(events),
+    ...resourcesOf(events),
     learned: {
       differed: events.filter((e) => e.kind === "router_suggestion" && e.data.replace === true)
         .length,
@@ -146,6 +153,11 @@ export function describeReport(report: RunReport): string[] {
     lines.push(`${String(report.totals.questions)} questions for a person`);
   if (report.estimated)
     lines.push("Some context shares are estimates (the provider did not say its window).");
+  if (report.resources) {
+    lines.push(
+      `This process: ${String(report.resources.rssMb)} MB of memory, ${(report.resources.cpuMs / 1000).toFixed(1)} s of CPU (the providers' processes not included).`,
+    );
+  }
   const { differed, applied } = report.learned;
   if (differed > 0) {
     lines.push(
@@ -166,4 +178,18 @@ function sum(
 
 function renewedOnEstimate(events: readonly RunEvent[]): boolean {
   return events.some((e) => e.kind === "context_renewed" && e.data.estimated === true);
+}
+
+function resourcesOf(events: readonly RunEvent[]): {
+  resources?: { rssMb: number; cpuMs: number };
+} {
+  const last = [...events].reverse().find((e) => e.kind === "resources");
+  if (!last) return {};
+  const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  return {
+    resources: {
+      rssMb: n(last.data.rssMb),
+      cpuMs: n(last.data.cpuUserMs) + n(last.data.cpuSystemMs),
+    },
+  };
 }

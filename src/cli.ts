@@ -47,9 +47,12 @@ Commands:
           --providers claude-code,codex (default AGENT_PROVIDERS), or --providers auto
           (General Auto: every ready provider as one pool, each task kind to its
           affinity, AGENT_AFFINITY), --provider-for tests=codex,docs=codex (which
-          provider takes a kind of task).
+          provider takes a kind of task). Limits for the whole run: --max-tokens N
+          (reported input + output), --max-work M (minutes of work), --max-retries N
+          (failed attempts); reaching one pauses the run, saying which.
   runs [id]  The project's runs, or one run's report.
-  resume <id>  Go on with a paused or waiting run.
+  resume <id>  Go on with a paused or waiting run (the same limit flags, higher, let a
+          run paused by one go on).
   resume --compact  Print where the project's work stands, compact, for a new session:
           the latest checkpoint and a few related memories, within budgets. Only reads
           memory, calls no model. --task <name> (a task's checkpoints instead of the
@@ -236,7 +239,23 @@ function runSettings(argv: readonly string[]): OrchestrateSettings {
     throw new Error(`--mode must be one of ${AUTONOMY.join(", ")}`);
   }
   const workers = Number(flag(argv, "--workers") ?? "3");
+  const positive = (name: string, scale = 1): number | undefined => {
+    const raw = flag(argv, name);
+    if (raw === undefined) return undefined;
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value <= 0) throw new Error(`${name} takes a number above 0`);
+    return Math.round(value * scale);
+  };
+  const tokens = positive("--max-tokens");
+  const workMs = positive("--max-work", 60_000);
+  const retries = positive("--max-retries");
+  const limits = {
+    ...(tokens === undefined ? {} : { tokens }),
+    ...(workMs === undefined ? {} : { workMs }),
+    ...(retries === undefined ? {} : { retries }),
+  };
   return {
+    ...(Object.keys(limits).length > 0 ? { limits } : {}),
     ...(mode === undefined ? {} : { mode: mode as Autonomy }),
     workers: Number.isFinite(workers) && workers >= 1 ? Math.floor(workers) : 3,
     light: argv.includes("--light"),
@@ -302,7 +321,15 @@ async function orchestrateCommand(argv: readonly string[]): Promise<number> {
     .filter(
       (arg, i) =>
         !arg.startsWith("--") &&
-        !["--mode", "--workers", "--providers", "--provider-for"].includes(argv[i - 1] ?? ""),
+        ![
+          "--mode",
+          "--workers",
+          "--providers",
+          "--provider-for",
+          "--max-tokens",
+          "--max-work",
+          "--max-retries",
+        ].includes(argv[i - 1] ?? ""),
     )
     .join(" ")
     .trim();
