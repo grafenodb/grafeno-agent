@@ -1,0 +1,13 @@
+# The only git configuration the tests see (vitest.config.ts points
+# GIT_CONFIG_GLOBAL here and sets GIT_CONFIG_NOSYSTEM): the developer's own
+# settings (commit signing, autocrlf, LFS filters, credential helpers) must
+# not change, or slow down, what the tests check.
+[user]
+	name = Test User
+	email = test@example.invalid
+[commit]
+	gpgsign = false
+[tag]
+	gpgsign = false
+[init]
+	defaultBranch = main

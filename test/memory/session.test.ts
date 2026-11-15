@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { describe, expect, it } from "vitest";
 import { Agent } from "../../src/agent/agent.js";
 import { ToolRegistry } from "../../src/agent/tools.js";
@@ -218,7 +219,9 @@ describe("a second session picks up the first (fake memory, fake model)", () => 
 describe("detectProject", () => {
   it("names the project after the git repository it runs in", () => {
     const here = detectProject(process.cwd());
-    expect(here.name).toBe("grafeno-agent");
+    // The checkout's folder, whatever it is called (a clone or a worktree is not always "grafeno-agent").
+    expect(here.path).toBe(process.cwd());
+    expect(here.name).toBe(basename(process.cwd()));
     expect(detectProject(process.cwd(), "other").name).toBe("other");
   });
 });
