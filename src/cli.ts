@@ -58,10 +58,12 @@ Commands:
           --level 0 (the checkpoint alone), 1 (and related memories: the default),
           2 --query "<topic>" (memories about something specific). Measures go to
           stderr. Meant for a Claude Code SessionStart hook.
-  router [--import]  What the router has learned: each kind of task and complexity, each
+  router [--import] [--compare]  What the router has learned: each kind of task and complexity, each
           provider, model and effort, how often it succeeded cleanly (with its 95%
           interval), cost and time, and whether the sample is big enough to count.
-          --import first reads the runs already kept for every project.`;
+          --import first reads the runs already kept for every project. --compare
+          replays the recorded tasks in order and says where the learned router would
+          have chosen differently from what ran, with estimated savings and risk.`;
 
 /** Days between upkeeps before the chat suggests one. */
 const UPKEEP_EVERY_DAYS = 7;
@@ -430,8 +432,16 @@ async function routerCommand(argv: readonly string[]): Promise<number> {
       console.log(`Imported ${String(importRuns(dataDir(), metrics))} runs.\n`);
     }
     const attempts = metrics.attempts();
-    for (const line of describeStats(computeStats(attempts, metrics.outcomes()), attempts.length)) {
+    const outcomes = metrics.outcomes();
+    for (const line of describeStats(computeStats(attempts, outcomes), attempts.length)) {
       console.log(line);
+    }
+    if (argv.includes("--compare")) {
+      const { compareFixedLearned, describeComparison } = await import("./orchestrator/compare.js");
+      console.log("");
+      for (const line of describeComparison(compareFixedLearned(attempts, outcomes))) {
+        console.log(line);
+      }
     }
   } finally {
     metrics.close();

@@ -997,6 +997,36 @@ The planner's explicit recommendation for a task still comes first.
     Code's own worktrees live there, git already ignores them, and a
     worktree of a parallel session was failing the local format check.
     Full CI: 434, and all evaluations pass.
+- **C5, learned against fixed (done, 2026-11-15):**
+  - `compareFixedLearned` (`src/orchestrator/compare.ts`) replays the
+    recorded tasks in the order they ran. For each, the statistics come
+    only from the tasks recorded before it, as the router would have had
+    them. The learned router is asked what it would have chosen instead of
+    the arm the task ran on. Explored tasks are left out.
+  - Where it would have chosen differently, it estimates two things from
+    the two arms' records up to then: the tokens per task saved, and the
+    most clean success that might have been lost (the rules' rate minus the
+    learned arm's lower bound). Nobody can know how a task would have gone
+    on another model, so these are estimates, and the report says so.
+  - `grafeno-agent router --compare` prints it.
+  - **On the real runs** (a copy, 24 tasks): the learned router would have
+    kept the rules' choice for every task. There are not enough comparable
+    tasks yet, which is the honest answer to "does learning beat the rules"
+    today.
+  - **On a recorded sequence where it would act**, it follows the evidence:
+    - the rules' arm has 12 tasks, 9 clean, at 1000 tokens;
+    - then a cheaper arm has 12 tasks, all clean, at 300 tokens;
+    - then 5 more tasks on the rules' arm.
+
+    It would have changed 4 of those 5 tasks, saving an estimated 2,800
+    tokens at no estimated risk. It keeps the fifth: by then the rules' arm
+    was at 13 of 16 clean (81%), and 12 of 12 was no longer as good.
+
+  - Tests: `test/orchestrator/compare.test.ts` (4): where it acts, never
+    looking ahead, explored tasks left out, and the report. Full CI: 438,
+    and all evaluations pass. During this stage the flaky worktree test
+    failed three full runs in a row, then passed twice. Without C5 it
+    passed too, so it is the known flakiness. A separate session is on it.
 
 ### Phase D — long autonomous runs (design only now)
 
