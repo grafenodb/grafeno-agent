@@ -83,6 +83,8 @@ describe("CodexProvider", () => {
   it("lists the models people see, with their exact names and efforts", async () => {
     const { codex, ran } = provider({ "debug models": `WARN something\n${MODELS}` });
     expect(await codex.models()).toEqual([
+      // No model given: Codex's own choice.
+      { id: "default", name: "Auto", hint: "Codex's own choice" },
       {
         id: "gpt-6.1-sol",
         name: "GPT-6.1-Sol",

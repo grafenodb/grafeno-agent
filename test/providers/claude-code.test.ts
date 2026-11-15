@@ -78,8 +78,9 @@ describe("ClaudeCodeProvider", () => {
       );
     });
     const models = await new ClaudeCodeProvider(run).models();
+    expect(models[0]?.hint).toBe("Claude Code's own choice (now Opus 5.5)");
     expect(models.map((m) => [m.id, m.name])).toEqual([
-      ["default", "Opus 5.5"],
+      ["default", "Auto"],
       ["haiku", "Haiku 5.5"],
       ["sonnet", "Sonnet 5.5"],
       ["opus", "Opus 5.5"],

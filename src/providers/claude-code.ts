@@ -114,8 +114,9 @@ export class ClaudeCodeProvider implements Provider {
     this.#models ??= Promise.all([
       this.#currentModel(undefined).then((name) => ({
         id: "default",
-        name: name ?? "Default",
-        hint: "Claude Code's own choice",
+        name: "Auto",
+        // Claude Code says "Opus 5.5 (default)": the hint says "now Opus 5.5".
+        hint: `Claude Code's own choice${name ? ` (now ${name.replace(/\s*\(default\)\s*$/i, "")})` : ""}`,
       })),
       ...FAMILIES.map(async (family) => ({
         id: family.id,

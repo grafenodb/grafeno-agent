@@ -232,6 +232,62 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.unmount();
   });
 
+  it("changes the provider with /connect: the conversation goes on with it, model Auto", async () => {
+    const firstChosen: ModelChoice[] = [];
+    const otherChosen: ModelChoice[] = [];
+    const base = services({ turns: [[{ say: "From-First" }]], chosen: firstChosen });
+    const other: Provider = {
+      ...fakeProvider(
+        [
+          [
+            {
+              say: (c) =>
+                `From-Other ${c.message.includes("From-First") ? "with the conversation" : "alone"}`,
+            },
+          ],
+        ],
+        otherChosen,
+      ),
+      id: "other",
+      name: "Other Provider",
+    };
+    const saves: Record<string, unknown>[] = [];
+    const svc: AppServices = {
+      ...base,
+      providers: [...base.providers, other],
+      saveChoice: (choice) => {
+        saves.push(choice);
+      },
+    };
+    const app = render(<App services={svc} />);
+    await ready(app);
+    await type(app, "hello");
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("From-First"), "the first answer");
+    await ready(app);
+    await type(app, "/connect");
+    app.stdin.write(ENTER);
+    await until(
+      () => now(app).includes("Other Provider") && now(app).includes("in use"),
+      "the providers",
+    );
+    await until(() => !now(app).includes("checking"), "their status");
+    app.stdin.write(DOWN);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    app.stdin.write(ENTER);
+    await until(
+      () => seen(app).includes("Provider: Other Provider, model Auto"),
+      "the provider change",
+    );
+    expect(saves).toEqual([{ provider: "other" }]);
+    await ready(app);
+    await type(app, "and now?");
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("From-Other with the conversation"), "the other's answer");
+    expect(otherChosen).toEqual([{}]);
+    app.unmount();
+  });
+
   it("shows the provider's real usage with /usage", async () => {
     const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
     await ready(app);
@@ -300,10 +356,7 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     await until(() => now(app).includes("Include Grafeno"), "the memory choice");
     expect(now(app)).toContain("Connect to a Grafeno server");
     app.stdin.write(ENTER);
-    await until(
-      () => now(app).includes("AGENT_PROVIDERS chooses which are used"),
-      "the provider step",
-    );
+    await until(() => now(app).includes("The chat uses the one chosen here"), "the provider step");
     await until(() => now(app).includes("Signed in · Fake Pro"), "the provider status");
     app.stdin.write(ENTER);
     await ready(app);

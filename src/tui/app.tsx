@@ -95,11 +95,12 @@ interface LiveTool {
 export function App({ services }: { readonly services: AppServices }): ReactNode {
   const { exit } = useApp();
   const { columns, rows } = useWindowSize();
-  const provider = services.providers[0];
   const [phase, setPhase] = useState<Phase>(() =>
     services.needsSetup() ? "setup-memory" : "starting",
   );
   const [session, setSession] = useState<AgentSession | undefined>(undefined);
+  // The provider the chat reasons with: the session's, which /connect may change.
+  const provider = session?.provider ?? services.providers[0];
   const [items, setItems] = useState<Item[]>([]);
   const [mode, setMode] = useState<Mode>("chat");
   const [busy, setBusy] = useState<string | undefined>(undefined);
@@ -859,15 +860,27 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
             {mode === "connect" && (
               <ProviderPanel
                 providers={services.providers}
-                onDone={(found) => {
+                {...(provider ? { current: provider.id } : {})}
+                onDone={(found, chosen) => {
                   setMode("chat");
-                  if (found) {
-                    setStatus(found);
-                    notice(
-                      `${provider?.name ?? "Provider"}: ${found.detail}`,
-                      found.signedIn ? "success" : "warning",
-                    );
+                  if (!found || !chosen) return;
+                  const ready = found.installed && found.signedIn;
+                  if (!ready || !session || chosen.id === session.provider.id) {
+                    if (chosen.id === provider?.id) setStatus(found);
+                    notice(`${chosen.name}: ${found.detail}`, ready ? "success" : "warning");
+                    return;
                   }
+                  void session.setProvider(chosen).then(() => {
+                    services.saveChoice({ provider: chosen.id });
+                    setStatus(found);
+                    setModels([]);
+                    setUsage(undefined);
+                    notice(
+                      `Provider: ${chosen.name}, model Auto. The conversation goes on with it.`,
+                      "success",
+                    );
+                    setTick((t) => t + 1);
+                  });
                 }}
               />
             )}
@@ -1301,7 +1314,7 @@ function statusLines(
   models: readonly ModelOption[],
 ): string[] {
   const grafeno = services.grafeno();
-  const provider = services.providers[0];
+  const provider = session?.provider ?? services.providers[0];
   const signed = status
     ? ` · ${status.signedIn ? `signed in${status.plan ? ` (${status.plan})` : ""}` : "not signed in"}`
     : "";

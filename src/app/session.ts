@@ -286,6 +286,22 @@ export class AgentSession {
     }
   }
 
+  /**
+   * Changes the provider the session reasons with; the conversation goes on
+   * with it, given as data. Its model and effort start as the provider's own
+   * ("Auto"), since another provider's models mean nothing to it.
+   */
+  async setProvider(provider: Provider): Promise<void> {
+    if (provider.id === this.provider.id) return;
+    await this.#dropAgent();
+    this.#provider = provider;
+    this.#choice = {};
+    this.#modelId = undefined;
+    this.#context = undefined;
+    this.#carry = previousConversation(this.#record.entries) || undefined;
+    this.#record.model = this.model;
+  }
+
   /** Changes the model; the conversation goes on with the new one. */
   async setModel(alias: string): Promise<void> {
     const next = alias === "default" ? undefined : alias;

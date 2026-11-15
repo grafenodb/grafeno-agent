@@ -59,7 +59,7 @@ export interface AppServices {
   /** Stops the included Grafeno, in a line. */
   stopGrafeno(): string;
   /** Keeps the model and effort chosen, for the next sessions. */
-  saveChoice(choice: { model?: string; effort?: string }): void;
+  saveChoice(choice: { model?: string; effort?: string; provider?: string }): void;
   /** The memory upkeep report for the session's project. */
   upkeep(session: AgentSession): Promise<string>;
   /** An orchestrator for the project, on the settings, wired to the interface. */
@@ -181,7 +181,18 @@ export function realServices(version: string): AppServices {
         ? "The included Grafeno was stopped. It starts again with the next session."
         : "The included Grafeno was not running from here.";
     },
-    saveChoice(choice: ModelChoice) {
+    saveChoice(choice: ModelChoice & { provider?: string }) {
+      if (choice.provider !== undefined) {
+        // The chosen provider first; the model and effort are its own again.
+        const order = providers.map((p) => p.id);
+        const rest = order.filter((id) => id !== choice.provider);
+        save({
+          AGENT_PROVIDERS: [choice.provider, ...rest].join(","),
+          CLAUDE_MODEL: "",
+          AGENT_EFFORT: "",
+        });
+        return;
+      }
       save({
         ...(choice.model === undefined
           ? {}

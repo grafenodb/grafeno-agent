@@ -172,11 +172,15 @@ export class CodexProvider implements Provider {
 
   async models(): Promise<readonly ModelOption[]> {
     const catalog = await this.#models();
-    return catalog.map((m) => ({
-      id: m.slug ?? "",
-      name: m.display_name ?? m.slug ?? "",
-      ...(m.description ? { hint: m.description } : {}),
-    }));
+    // "Auto": no model given, so Codex chooses its own (B7).
+    return [
+      { id: "default", name: "Auto", hint: "Codex's own choice" },
+      ...catalog.map((m) => ({
+        id: m.slug ?? "",
+        name: m.display_name ?? m.slug ?? "",
+        ...(m.description ? { hint: m.description } : {}),
+      })),
+    ];
   }
 
   efforts(model?: string): readonly string[] {
@@ -212,7 +216,9 @@ export class CodexProvider implements Provider {
   create(choice: ModelChoice) {
     return resilient(
       new CodexModel({
-        ...(choice.model === undefined ? {} : { model: choice.model }),
+        ...(choice.model === undefined || choice.model === "default"
+          ? {}
+          : { model: choice.model }),
         ...(choice.effort === undefined ? {} : { effort: choice.effort }),
       }),
     );

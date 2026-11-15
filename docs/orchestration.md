@@ -641,8 +641,25 @@ all of them:
     ready, the hard limit, the order of `--provider-for` and the
     recommendation, mode off, the settings, and a whole run where Claude
     plans and both providers finish their tasks. Full CI: 392.
-- **B7b, left:** "Auto" as a model of each provider in `/models` (Codex
-  included), and "Auto" as a provider in `/connect` for the session.
+- **B7b, a provider and its model Auto (done):**
+  - `/models` starts with "Auto" for every provider. For Claude it is
+    Claude Code's own choice, and the hint says what that is now (for
+    example Opus 5.5). For Codex, no model is given (no `-m`), so Codex
+    chooses. On the real CLIs, without spending: Codex lists Auto and its 8
+    models.
+  - `/connect` now chooses the provider the chat uses: Enter on a ready
+    provider (installed and signed in) switches the session to it
+    (`AgentSession.setProvider`). The conversation goes on with it, given
+    as data. The model and effort start as Auto, since another provider's
+    model ids mean nothing to it.
+  - The choice is saved: `AGENT_PROVIDERS` with that provider first, and
+    the previous model and effort cleared. The panel marks the provider in
+    use.
+  - Tests: the model lists of both providers, and a terminal test where
+    `/connect` moves a conversation from one provider to another, which
+    answers with the conversation behind it. Full CI: 393.
+  - The "Auto" provider in `/connect` comes with B7c, which gives it
+    meaning: triage.
 - **B7c, left:** in General Auto, a light model triages each message:
   answer directly, or orchestrate.
 

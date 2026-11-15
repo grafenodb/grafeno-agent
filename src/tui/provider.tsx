@@ -8,7 +8,10 @@ export interface ProviderPanelProps {
   readonly providers: readonly Provider[];
   /** The first run: Enter goes on even when the provider is not ready yet. */
   readonly firstRun?: boolean;
-  readonly onDone: (status: ProviderStatus | undefined) => void;
+  /** The provider the chat uses now. */
+  readonly current?: string;
+  /** With the status of the provider chosen (Enter), and the provider; nothing on Esc. */
+  readonly onDone: (status: ProviderStatus | undefined, provider?: Provider) => void;
 }
 
 /** The providers the agent can reason with, and whether each is ready. */
@@ -34,7 +37,7 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
     else if (input === "r") {
       setStatuses([]);
       setChecking((c) => c + 1);
-    } else if (key.return) props.onDone(statuses[selected]);
+    } else if (key.return) props.onDone(statuses[selected], props.providers[selected]);
   });
 
   return (
@@ -50,6 +53,7 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
             <Text {...(on ? { color: theme.accent } : {})} bold={on}>
               {on ? "▸ " : "  "}
               {provider.name}
+              {provider.id === props.current ? " · in use" : ""}
             </Text>
             {status === undefined ? (
               <Box paddingLeft={4}>
@@ -81,7 +85,7 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
       })}
       <Box marginTop={1}>
         <Text dimColor>
-          AGENT_PROVIDERS chooses which are used, in order: the chat uses the first.
+          The chat uses the one chosen here; a run may give tasks to every ready one.
         </Text>
       </Box>
       <Text dimColor>

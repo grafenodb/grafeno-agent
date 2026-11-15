@@ -11,7 +11,7 @@ export const COMMANDS: readonly Command[] = [
   { name: "resume", description: "Take up an earlier conversation of this project" },
   { name: "models", description: "Choose the model", aliases: ["model"] },
   { name: "effort", description: "Choose how hard the model thinks" },
-  { name: "connect", description: "Connect a provider (Claude today)" },
+  { name: "connect", description: "Choose the provider the chat uses (Claude, Codex…)" },
   { name: "palace", description: "Grafeno: included, or a server you already have" },
   { name: "usage", description: "Your provider's real usage, and this session's" },
   { name: "status", description: "Provider, Grafeno, agent, project and model" },
