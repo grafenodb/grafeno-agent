@@ -260,6 +260,7 @@ npm run test:live:model  # the model contract on real Claude (spends a little pl
 npm run eval             # the evaluation suite on the fake model (needs `grafeno` or GRAFENO_BIN)
 npm run eval:real        # the same suite on Claude Haiku (spends plan usage)
 npm run eval:agents      # several agents on one task at once (fake model, Grafeno in memory)
+npm run eval:orchestration  # workers of a run sharing memory (fake model, Grafeno in memory)
 npm run preview:tui -- 100 30   # the interface at a size, with a scripted answer (no plan usage)
 npm run measure:meaning  # what meaning adds to recall
 ```

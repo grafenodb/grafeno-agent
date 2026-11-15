@@ -53,6 +53,7 @@ jobs:
           echo "GRAFENO_BIN=$RUNNER_TEMP/grafeno/grafeno" >> "$GITHUB_ENV"
       - run: npm run eval
       - run: npm run eval:agents
+      - run: npm run eval:orchestration
       - uses: actions/upload-artifact@v7
         if: always()
         with:

@@ -354,6 +354,22 @@ a recorded effect, review on conflict, cleanup at the end; without git it
 works in the project folder. 9 tests on a real temporary repository,
 including the user's uncommitted change, HEAD and branch left untouched.
 
+**A6 done** (`memory.ts`, and `MemorySession` options `author`, `brief`,
+`register`, `stored`): each worker gets a memory session in the project's
+shared palace with the usual guards; what it stores carries its name as
+`props.author` (the key stays the agent's: a key per worker would need an
+administrator for every run on an external server); at its start it gets
+only what its task needs: the memories its dependencies stored, read by id
+with who stored them, and what memory holds about the task within a token
+budget; when it is done, a checkpoint of the task under its name. The ids a
+task stored travel to the tasks after it through the run's events
+(`AttemptContext.note`, `TaskInput.memories`). 3 unit tests, and
+`npm run eval:orchestration` (in CI) on a real Grafeno in memory: a
+decision from the architecture worker reaches the two workers after it,
+which store facts at the same time; the docs worker gets both; attribution,
+checkpoints, the palace, and no operational state in memory, checked in
+Grafeno.
+
 | Stage | What                                                                                                                          | Done when (verified by tests)                                                                                                                     |
 | ----- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A1    | Plan schema, checker (cycles, references, acceptance), planner prompt and repair loop                                         | Valid plans accepted; cyclic, dangling, unchecked plans refused with reasons; planner repairs from the problems (fake model)                      |

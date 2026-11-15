@@ -100,6 +100,19 @@ export interface MemorySessionOptions {
    * questions asked with theirs. Without one, memory works by words alone.
    */
   readonly embedder?: Embedder;
+  /**
+   * Who stores what this session stores, when it is not the key's owner
+   * itself: a worker of a run. It goes on every memory and fact as
+   * `props.author`, and on checkpoints as their agent.
+   */
+  readonly author?: string;
+  /**
+   * Bring back the room and the latest checkpoints at the start. Default:
+   * true. A worker gets what its task needs instead.
+   */
+  readonly brief?: boolean;
+  /** Give the agent a node of its own in memory. Default: true; a worker needs none. */
+  readonly register?: boolean;
 }
 
 /**
@@ -153,7 +166,11 @@ export class MemorySession {
       palace,
       note: "the project itself",
     });
-    const agentId = agent === undefined ? undefined : await agentNode(vault, agent, projectId);
+    const agentId =
+      agent === undefined || options.register === false
+        ? undefined
+        : await agentNode(vault, agent, projectId);
+    if (options.brief === false) return new MemorySession(options, projectId, agentId, "");
 
     const entered = await must(
       vault.call("palace_enter", {
@@ -172,6 +189,13 @@ export class MemorySession {
 
   get project(): Project {
     return this.options.project;
+  }
+
+  readonly #stored: string[] = [];
+
+  /** The memories this session stored, by id, in order: what a task leaves to the next. */
+  get stored(): readonly string[] {
+    return this.#stored;
   }
 
   /** The palace this session keeps the project's memory in. */
@@ -388,7 +412,16 @@ ${this.brief}`;
       args.about = this.projectId;
       args.task ??= this.task;
       // Saved under the agent's own name, never another's.
-      if (this.options.agent !== undefined) args.agent = this.options.agent.name;
+      const by = this.options.author ?? this.options.agent?.name;
+      if (by !== undefined) args.agent = by;
+    }
+    // Who stored it, when a worker stores for the agent.
+    if ((name === "remember" || name === "relate") && this.options.author !== undefined) {
+      const props =
+        typeof args.props === "object" && args.props !== null
+          ? (args.props as Record<string, unknown>)
+          : {};
+      args.props = { ...props, author: this.options.author };
     }
 
     // Meaning: what is stored gets its vector, and what is asked too.
@@ -420,6 +453,7 @@ ${this.brief}`;
     if (name === "remember") {
       const id = answerId(answer);
       if (id !== undefined) {
+        if (!this.#stored.includes(id)) this.#stored.push(id);
         await this.options.vault.call("palace_anchor", {
           memory: id,
           room: ROOM,

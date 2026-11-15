@@ -27,6 +27,8 @@ export interface AttemptContext {
   readonly previous?: string;
   /** Records who works on it (worker, model, effort) in the store. */
   assign(assignment: { worker: string; model?: string; effort?: string }): void;
+  /** Records something about the attempt in the run's events (memories stored, files…). */
+  note(kind: string, data: Record<string, unknown>): void;
 }
 
 /** A completed dependency, as a worker is told of it. */
@@ -35,6 +37,8 @@ export interface TaskInput {
   readonly title: string;
   /** What its worker reported when its checks passed. */
   readonly summary?: string;
+  /** The memories its worker stored (decisions, contracts…), by id in Grafeno. */
+  readonly memories?: readonly string[];
 }
 
 /**
@@ -229,6 +233,9 @@ export class Scheduler {
             assign: (assignment) => {
               store.annotate(runId, task.id, assignment);
             },
+            note: (kind, data) => {
+              store.event(runId, kind, data, task.id);
+            },
           }),
           stopped,
         ]);
@@ -299,10 +306,22 @@ export class Scheduler {
 
   /** What the task's dependencies came to. */
   #inputs(runId: string, task: TaskRecord): TaskInput[] {
+    const { store } = this.#options;
+    const notes = store.events(runId).filter((e) => e.kind === "memories");
     return task.spec.dependsOn.flatMap((id) => {
-      const done = this.#options.store.task(runId, id);
+      const done = store.task(runId, id);
       if (!done) return [];
-      return [{ id, title: done.spec.title, ...(done.reason ? { summary: done.reason } : {}) }];
+      const memories = notes
+        .filter((e) => e.taskId === id)
+        .flatMap((e) => (Array.isArray(e.data.ids) ? e.data.ids.map(String) : []));
+      return [
+        {
+          id,
+          title: done.spec.title,
+          ...(done.reason ? { summary: done.reason } : {}),
+          ...(memories.length > 0 ? { memories: [...new Set(memories)] } : {}),
+        },
+      ];
     });
   }
 

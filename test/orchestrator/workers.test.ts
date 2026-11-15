@@ -309,6 +309,7 @@ describe("taskMessage", () => {
         inputs: [{ id: "contracts", title: "Contracts", summary: "User { id, email }" }],
         previous: "timed out after 60 s",
         assign: () => undefined,
+        note: () => undefined,
       },
     );
     expect(message).toContain("# Task api");

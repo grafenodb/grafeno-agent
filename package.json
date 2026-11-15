@@ -44,6 +44,7 @@
     "eval": "tsx test/eval/run-eval.ts",
     "eval:real": "tsx test/eval/run-eval.ts --model claude-code",
     "eval:agents": "tsx test/eval/agents.ts",
+    "eval:orchestration": "tsx test/eval/orchestration.ts",
     "preview:tui": "tsx test/live/preview-tui.tsx",
     "prepack": "npm run build"
   },

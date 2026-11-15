@@ -25,6 +25,10 @@ export interface WorkerMemory {
   readonly brief?: string;
   /** Puts what memory knows in front of a message. */
   prepare?(message: string): Promise<string>;
+  /** The memories the worker stored, by id: what it leaves to the tasks after it. */
+  stored?(): readonly string[];
+  /** Saves where the task stands (a checkpoint), when the worker says it is done. */
+  finish?(summary: string): Promise<void>;
   close?(): Promise<void>;
 }
 
@@ -35,7 +39,11 @@ export interface WorkerPoolOptions {
   /** The project's tools for a workspace (files, commands…). */
   readonly tools: (workspace: Workspace) => Tool[];
   /** Each worker's memory under its own name; none by default. */
-  readonly memoryFor?: (task: TaskRecord, worker: string) => Promise<WorkerMemory | undefined>;
+  readonly memoryFor?: (
+    task: TaskRecord,
+    worker: string,
+    context: AttemptContext,
+  ) => Promise<WorkerMemory | undefined>;
   /** Decides a tool call that needs permission (the policy engine, phase A7). Default: never. */
   readonly approve?: Approver;
   /** Secrets never shown to a model. */
@@ -114,7 +122,7 @@ export class WorkerPool implements TaskRunner {
       ...(chosen.effort ? { effort: chosen.effort } : {}),
     });
     const workspace = await this.options.workspaceFor(task, context);
-    const memory = await this.options.memoryFor?.(task, name);
+    const memory = await this.options.memoryFor?.(task, name, context);
     const choice: ModelChoice = {
       ...(chosen.model === "default" ? {} : { model: chosen.model }),
       ...(chosen.effort === undefined ? {} : { effort: chosen.effort }),
@@ -151,7 +159,9 @@ export class WorkerPool implements TaskRunner {
         return { status: "failed", reason: "the model declined the task" };
       }
       // The worker says it is done; the verifier (phase A7) decides whether it is.
-      return { status: "completed", summary: summarize(turn.result.text) };
+      const summary = summarize(turn.result.text);
+      await this.#leave(memory, summary, context);
+      return { status: "completed", summary };
     } catch (error) {
       return outcomeOf(error);
     } finally {
@@ -159,6 +169,25 @@ export class WorkerPool implements TaskRunner {
       this.options.onChange?.(this.active);
       await agent.close();
       await memory?.close?.();
+    }
+  }
+
+  /** What a finished worker leaves: its checkpoint, and the ids of what it stored. */
+  async #leave(
+    memory: WorkerMemory | undefined,
+    summary: string,
+    context: AttemptContext,
+  ): Promise<void> {
+    if (!memory) return;
+    const ids = memory.stored?.() ?? [];
+    if (ids.length > 0) context.note("memories", { ids: [...ids] });
+    try {
+      await memory.finish?.(summary);
+    } catch (error) {
+      // Memory unreachable: the task's work stands; the run's events say so.
+      context.note("memory_failed", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 }
