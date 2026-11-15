@@ -58,6 +58,11 @@ export interface AgentSessionOptions {
   readonly tools?: (workspace: Workspace) => Tool[];
   /** Tools the interface adds (such as `delegate`, to start sub-agents). */
   readonly extraTools?: readonly Tool[];
+  /**
+   * What the interface connected for the session (external MCP servers):
+   * what to tell the person, each server's state, and what to close with it.
+   */
+  readonly extensions?: SessionExtensions;
   /** Where skills are read from; default: the project's and the user's (skillRoots). */
   readonly skillRoots?: readonly SkillRoot[];
   /**
@@ -72,6 +77,18 @@ export interface AgentSessionOptions {
 
 /** Characters of the conversation carried into a renewed one. */
 const RENEWAL_CARRY = 3000;
+
+/** External MCP servers connected for a session. */
+export interface SessionExtensions {
+  /** Things to tell the person: a server not reached, a variable not set. */
+  readonly notes: readonly string[];
+  readonly mcp: readonly {
+    readonly name: string;
+    readonly tools: number;
+    readonly error?: string;
+  }[];
+  close(): Promise<void>;
+}
 
 export interface SendOptions {
   readonly signal?: AbortSignal;
@@ -369,6 +386,12 @@ export class AgentSession {
 
   async close(): Promise<void> {
     await this.#dropAgent();
+    await this.options.extensions?.close().catch(() => undefined);
+  }
+
+  /** What was connected for the session (external MCP servers), when anything was. */
+  get extensions(): SessionExtensions | undefined {
+    return this.options.extensions;
   }
 
   #ensureAgent(): Agent {

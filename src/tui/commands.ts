@@ -31,6 +31,7 @@ export const COMMANDS: readonly Command[] = [
     name: "skills",
     description: "The skills the agent can use (install: grafeno-agent skills add)",
   },
+  { name: "mcp", description: "External MCP servers and their tools (add: grafeno-agent mcp add)" },
   { name: "upkeep", description: "Report on the memory: duplicates, contradictions" },
   { name: "sidebar", description: "Show or hide the side panel (ctrl+b)" },
   { name: "clear", description: "Clear the conversation from the screen" },

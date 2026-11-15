@@ -140,6 +140,8 @@ The panel hides on narrow windows, or with Ctrl+B.
 | `/orchestrate` | Plan a request and run it with several workers (see below)      |
 | `/runs`        | Earlier runs of this project: see one, or resume it             |
 | `/agents`      | The main agent and its sub-agents: view one, read only          |
+| `/skills`      | The skills the agent can use                                    |
+| `/mcp`         | External MCP servers and their tools                            |
 | `/upkeep`      | Report on the memory: duplicates, contradictions                |
 | `/sidebar`     | Show or hide the side panel                                     |
 | `/clear`       | Clear the conversation from the screen                          |
@@ -188,6 +190,65 @@ These are never allowed, whatever the answer:
 
 These rules guard against mistakes. They are not a sandbox: a command you
 allow runs with your rights, so read what you allow.
+
+## Skills
+
+A **skill** is a folder with a `SKILL.md` in the open
+[Agent Skills](https://agentskills.io) format. Its front matter says what
+the skill does and when to use it; its body says how, and it may carry
+scripts, references and assets.
+
+- **Where the agent reads them:** the project's `.agents/skills`, then your
+  own `~/.agents/skills` and `~/.config/agents/skills`. A project's skill
+  hides one of yours with the same name.
+- **How it uses them:** the agent (and every sub-agent) is told each
+  skill's name and description. When a task matches one, it loads the
+  skill's instructions with its `skill` tool, and reads the skill's own
+  files with the same tool (never anything outside the skill's folder).
+
+```bash
+grafeno-agent skills                                   # the skills, and any problem
+grafeno-agent skills find pdf                          # search (the Skills CLI)
+grafeno-agent skills add vercel-labs/agent-skills --skill frontend-design
+grafeno-agent skills add owner/repo -g                 # for all your projects
+grafeno-agent skills new release-notes --description "Write release notes from the git log. Use when releasing."
+grafeno-agent skills remove frontend-design
+```
+
+- **Installing** goes through the official Skills CLI (`npx skills`, by
+  Vercel Labs; Node 22.20 or later), for its `universal` agent, whose
+  folders are the ones above.
+- **Your own skills** start from `skills new`: the name and description are
+  checked against the format's rules, and you write the steps.
+- **Trust:** treat a skill like code. Its scripts run with your rights, as
+  the agent's commands do, asking you first.
+
+## External MCP servers
+
+The agent can use the tools of MCP servers you add: a program on this
+computer (stdio) or a server at a URL (Streamable HTTP). They are kept in
+`mcp.json`, next to the settings file.
+
+```bash
+grafeno-agent mcp add files -- npx -y @modelcontextprotocol/server-filesystem ./docs
+grafeno-agent mcp add github --url https://api.githubcopilot.com/mcp/ --header 'Authorization=Bearer ${GITHUB_TOKEN}'
+grafeno-agent mcp                     # each server, checked: its tools, or why not
+grafeno-agent mcp remove files
+```
+
+- **Checked when added.** Adding connects to the server first and keeps it
+  only when it answers (`--force` keeps it anyway). `grafeno-agent mcp`
+  checks every server again.
+- **Secrets stay out of the file.** A value may name an environment
+  variable as `${NAME}` (in single quotes, so that your shell leaves it as
+  it is). A token written in full is refused when added.
+  A program gets a minimal environment plus what its configuration sets,
+  never the agent's own keys.
+- **Permissions.** Each tool reaches the agent as
+  `mcp_<server>_<tool>`. It asks you before it runs, unless the server
+  marks it read-only. A server that is not reached when a session starts is
+  said, and the session goes on without it.
+- External MCP tools are the chat agent's; sub-agents do not get them yet.
 
 ## Memory
 

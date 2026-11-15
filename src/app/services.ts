@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { connectAll } from "../mcp/client.js";
+import { loadMcpConfig, mcpConfigPath } from "../mcp/config.js";
 import { billingRefusal } from "../providers/billing.js";
 import type { Tool } from "../agent/tools.js";
 import { assertBillingAllowed } from "../providers/billing.js";
@@ -22,7 +24,7 @@ import { lightModel, mostRoom, triage, type PoolMember, type TriageDecision } fr
 import type { ModelChoice, Provider } from "../providers/types.js";
 import { settingsPath, updateSettings } from "../settings-file.js";
 import { checkGrafeno } from "../startup.js";
-import { AgentSession } from "./session.js";
+import { AgentSession, type SessionExtensions } from "./session.js";
 import type { Orchestrator, OrchestratorOptions } from "../orchestrator/orchestrator.js";
 
 /** What the interface shows about the Grafeno the agent uses. */
@@ -115,6 +117,41 @@ export async function prepareGrafeno(config: Config, env = process.env): Promise
   await startIncluded(owner);
 }
 
+/**
+ * The external MCP servers of mcp.json, connected: their tools for the
+ * agent, and for the session what to tell the person and what to close.
+ */
+async function connectExtensions(
+  env: Record<string, string | undefined>,
+  version: string,
+): Promise<{ tools: Tool[]; session: SessionExtensions }> {
+  const config = loadMcpConfig(mcpConfigPath(env));
+  const connections = await connectAll(config.servers, { env, version });
+  const notes = [
+    ...config.problems.map((p) => `MCP: ${p}`),
+    ...connections.flatMap((c) => [
+      ...(c.error ? [`MCP server ${c.name} was not reached: ${c.error}`] : []),
+      ...(c.missing.length > 0
+        ? [`MCP server ${c.name}: ${[...new Set(c.missing)].join(", ")} not set in the environment`]
+        : []),
+    ]),
+  ];
+  return {
+    tools: connections.flatMap((c) => [...c.tools]),
+    session: {
+      notes,
+      mcp: connections.map((c) => ({
+        name: c.name,
+        tools: c.tools.length,
+        ...(c.error ? { error: c.error } : {}),
+      })),
+      close: async () => {
+        await Promise.all(connections.map((c) => c.close()));
+      },
+    },
+  };
+}
+
 /** The interface's services, on the real settings, Grafeno and providers. */
 export function realServices(version: string): AppServices {
   let embedder: Promise<Embedder | undefined> | undefined;
@@ -175,10 +212,14 @@ export function realServices(version: string): AppServices {
       const chosen = await embedder;
       // A provider that bills by consumption is not used without the user's express say.
       await assertBillingAllowed(providers[0] as Provider, env);
+      // External MCP servers: their tools join the agent's; one not reached is said.
+      const extensions = await connectExtensions(env, version);
+      const tools = [...(extra?.tools ?? []), ...extensions.tools];
       return AgentSession.start({
         config,
         provider: providers[0] as Provider,
-        ...(extra?.tools ? { extraTools: extra.tools } : {}),
+        ...(tools.length > 0 ? { extraTools: tools } : {}),
+        extensions: extensions.session,
         ...(report.identity ? { identity: report.identity } : {}),
         ...(chosen ? { embedder: chosen } : {}),
       });

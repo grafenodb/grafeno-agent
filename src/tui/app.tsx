@@ -255,6 +255,8 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         });
       setSession(fresh);
       setPhase("ready");
+      // External MCP servers: one not reached, or a variable not set, is said.
+      for (const note of fresh.extensions?.notes ?? []) notice(note, "warning");
       void readEnvironment(fresh.workspace.root).then(setEnvironment);
       const last = await fresh.memory.lastUpkeep();
       if (!last || Date.now() - last.getTime() > UPKEEP_EVERY_DAYS * 86_400_000) {
@@ -711,6 +713,26 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
             lines: [
               ...usageLines(active, fresh, provider?.name),
               ...others.flatMap((o) => ["", ...limitLines(o.usage, o.name)]),
+            ],
+          });
+          break;
+        }
+        case "mcp": {
+          const servers = active.extensions?.mcp ?? [];
+          push({
+            kind: "block",
+            title: "MCP servers",
+            lines: [
+              ...(servers.length === 0
+                ? ["No external MCP servers yet."]
+                : servers.map(
+                    (m) =>
+                      `  ${m.name.padEnd(20)} ${m.error ? `not reached: ${m.error}` : `${String(m.tools)} tool${m.tools === 1 ? "" : "s"}`}`,
+                  )),
+              "",
+              "Add one: grafeno-agent mcp add <name> -- <command> [args] · or --url <url>",
+              "Their tools ask you before they change anything, unless the server marks them read-only.",
+              "Changes reach the agent from its next session.",
             ],
           });
           break;

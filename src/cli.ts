@@ -45,6 +45,10 @@ Commands:
   init     Set up: --include-grafeno (Grafeno runs on this computer), or
            --grafeno-url <url> --key <key> (a Grafeno server you have).
   check    Check the settings, that Grafeno answers and that the agent's key works.
+  mcp [add|remove]
+                 External MCP servers (mcp.json next to the settings): their tools reach
+                 the agent, asking you before they change anything. A server is checked
+                 when it is added. grafeno-agent mcp help says more.
   skills [add|find|remove|update|new|check]
                  The skills the agent uses (.agents/skills, ~/.agents/skills,
                  ~/.config/agents/skills): install with the Skills CLI (npx skills),
@@ -817,6 +821,14 @@ async function main(argv: readonly string[]): Promise<number> {
       return controlCommand("pause", argv.slice(1));
     case "cancel":
       return controlCommand("cancel", argv.slice(1));
+    case "mcp": {
+      const { mcpCommand } = await import("./app/mcp-command.js");
+      return mcpCommand(argv.slice(1), {
+        say: (line) => {
+          console.log(line);
+        },
+      });
+    }
     case "skills": {
       const { skillsCommand } = await import("./app/skills-command.js");
       return skillsCommand(argv.slice(1), {
