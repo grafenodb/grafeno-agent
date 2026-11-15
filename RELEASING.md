@@ -1,8 +1,11 @@
 # Releasing
 
-Grafeno Agent is published to npm as `grafeno-agent`. A release is the
-owner's decision: nothing is published by an agent or a session on its
-own.
+A release is a GitHub release with the package already built
+(`grafeno-agent-<version>.tgz`, and `grafeno-agent.tgz` for
+`releases/latest/download/grafeno-agent.tgz`), installed with
+`npm install -g <its URL>`; and, once `package.json` is no longer private,
+the same package on npm as `grafeno-agent`. A release is the owner's
+decision: nothing is published by an agent or a session on its own.
 
 ## Rules
 

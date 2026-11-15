@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Installs as a terminal command**: `grafeno-agent`, from the latest
+  GitHub release (`npm install -g
+https://github.com/grafenodb/grafeno-agent/releases/latest/download/grafeno-agent.tgz`,
+  the package already built) or from a copy of the repository
+  (`npm run build`, then `npm link`). A tag makes the GitHub release with
+  the packed package; npm publishing waits until the package is public.
+
 - **The panel's usage stays current**: read again every minute (what is
   spent in another app or terminal shows within a minute), asked anew
   after each answer instead of through the one-minute cache, and "n min

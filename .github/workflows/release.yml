@@ -1,8 +1,12 @@
 name: Release
 
-# A tag v<version> publishes that version to npm, only after the whole
-# pipeline (checks and evaluation) is green, and only when the tag matches
-# package.json. See RELEASING.md: publishing is a decision of the owner.
+# A tag v<version>, only after the whole pipeline (checks and evaluation)
+# is green and only when the tag matches package.json:
+# - makes a GitHub release with the package already built, as
+#   grafeno-agent-<version>.tgz and as grafeno-agent.tgz (what
+#   releases/latest/download/grafeno-agent.tgz installs);
+# - publishes it to npm too, once package.json is no longer private.
+# See RELEASING.md: releasing is a decision of the owner.
 on:
   push:
     tags: ["v*"]
@@ -14,8 +18,38 @@ jobs:
   pipeline:
     uses: ./.github/workflows/ci.yml
 
+  github-release:
+    needs: pipeline
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+          cache: npm
+      - name: The tag must match the package's version
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, package $version"; exit 1; }
+          grep -q "^## $version" CHANGELOG.md || { echo "CHANGELOG.md has no section for $version"; exit 1; }
+      - run: npm ci
+      - name: Pack and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          npm pack
+          cp "grafeno-agent-$version.tgz" grafeno-agent.tgz
+          sha256sum "grafeno-agent-$version.tgz" grafeno-agent.tgz > SHA256SUMS
+          awk -v v="$version" '$0 ~ "^## " v {on=1; next} /^## / && on {exit} on' CHANGELOG.md > notes.md
+          gh release create "$GITHUB_REF_NAME" "grafeno-agent-$version.tgz" grafeno-agent.tgz SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --title "Grafeno Agent $version" --notes-file notes.md
+
   publish:
     needs: pipeline
+    # npm only once the owner made the package public (RELEASING.md).
     runs-on: ubuntu-latest
     environment: npm
     permissions:
@@ -32,8 +66,14 @@ jobs:
         run: |
           version="$(node -p 'require("./package.json").version')"
           test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, package $version"; exit 1; }
-          test "$(node -p 'require("./package.json").private === true')" = "false" || { echo "package.json is private"; exit 1; }
+          if [ "$(node -p 'require("./package.json").private === true')" = "true" ]; then
+            echo "package.json is private: not published to npm (the GitHub release has it)"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+        id: check
       - run: npm ci
+        if: steps.check.outputs.skip != 'true'
       - run: npm publish --provenance --access public
+        if: steps.check.outputs.skip != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

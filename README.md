@@ -28,21 +28,49 @@ openrouter`. Free models only by default.
 
 ## Install
 
+It installs as a command, `grafeno-agent`, that you run in any project
+folder, like other terminal assistants.
+
+**From the latest release** (no copy of the repository needed): the
+release carries the package already built.
+
 ```bash
-npm install -g grafeno-agent
+npm install -g https://github.com/grafenodb/grafeno-agent/releases/latest/download/grafeno-agent.tgz
 ```
 
-Or, from a copy of this repository:
+**From a copy of this repository**, to follow your own changes:
 
 ```bash
 npm install
 npm run build
-npm install -g .
+npm link
 ```
+
+`npm link` makes `grafeno-agent` a command that runs this copy's build:
+after changing the code, `npm run build` is enough (`npx tsc -p
+tsconfig.build.json --watch` rebuilds as you go). `npm unlink -g
+grafeno-agent` removes the command.
+
+Then, in any folder:
+
+```bash
+grafeno-agent            # the interface
+grafeno-agent version
+grafeno-agent help
+```
+
+The installed command reads its settings from the settings file
+(`%APPDATA%\grafeno-agent\config.env` on Windows,
+`~/.config/grafeno-agent/config.env` elsewhere), never the `.env` of the
+folder it runs in: that one belongs to your project. Run from the source
+(`npx tsx src/cli.ts`), it also reads this repository's `.env`.
 
 The installation takes about 500 MB, most of it the runtime for the local
 meaning model (`@huggingface/transformers`, an optional dependency). The
-agent works without it, by words alone, if it is missing.
+agent works without it, by words alone, if it is missing or does not load.
+npm may warn that it did not run the install scripts of `onnxruntime-node`
+and `protobufjs` (it asks before running scripts of dependencies). `npm
+uninstall -g grafeno-agent` removes the command.
 
 ## Set up
 
