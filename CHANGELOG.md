@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 (2026-11-15)
+
+The first version: a programming assistant with long-term memory in
+Grafeno, used from the command line.
 
 - **Installs as a terminal command**: `grafeno-agent`, from the latest
   GitHub release (`npm install -g
@@ -93,11 +96,6 @@ https://github.com/grafenodb/grafeno-agent/releases/latest/download/grafeno-agen
   comes back to its own, and is told of a newer one by another agent.
   `AGENT_PALACE=own` keeps an agent's memory in a palace of its own.
   `npm run eval:agents` checks it with two agents at once.
-
-## 0.1.0 (unreleased)
-
-The first version: a programming assistant with long-term memory in
-Grafeno, used from the command line.
 
 - **Model**: Claude through the user's own Claude Code (their subscription;
   no API key). Claude is used as the brain only: Claude Code's own tools
