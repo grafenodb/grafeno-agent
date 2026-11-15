@@ -13,6 +13,9 @@ session picks up where the last one left off.
   run `claude` once and sign in with `/login`. The agent spends that
   plan's usage, exactly as if you asked Claude Code yourself; no API key,
   no other billing.
+- **Codex CLI** (optional), a second provider with your ChatGPT
+  subscription: `npm install -g @openai/codex`, then `codex login`. See
+  [Several providers](#several-providers).
 - **Memory (Grafeno)**: nothing to install beforehand. On first run you
   choose to **include Grafeno** (the agent downloads the official build and
   runs it on this computer; Windows x64 and Linux), or to connect to **a
@@ -69,19 +72,22 @@ grafeno-agent init --grafeno-url http://127.0.0.1:7810 --key <key>
 
 ### Settings
 
-| Variable            | Default                 | What                                                   |
-| ------------------- | ----------------------- | ------------------------------------------------------ |
-| `GRAFENO_MODE`      | `external`              | `included` (Grafeno runs with the agent) or `external` |
-| `GRAFENO_URL`       | `http://127.0.0.1:7810` | The Grafeno server, when external                      |
-| `GRAFENO_AGENT_KEY` | (required)              | The agent's key                                        |
-| `GRAFENO_NAMESPACE` | `grafeno-agent`         | Where the agent keeps its memory                       |
-| `AGENT_MODEL`       | `claude-code`           | The model (`claude-code`: your Claude subscription)    |
-| `CLAUDE_MODEL`      | Claude Code's own       | `haiku`, `sonnet`, `opus`, `fable` (set by `/models`)  |
-| `AGENT_EFFORT`      | the model's own         | `low` … `max` (set by `/effort`)                       |
-| `AGENT_PROJECT`     | the git repository      | The project whose memory the agent uses                |
-| `AGENT_EMBEDDER`    | `e5-small`              | Meaning for memory (a local model), or `none`          |
-| `AGENT_PALACE`      | `shared`                | `shared` with other agents, or `own` (see below)       |
-| `AGENT_SHELL`       | Git's bash on Windows   | The shell for commands, with its arguments             |
+| Variable              | Default                 | What                                                            |
+| --------------------- | ----------------------- | --------------------------------------------------------------- |
+| `GRAFENO_MODE`        | `external`              | `included` (Grafeno runs with the agent) or `external`          |
+| `GRAFENO_URL`         | `http://127.0.0.1:7810` | The Grafeno server, when external                               |
+| `GRAFENO_AGENT_KEY`   | (required)              | The agent's key                                                 |
+| `GRAFENO_NAMESPACE`   | `grafeno-agent`         | Where the agent keeps its memory                                |
+| `AGENT_MODEL`         | `claude-code`           | The model (`claude-code`: your Claude subscription)             |
+| `CLAUDE_MODEL`        | Claude Code's own       | `haiku`, `sonnet`, `opus`, `fable` (set by `/models`)           |
+| `AGENT_EFFORT`        | the model's own         | `low` … `max` (set by `/effort`)                                |
+| `AGENT_PROJECT`       | the git repository      | The project whose memory the agent uses                         |
+| `AGENT_EMBEDDER`      | `e5-small`              | Meaning for memory (a local model), or `none`                   |
+| `AGENT_PALACE`        | `shared`                | `shared` with other agents, or `own` (see below)                |
+| `AGENT_SHELL`         | Git's bash on Windows   | The shell for commands, with its arguments                      |
+| `AGENT_PROVIDERS`     | `claude-code`           | `claude-code`, `codex`, in order, or `auto` (set by `/connect`) |
+| `AGENT_AFFINITY`      | the defaults below      | Where each task kind goes first in `auto`                       |
+| `AGENT_MEMORY_BUDGET` | see [Memory](#memory)   | How much memory may reach the model                             |
 
 Variables set in the environment win over the file. The agent never reads
 the `.env` of the folder it runs in: that belongs to your project.
@@ -178,15 +184,34 @@ allow runs with your rights, so read what you allow.
 What the agent knows lives in Grafeno, in its namespace, with one palace
 per project. A session:
 
-- starts from the project's room and the latest checkpoint;
+- starts from a **compact resume**: the latest checkpoint (the task, its
+  next action, what is pending or blocked, open errors, decisions, files)
+  and a few memories about it, within a budget, with the rest listed by id
+  to look up when needed. The palace is not walked;
 - before each message, looks up what memory holds about it;
 - during the session, stores decisions, facts, preferences and open
   questions;
 - when you leave, saves a checkpoint.
 
 It does not store the same thing twice. When something stops being true,
-it marks the old memory obsolete instead of keeping both. It never stores
-keys, passwords or tokens. To look after the memory (the chat reminds you
+it revises it: the new memory supersedes the old one, which is marked
+obsolete and kept for its history. It never stores keys, passwords or
+tokens.
+
+Memory lookups have budgets (`AGENT_MEMORY_BUDGET`, such as
+`checkpoint=400,callsPerTurn=4,sessionTokens=10000`): hard limits on the
+size of an answer and on lookups per turn, and softer ones on what each
+lookup asks for and on memory brought in on its own. After a long pause,
+when the prompt cache has gone cold and the conversation is large, the
+agent starts a fresh conversation from a checkpoint instead of sending the
+old one again, and says so. Why and what was measured:
+[`docs/memory-retrieval.md`](docs/memory-retrieval.md).
+
+When you use Claude Code directly with Grafeno over MCP, a `SessionStart`
+hook can give each new session the same compact resume, without a model
+call: `grafeno-agent resume --compact` (`--level 0` for the checkpoint
+alone, `--query "<topic>"` for something specific). The hook is in
+[`docs/memory-retrieval.md`](docs/memory-retrieval.md). To look after the memory (the chat reminds you
 each week):
 
 ```bash
@@ -236,6 +261,47 @@ grafeno-agent resume <id>       # go on with a paused or waiting run
 
 Runs are kept in the agent's data folder, so a run stopped by closing the
 terminal, by a pause or by your plan's limit is resumed where it stopped.
+
+### Several providers
+
+Besides Claude Code, the agent can reason with **Codex CLI**, OpenAI's
+official CLI, signed in with your ChatGPT subscription. Each provider is
+used only through its own CLI and your own sign-in: no API keys, no paid
+tokens, no shared credentials.
+
+- **`/connect`** shows each provider (installed, signed in, plan) and
+  chooses the one the chat uses; the conversation goes on with it.
+  `/models` lists that provider's models, starting with **Auto** (its own
+  choice). `/usage` shows each one's plan.
+- **Auto** in `/connect` (or `AGENT_PROVIDERS=auto`) uses every ready
+  provider. Before each message a light model decides whether to answer
+  directly or to plan the request across providers. A question never
+  starts several workers.
+- In a run, each task kind goes first to the provider and tier its role
+  needs (`AGENT_AFFINITY`), each plan's limit is never passed, and ties go
+  to the one with the most room. A provider that hits its limit or loses
+  its sign-in is set aside, and its tasks go to another, unless a task has
+  a merge in flight.
+
+The default affinities:
+
+| Task kind              | Goes first to     |
+| ---------------------- | ----------------- |
+| architecture, planning | Claude, standard  |
+| review, backend, debug | Claude, deep      |
+| docs                   | Codex, light      |
+| tests, refactor        | Codex, standard   |
+| frontend               | the one with room |
+
+```bash
+grafeno-agent run "orders API, UI, tests and docs" --providers auto
+grafeno-agent run "..." --providers claude-code,codex --provider-for docs=codex
+AGENT_AFFINITY="review=codex:deep,docs=none" grafeno-agent run "..." --providers auto
+```
+
+`--providers` lists the providers in order of preference, or `auto`.
+`--provider-for kind=provider` sends a kind of task to one of them.
+`AGENT_AFFINITY` takes `kind=provider[:tier]` pairs, or `kind=none`.
 
 ### Several agents
 

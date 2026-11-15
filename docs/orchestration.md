@@ -684,14 +684,17 @@ all of them:
     `/connect`, a question answered directly, and a build request planned
     across providers. Full CI: 400.
 
+- **The README (done):** a "Several providers" section (Codex setup,
+  `/connect` and Auto, `--providers`, `--provider-for`, `AGENT_AFFINITY`,
+  the default affinities), the new settings, and the memory changes
+  (compact resume, budgets, revise, renewal, `resume --compact`).
+
 **What is left of phase B, in order:**
 
-1. The README's "Providers" section (below).
-2. B6: one real run where Claude and Codex workers both finish their
-   tasks, at the end of B7.
-3. The README: a "Providers" section (`AGENT_PROVIDERS`, setting up Codex,
-   `--providers`, `--provider-for`), and Codex "Auto" in `/models`.
-4. Then phase B is checked against the brief's §B.1–B.4 and closed.
+1. B6: one real run where Claude and Codex workers both finish their
+   tasks, in General Auto, with the user's OK, once Claude's five-hour
+   window has room (79% when B7 was finished).
+2. Then phase B is checked against the brief's §B.1–B.4 and closed.
 
 **Still open from phase A:** a container `CommandRunner` for real
 isolation of untrusted commands (§A.9).
