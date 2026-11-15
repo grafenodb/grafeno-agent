@@ -1318,6 +1318,44 @@ resume <id>`. Pause and cancel work only inside the process that runs
       connection.
 
     Full CI: 463, and all evaluations pass.
+- **D5, cross review (done, 2026-11-15):**
+  - **Where:** in the task pipeline, after the task's checks pass and
+    before it is merged. A reviewer reads the task's own diff
+    (`WorktreeManager.diff`, from where its branch started, cut at
+    40,000 characters) with the task's description and acceptance. It has
+    no tools.
+  - **Who:** routed as a review task, which in General Auto means the
+    user's affinity, a deep Claude model. It is recorded as independent
+    when its model differs from the worker's.
+  - **What it may do** (`src/orchestrator/review.ts`): answer `ok` or
+    `changes` with concrete issues (file, issue, fix), read strictly. It
+    cannot approve: the checks run by code already decided. Its
+    instructions say so, and ask only for problems the checks may have
+    missed: the contract met for the wrong reason, security, edge cases
+    the task names, changes outside the task. Style is not an issue.
+  - **Sending back:** `changes` returns the task to its worker with the
+    issues as the reason, which the next attempt reads. That happens at
+    most twice by default, and never on the task's last attempt.
+  - **A disagreement left over goes to a person:** the task goes to
+    review, nothing is merged, and the reason gives the issues.
+  - **No verdict is no gate:** a reviewer that cannot be asked, or answers
+    something unreadable, is recorded as `review_skipped` and the merge
+    goes on.
+  - Every review is recorded: the reviewer, whether it was independent,
+    the verdict, the number of issues and the round.
+  - **On request:** `run --review` and `resume --review`. Every kind of
+    task is reviewed but docs (the orchestrator option also takes kinds
+    and rounds).
+  - Tests: `test/orchestrator/review.test.ts` (7). They cover the strict
+    reading, the reviewer's input, nothing to review, a failing reviewer,
+    and runs on a real git repository:
+    - sent back once, fixed, then merged with the fix;
+    - a disagreement after the rounds going to a person with nothing
+      merged;
+    - no verdict not blocking;
+    - no review without `--review`, and none for docs.
+
+    Full CI: 470, and all evaluations pass.
 
 ## 5. Risks and limits
 

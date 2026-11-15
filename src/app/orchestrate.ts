@@ -30,6 +30,8 @@ export interface OrchestrateSettings {
   readonly auto?: boolean;
   /** Limits for the whole run (phase D2). */
   readonly limits?: RunLimits;
+  /** Cross review (phase D5): a reviewer on another model may send tasks back. */
+  readonly review?: boolean;
   readonly cwd?: string;
 }
 
@@ -53,6 +55,7 @@ export async function createOrchestrator(
     ...(settings.providerFor ? { providerFor: settings.providerFor } : {}),
     router: routerMode(process.env.AGENT_ROUTER),
     ...(settings.limits ? { limits: settings.limits } : {}),
+    ...(settings.review ? { review: true } : {}),
     explore: exploreOn(process.env.AGENT_ROUTER_EXPLORE),
     ...((settings.auto ?? isAuto(process.env.AGENT_PROVIDERS))
       ? { auto: true, affinity: affinityFor(process.env.AGENT_AFFINITY, TASK_KINDS) }

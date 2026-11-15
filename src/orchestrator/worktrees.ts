@@ -166,6 +166,20 @@ export class WorktreeManager {
   }
 
   /**
+   * What the task changed on its branch, as a diff, from where the branch
+   * started (as `changed` counts it): what a reviewer reads (phase D5).
+   * Cut at `max` characters, saying so.
+   */
+  async diff(runId: string, taskId: string, base: string, max = 40_000): Promise<string> {
+    const branch = this.branchFor(runId, taskId);
+    const from = (await this.startOf(branch)) ?? base;
+    const out = await this.#must(this.repo, ["diff", from, branch]);
+    return out.length <= max
+      ? out
+      : `${out.slice(0, max)}\n... (${String(out.length - max)} characters of the diff left out)`;
+  }
+
+  /**
    * The commit a branch was made from: the oldest entry of its reflog, which
    * git keeps for every branch it makes (and which survives a restart).
    */

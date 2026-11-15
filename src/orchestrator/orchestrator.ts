@@ -12,6 +12,9 @@ import type { Workspace } from "../tools/workspace.js";
 import type { RouterMode } from "./learned.js";
 import { limitReached, type RunLimits } from "./limits.js";
 import { applyReplan, proposeReplan, type ReplanProposal } from "./replan.js";
+import { crossReview } from "./review.js";
+import type { AttemptContext } from "./scheduler.js";
+import type { TaskRecord } from "./store.js";
 import { MetricsStore } from "./metrics.js";
 import { computeStats } from "./stats.js";
 import { workerMemory } from "./memory.js";
@@ -103,6 +106,12 @@ export interface OrchestratorOptions {
   readonly explore?: boolean | { readonly share?: number; readonly random?: () => number };
   /** Limits for the whole run (phase D2): tokens, work time, failed attempts. */
   readonly limits?: RunLimits;
+  /**
+   * Cross review (phase D5): after a task's checks pass, a reviewer on
+   * another model may send it back with issues, for a bounded number of
+   * rounds; it never approves. `true`: every kind but docs, two rounds.
+   */
+  readonly review?: boolean | { readonly rounds?: number; readonly kinds?: readonly TaskKind[] };
   /**
    * Phase D4: how this process owns the runs it runs. It always records its
    * pid and beats its heart in the store, and takes orders (pause, cancel)
@@ -228,7 +237,51 @@ export class Orchestrator {
       }),
       policy: this.policy,
       ...(options.ask ? { ask: options.ask } : {}),
+      ...(options.review ? { review: this.#reviewing(options.review) } : {}),
     });
+  }
+
+  /**
+   * Phase D5: who reviews and how. The reviewer is routed as a review task
+   * (the user's affinity: a deep Claude model), and recorded as independent
+   * when its model differs from the worker's.
+   */
+  #reviewing(setting: true | { readonly rounds?: number; readonly kinds?: readonly TaskKind[] }) {
+    const kinds = setting === true || !setting.kinds ? undefined : new Set(setting.kinds);
+    return {
+      for: (task: TaskRecord) => (kinds ? kinds.has(task.spec.kind) : task.spec.kind !== "docs"),
+      ask: async (task: TaskRecord, diff: string, context: AttemptContext) => {
+        const route = await this.pool.routeFor({
+          ...task.spec,
+          id: `review-${task.id}`,
+          kind: "review",
+          dependsOn: [],
+        });
+        if (route.kind === "hold") {
+          return {
+            verdict: { verdict: "none" as const, reason: `no reviewer now: ${route.reason}` },
+            reviewer: "none",
+            independent: false,
+          };
+        }
+        const choice = {
+          ...(route.model === "default" ? {} : { model: route.model }),
+          ...(route.effort ? { effort: route.effort } : {}),
+        };
+        const model =
+          this.options.makeModel?.(choice) ?? this.pool.providerById(route.provider).create(choice);
+        const reviewer = `${route.provider}/${route.model}`;
+        const worker = this.store.task(context.runId, task.id)?.model ?? "";
+        return {
+          verdict: await crossReview(model, task.spec, diff, context.signal),
+          reviewer,
+          independent:
+            worker !== reviewer && !worker.endsWith(`/${route.model}`) && worker !== route.model,
+        };
+      },
+      ...(setting !== true && setting.rounds !== undefined ? { rounds: setting.rounds } : {}),
+      maxAttempts: this.options.maxAttempts ?? 3,
+    };
   }
 
   /** Writes and checks a plan for a request; nothing runs yet. */

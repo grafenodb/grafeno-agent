@@ -50,7 +50,10 @@ Commands:
           affinity, AGENT_AFFINITY), --provider-for tests=codex,docs=codex (which
           provider takes a kind of task). Limits for the whole run: --max-tokens N
           (reported input + output), --max-work M (minutes of work), --max-retries N
-          (failed attempts); reaching one pauses the run, saying which.
+          (failed attempts); reaching one pauses the run, saying which. --review: after
+          a task's checks pass, a reviewer on another model reads its change and may
+          send it back with issues (twice at most); it never approves, and a
+          disagreement left over goes to a person.
   runs [id]  The project's runs, or one run's report.
   resume <id>  Go on with a paused or waiting run (the same limit flags, higher, let a
           run paused by one go on).
@@ -266,6 +269,7 @@ function runSettings(argv: readonly string[]): OrchestrateSettings {
   };
   return {
     ...(Object.keys(limits).length > 0 ? { limits } : {}),
+    ...(argv.includes("--review") ? { review: true } : {}),
     ...(mode === undefined ? {} : { mode: mode as Autonomy }),
     workers: Number.isFinite(workers) && workers >= 1 ? Math.floor(workers) : 3,
     light: argv.includes("--light"),
@@ -582,7 +586,7 @@ function settingsArgs(argv: readonly string[]): string[] {
   ];
   for (const [i, arg] of argv.entries()) {
     if (valued.includes(arg) && argv[i + 1] !== undefined) out.push(arg, argv[i + 1] ?? "");
-    if (arg === "--light") out.push(arg);
+    if (arg === "--light" || arg === "--review") out.push(arg);
   }
   return out;
 }

@@ -3,6 +3,7 @@ import type { AttemptContext, AttemptOutcome, TaskRunner } from "./scheduler.js"
 import type { OperationalStore, TaskRecord } from "./store.js";
 import type { Policy, Question } from "./policy.js";
 import type { WorktreeManager } from "./worktrees.js";
+import { reviewFeedback, type ReviewVerdict } from "./review.js";
 
 /** Where a task's worker works. */
 export type WorkspaceFor = (task: TaskRecord, context: AttemptContext) => Promise<Workspace>;
@@ -30,6 +31,24 @@ export interface PipelineOptions {
   readonly policy?: Policy;
   /** Asks a person (through the interface); without it, what needs a person goes to review. */
   readonly ask?: (question: Question) => Promise<boolean>;
+  /**
+   * Cross review (phase D5): after its checks pass, a task's change is read
+   * by a reviewer on another model, which may send it back with issues.
+   * Without it, no review.
+   */
+  readonly review?: {
+    /** Which tasks are reviewed. */
+    readonly for: (task: TaskRecord) => boolean;
+    readonly ask: (
+      task: TaskRecord,
+      diff: string,
+      context: AttemptContext,
+    ) => Promise<{ verdict: ReviewVerdict; reviewer: string; independent: boolean }>;
+    /** Times a review may send a task back. Default: 2. */
+    readonly rounds?: number;
+    /** The scheduler's attempts per task: a send-back never spends the last one. Default: 3. */
+    readonly maxAttempts?: number;
+  };
 }
 
 /**
@@ -103,6 +122,50 @@ export class TaskPipeline implements TaskRunner {
       const verdict = await this.options.verify(task, new Workspace(worktree.path));
       store.event(runId, "verified", { ok: verdict.ok }, task.id);
       if (!verdict.ok) return { status: "retry", reason: verdict.diagnostic };
+    }
+
+    // Phase D5: the checks passed; a reviewer may send the task back, never approve it.
+    const review = this.options.review;
+    if (review?.for(task)) {
+      const diff = await worktrees.diff(runId, task.id, base);
+      const asked = await review.ask(task, diff, context);
+      const verdict = asked.verdict;
+      if (verdict.verdict === "none") {
+        store.event(
+          runId,
+          "review_skipped",
+          { reviewer: asked.reviewer, reason: verdict.reason },
+          task.id,
+        );
+      } else {
+        const before = store
+          .events(runId)
+          .filter(
+            (e) => e.taskId === task.id && e.kind === "reviewed" && e.data.verdict === "changes",
+          ).length;
+        store.event(
+          runId,
+          "reviewed",
+          {
+            reviewer: asked.reviewer,
+            independent: asked.independent,
+            verdict: verdict.verdict,
+            issues: verdict.verdict === "changes" ? verdict.issues.length : 0,
+            round: before + 1,
+          },
+          task.id,
+        );
+        if (verdict.verdict === "changes") {
+          const left = (review.maxAttempts ?? 3) - task.attempts;
+          if (before + 1 <= (review.rounds ?? 2) && left > 0) {
+            return { status: "retry", reason: reviewFeedback(asked.reviewer, verdict.issues) };
+          }
+          return {
+            status: "review",
+            reason: `the reviewer (${asked.reviewer}) still asks for changes after ${String(before + 1)} round${before === 0 ? "" : "s"}; a person decides. ${reviewFeedback(asked.reviewer, verdict.issues)}`,
+          };
+        }
+      }
     }
 
     const allowed = this.options.policy?.action("merge-integration") ?? {
