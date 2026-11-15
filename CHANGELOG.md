@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 (2026-11-15)
 
 - **Permissions** (`/permissions`): **Ask** (the default), **Automatic**
   (the agent decides by risk, in code: project changes, checks and builds
