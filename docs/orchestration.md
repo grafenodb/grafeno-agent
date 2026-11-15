@@ -1224,6 +1224,40 @@ resume <id>`. Pause and cancel work only inside the process that runs
     at a higher limit, the run's retries pausing before a task runs out of
     its own attempts, the report's resources and the cap on tool results.
     Full CI: 448, and all evaluations pass.
+- **D3, replanning only what failed (done, 2026-11-15):**
+  - `proposeReplan` (`src/orchestrator/replan.ts`) asks the planner, with
+    its own instructions, for new tasks in place of what a replan
+    replaces: every failed task, and every task that depends on one and is
+    not completed. The planner is told the run's goal and request, the
+    completed tasks (keep them, never change them, build on them if
+    needed), why each task failed, and the tasks that depended on it.
+  - Code checks the answer, and sends it back to be repaired when:
+    - an id is already used in the run;
+    - a new task depends on what is being replaced;
+    - it adds more than the replaced tasks plus 3 ("redo only what is
+      needed");
+    - the whole plan (kept plus new) is not a valid DAG.
+  - `applyReplan` works in one store transaction. The replaced tasks are
+    cancelled with the reason "replaced by a new plan" (their history
+    kept), the new ones are added, the run's plan and order are updated,
+    and a `replanned` event says what was replaced and added. The
+    scheduler does not count replaced tasks when it settles a run, so a
+    replanned run can complete.
+  - **Bounded:** two replans per run at most. After that, a person should
+    look.
+  - **Asked except in extended:** `Orchestrator.runWithReplans` runs a run.
+    When it fails, it proposes a replan, applies it on its own in the
+    `extended` mode, or asks otherwise, and goes on. Declined and refused
+    replans are recorded.
+  - Commands: `run` asks (`--yes` accepts), and `grafeno-agent replan <id>
+[--yes]` replans a failed run by hand, then goes on with it.
+  - Tests: `test/orchestrator/replan.test.ts` (7) covers what is affected;
+    the planner told only what it needs; the three repairs (a reused id, a
+    dependency on what is replaced, too many tasks); the refusals (nothing
+    failed, a task running, the most replans); applying it and the run
+    completing; a whole run in `extended` that fails, replans by itself,
+    keeps the completed task and completes; and `controlled` asking, with
+    a no meaning nothing changes. Full CI: 455, and all evaluations pass.
 
 ## 5. Risks and limits
 

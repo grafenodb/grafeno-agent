@@ -11,6 +11,7 @@ import { projectTools } from "../tools/index.js";
 import type { Workspace } from "../tools/workspace.js";
 import type { RouterMode } from "./learned.js";
 import { limitReached, type RunLimits } from "./limits.js";
+import { applyReplan, proposeReplan, type ReplanProposal } from "./replan.js";
 import { MetricsStore } from "./metrics.js";
 import { computeStats } from "./stats.js";
 import { workerMemory } from "./memory.js";
@@ -301,6 +302,53 @@ export class Orchestrator {
         // The run's own store still holds everything; it can be imported later.
       }
     }
+  }
+
+  /**
+   * Runs a run and, when a task fails for good, replans what failed (phase
+   * D3) and goes on, a bounded number of times. In the extended mode a
+   * replan is applied on its own; otherwise `confirm` is asked, and without
+   * it nothing is replanned. Each replan is recorded with what it replaced.
+   */
+  async runWithReplans(
+    runId: string,
+    confirm?: (proposal: ReplanProposal) => Promise<boolean>,
+    onReplan?: (proposal: ReplanProposal) => void,
+  ): Promise<RunState> {
+    for (;;) {
+      const state = await this.run(runId);
+      if (state !== "failed") return state;
+      let proposal: ReplanProposal;
+      try {
+        proposal = await this.proposeReplan(runId);
+      } catch (error) {
+        this.store.event(runId, "replan_refused", {
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        return state;
+      }
+      const yes = this.policy.mode === "extended" ? true : ((await confirm?.(proposal)) ?? false);
+      if (!yes) {
+        this.store.event(runId, "replan_declined", { replaced: [...proposal.replaced] });
+        return state;
+      }
+      this.applyReplan(proposal);
+      onReplan?.(proposal);
+    }
+  }
+
+  /** New tasks in place of what failed, from the planner's model; nothing applied yet. */
+  async proposeReplan(runId: string, signal?: AbortSignal): Promise<ReplanProposal> {
+    const planner = this.options.planner
+      ? { choice: this.options.planner, provider: this.options.provider }
+      : await this.#plannerChoice();
+    const model =
+      this.options.makeModel?.(planner.choice) ?? planner.provider.create(planner.choice);
+    return proposeReplan(this.store, runId, model, signal ? { signal } : {});
+  }
+
+  applyReplan(proposal: ReplanProposal): void {
+    applyReplan(this.store, proposal);
   }
 
   pause(): void {

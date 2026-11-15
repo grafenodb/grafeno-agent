@@ -1,6 +1,6 @@
 import { normalize } from "node:path";
 import { FINAL_STATES, type RunState, type TaskState } from "./states.js";
-import type { OperationalStore, TaskRecord } from "./store.js";
+import { isReplaced, type OperationalStore, type TaskRecord } from "./store.js";
 
 /** What one attempt of a task came to. */
 export type AttemptOutcome =
@@ -364,7 +364,8 @@ export class Scheduler {
     if (this.#limited) return this.#setRun(runId, "paused", this.#limited);
     if (this.#pausing) return this.#setRun(runId, "paused", "paused");
     this.#promote(runId);
-    const tasks = store.tasks(runId);
+    // Tasks replaced by a new plan (phase D3) neither failed nor block the run.
+    const tasks = store.tasks(runId).filter((t) => !isReplaced(t));
     if (tasks.every((t) => t.state === "completed")) return this.#setRun(runId, "completed");
     if (tasks.some((t) => t.state === "review")) {
       return this.#setRun(runId, "waiting", "tasks wait for a person's review");

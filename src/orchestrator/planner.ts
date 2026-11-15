@@ -1,5 +1,5 @@
 import { collectTurn, NO_USAGE, type Model, type ToolHost, type Usage } from "../model/index.js";
-import { checkPlan, TASK_KINDS, TIERS, type Plan } from "./plan.js";
+import { checkPlan, TASK_KINDS, TIERS, type Plan, type PlanCheck } from "./plan.js";
 
 export interface PlannerOptions {
   /** The model that writes the plan (the router picks it; usually a deep tier). */
@@ -7,6 +7,10 @@ export interface PlannerOptions {
   /** Times a plan with problems is sent back to be repaired. Default: 2. */
   readonly maxRepairs?: number;
   readonly signal?: AbortSignal;
+  /** The planner's instructions; default: `PLANNER_SYSTEM`. A replan has its own. */
+  readonly system?: string;
+  /** How the answer is checked; default: `checkPlan`. A replan checks more. */
+  readonly check?: (json: unknown) => PlanCheck;
 }
 
 export interface PlanRequest {
@@ -86,7 +90,11 @@ Rules:
  */
 export async function makePlan(request: PlanRequest, options: PlannerOptions): Promise<Planned> {
   const maxRepairs = options.maxRepairs ?? 2;
-  const conversation = await options.model.open({ system: PLANNER_SYSTEM, tools: NO_TOOLS });
+  const conversation = await options.model.open({
+    system: options.system ?? PLANNER_SYSTEM,
+    tools: NO_TOOLS,
+  });
+  const check = options.check ?? checkPlan;
   let usage: Usage = NO_USAGE;
   let message = request.context
     ? `<project>\n${request.context}\n</project>\n\n${request.request}`
@@ -102,7 +110,7 @@ export async function makePlan(request: PlanRequest, options: PlannerOptions): P
       const checked =
         json === undefined
           ? { ok: false as const, problems: ["the answer has no JSON plan"] }
-          : checkPlan(json);
+          : check(json);
       if (checked.ok) {
         return { plan: checked.plan, order: checked.order, attempts: attempt, usage };
       }

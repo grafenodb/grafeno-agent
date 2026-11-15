@@ -26,6 +26,7 @@ import type { Orchestrator, OrchestratorOptions } from "./orchestrator/orchestra
 import { AUTONOMY, type Autonomy } from "./orchestrator/policy.js";
 import { describeReport } from "./orchestrator/telemetry.js";
 import { describeResumeStats, resumeCompact } from "./app/resume.js";
+import { describeReplan } from "./orchestrator/replan.js";
 
 const USAGE = `Usage: grafeno-agent <command>
 
@@ -53,6 +54,10 @@ Commands:
   runs [id]  The project's runs, or one run's report.
   resume <id>  Go on with a paused or waiting run (the same limit flags, higher, let a
           run paused by one go on).
+  replan <id> [--yes]  New tasks in place of what failed in a run, and what depends on it,
+          from the planner, checked by code; completed work is kept. Shown first;
+          then the run goes on. In --mode extended a run replans on its own (at most
+          twice).
   resume --compact  Print where the project's work stands, compact, for a new session:
           the latest checkpoint and a few related memories, within budgets. Only reads
           memory, calls no model. --task <name> (a task's checkpoints instead of the
@@ -286,8 +291,20 @@ async function confirm(question: string): Promise<boolean> {
 }
 
 /** Runs a run to where it stops, printing what happens. */
-async function drive(orchestrator: Orchestrator, runId: string): Promise<number> {
-  const state = await orchestrator.run(runId);
+async function drive(orchestrator: Orchestrator, runId: string, yes = false): Promise<number> {
+  // A task that fails for good is replanned (phase D3): on its own in the
+  // extended mode, else after asking (or with --yes).
+  const state = await orchestrator.runWithReplans(
+    runId,
+    async (proposal) => {
+      console.log("");
+      for (const line of describeReplan(proposal)) console.log(line);
+      return yes || (await confirm("\nReplan what failed this way?"));
+    },
+    (proposal) => {
+      console.log(`\nReplanned: ${proposal.replaced.join(", ")} replaced. Going on.`);
+    },
+  );
   console.log("");
   for (const line of describeReport(orchestrator.report(runId))) console.log(line);
   if (state === "completed") {
@@ -299,6 +316,8 @@ async function drive(orchestrator: Orchestrator, runId: string): Promise<number>
     console.log(`  git merge ${branch}`);
   } else if (state === "paused" || state === "waiting") {
     console.log(`\nThe run is ${state}. Go on with: grafeno-agent resume ${runId}`);
+  } else if (state === "failed") {
+    console.log(`\nThe run failed. Replan what failed with: grafeno-agent replan ${runId}`);
   }
   orchestrator.close();
   return state === "completed" ? 0 : 1;
@@ -364,7 +383,7 @@ async function orchestrateCommand(argv: readonly string[]): Promise<number> {
   console.log(
     `\nRun ${run.id} (${settings.mode ?? "controlled"}, up to ${String(settings.workers ?? 3)} workers):`,
   );
-  return drive(orchestrator, run.id);
+  return drive(orchestrator, run.id, argv.includes("--yes"));
 }
 
 async function runsCommand(argv: readonly string[]): Promise<number> {
@@ -476,6 +495,38 @@ async function routerCommand(argv: readonly string[]): Promise<number> {
   return 0;
 }
 
+/** Replans what failed in a run (phase D3), after showing it, then goes on with the run. */
+async function replanCommand(argv: readonly string[]): Promise<number> {
+  const id = argv.find((arg) => !arg.startsWith("--"));
+  if (!id) {
+    console.error("Which run? grafeno-agent runs lists them.");
+    return 2;
+  }
+  const orchestrator = await createOrchestrator(runSettings(argv), {
+    ...printChanges(),
+    ask: async (question) =>
+      confirm(
+        `\n  ? ${question.worker ?? "The run"} wants to ${question.action} (${question.reason}). Allow it?`,
+      ),
+  });
+  console.log(`Replanning what failed in ${id}…`);
+  let proposal;
+  try {
+    proposal = await orchestrator.proposeReplan(id);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    orchestrator.close();
+    return 1;
+  }
+  for (const line of describeReplan(proposal)) console.log(line);
+  if (!argv.includes("--yes") && !(await confirm("\nReplan what failed this way?"))) {
+    orchestrator.close();
+    return 1;
+  }
+  orchestrator.applyReplan(proposal);
+  return drive(orchestrator, id, argv.includes("--yes"));
+}
+
 async function main(argv: readonly string[]): Promise<number> {
   // Real environment variables win over the settings file. Run from the
   // source (development), ./.env is read too; installed, never.
@@ -504,6 +555,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return resumeCommand(argv.slice(1));
     case "router":
       return routerCommand(argv.slice(1));
+    case "replan":
+      return replanCommand(argv.slice(1));
     case "help":
     case "--help":
     case "-h":

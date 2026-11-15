@@ -86,7 +86,28 @@ export interface OperationalStore {
   finishEffect(key: string): void;
   /** The keys of the run's effects started and not finished (a crash, or one in flight). */
   effectsInFlight(runId: string): string[];
+  /**
+   * Replans part of a run (phase D3), in one transaction: the replaced tasks
+   * are cancelled (their history kept, their reason saying they were
+   * replaced), the new ones are added, and the run's plan and order become
+   * the new ones.
+   */
+  replan(
+    runId: string,
+    plan: Plan,
+    order: readonly string[],
+    added: readonly TaskSpec[],
+    replaced: readonly string[],
+  ): void;
   close(): void;
+}
+
+/** The reason a task replaced by a new plan carries: it neither failed nor blocks the run. */
+export const REPLACED = "replaced by a new plan";
+
+/** Whether a task was replaced by a new plan (phase D3). */
+export function isReplaced(task: { state: string; reason?: string }): boolean {
+  return task.state === "cancelled" && (task.reason ?? "").startsWith(REPLACED);
 }
 
 const SCHEMA = `
@@ -168,6 +189,30 @@ export class SqliteStore implements OperationalStore {
       "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;",
     );
     this.#db.exec(SCHEMA);
+  }
+
+  replan(
+    runId: string,
+    plan: Plan,
+    order: readonly string[],
+    added: readonly TaskSpec[],
+    replaced: readonly string[],
+  ): void {
+    this.#atomic(() => {
+      const now = new Date().toISOString();
+      for (const id of replaced) this.transition(runId, id, "cancelled", { reason: REPLACED });
+      const insert = this.#db.prepare(
+        "INSERT INTO tasks (run_id, id, spec, state, updated) VALUES (?, ?, ?, 'pending', ?)",
+      );
+      for (const task of added) insert.run(runId, task.id, JSON.stringify(task), now);
+      this.#db
+        .prepare("UPDATE runs SET plan = ?, task_order = ?, updated = ? WHERE id = ?")
+        .run(JSON.stringify(plan), JSON.stringify(order), now, runId);
+      this.#event(runId, "replanned", {
+        replaced: [...replaced],
+        added: added.map((t) => t.id),
+      });
+    });
   }
 
   createRun(request: string, plan: Plan, order: readonly string[], baseCommit?: string): Run {
