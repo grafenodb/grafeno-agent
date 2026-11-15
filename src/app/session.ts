@@ -49,6 +49,8 @@ export interface AgentSessionOptions {
   readonly vault?: Vault;
   /** The project's tools; for tests. Default: files, commands and the web. */
   readonly tools?: (workspace: Workspace) => Tool[];
+  /** Tools the interface adds (such as `delegate`, to start sub-agents). */
+  readonly extraTools?: readonly Tool[];
   /**
    * When to renew the conversation (see lifecycle.ts); `false`: never.
    * Default: after a pause that leaves the cache cold with a large context,
@@ -373,7 +375,7 @@ export class AgentSession {
       model,
       system: `${this.memory.systemPrompt(SYSTEM_PROMPT)}\n\n${toolsPrompt(this.workspace)}`,
       tools: new ToolRegistry(
-        [...own, ...this.memoryTools],
+        [...own, ...this.memoryTools, ...(this.options.extraTools ?? [])],
         (call, tool, decision) => this.approve(call, tool, decision),
         { redact: [config.agentKey] },
       ),

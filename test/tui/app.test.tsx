@@ -97,8 +97,9 @@ function services(setup: Setup): AppServices {
     needsSetup: () => setup.needsSetup === true,
     start:
       setup.start ??
-      (() =>
+      ((extra) =>
         AgentSession.start({
+          ...(extra?.tools ? { extraTools: extra.tools } : {}),
           config,
           identity: { name: "grafeno-agent-test", ownOnly: true },
           vault: setup.vault ?? new FakeVault(),
@@ -595,6 +596,129 @@ ${now(app)}`,
         encoding: "utf8",
       }),
     ).toContain("integration");
+    app.unmount();
+  });
+});
+
+describe("sub-agents in the interface", { timeout: 90_000 }, () => {
+  it("lets the main agent start sub-agents, lists them on the left, and shows each read only", async () => {
+    const repo = join(dir, "project");
+    mkdirSync(repo);
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, windowsHide: true });
+    git("init", "-q", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.invalid");
+    writeFileSync(join(repo, "README.md"), "# p\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "start");
+    const plan = {
+      goal: "Two files",
+      risks: [],
+      tasks: ["alpha", "beta"].map((id) => ({
+        id,
+        title: `Write ${id}`,
+        description: `Create ${id}.txt.`,
+        kind: "docs",
+        dependsOn: [],
+        complexity: 1,
+        capabilities: ["code"],
+        touches: [`${id}.txt`],
+        acceptance: [{ check: "files", exist: [`${id}.txt`] }],
+        parallelSafe: true,
+      })),
+    };
+    const workers: Provider = {
+      id: "fake-workers",
+      name: "Fake workers",
+      signIn: "",
+      tiers: { deep: ["m"], standard: ["m"], light: ["m"] },
+      status: () => Promise.resolve({ installed: true, signedIn: true, detail: "" }),
+      models: () => Promise.resolve([{ id: "m", name: "M" }]),
+      efforts: () => [],
+      usage: () => Promise.resolve(undefined),
+      modelName: (id) => id,
+      create: () =>
+        new FakeModel({
+          turns: [
+            (context) => {
+              if (context.system.includes("You are the planner")) {
+                return [{ say: `\`\`\`json\n${JSON.stringify(plan)}\n\`\`\`` }];
+              }
+              const file = /these files exist: (\S+)/.exec(context.message)?.[1] ?? "x.txt";
+              return [
+                { say: `Writing ${file} now.` },
+                { call: "write_file", input: { path: file, content: "ok\n" } },
+                { say: "done" },
+              ];
+            },
+          ],
+        }),
+    };
+    const extras: Record<string, unknown>[] = [];
+    const app = render(
+      <App
+        services={services({
+          // The main agent hands the work to sub-agents, then reads their report.
+          turns: [
+            [
+              { call: "delegate", input: { request: "Write alpha.txt and beta.txt" } },
+              {
+                say: (context) => `Report: ${context.results[0]?.content.split("\n", 1)[0] ?? ""}`,
+              },
+            ],
+          ],
+          orchestrator: (extra) => {
+            extras.push({ ...extra });
+            return Promise.resolve(
+              new Orchestrator({
+                ...extra,
+                provider: workers,
+                providers: [workers],
+                project: { name: "p", path: repo },
+                projectRoot: repo,
+                dataDir: join(dir, "data"),
+              }),
+            );
+          },
+        })}
+      />,
+    );
+    await ready(app);
+    // The side panel off: the agents panel has room on 120 columns.
+    app.stdin.write("\u0002");
+    await type(app, "build both files");
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("Run this plan?"), "the plan");
+    expect(seen(app)).toContain("Plan for sub-agents");
+    await press(app, ENTER, () => !now(app).includes("Run this plan?"), "the run to start");
+    await until(
+      () => now(app).includes("AGENTS") && now(app).includes("alpha") && now(app).includes("beta"),
+      () => `the agents panel; the screen was:\n${now(app)}`,
+      45_000,
+    );
+    expect(now(app)).toContain("Main");
+    // The main agent gets the report as its tool's answer.
+    await until(
+      () => now(app).includes("Report: The sub-agents' run ended: completed."),
+      () => `the main agent's report; the screen was:\n${now(app)}`,
+      45_000,
+    );
+    // ctrl+n: the first sub-agent, read only, with what it did.
+    app.stdin.write("\u000e");
+    await until(
+      () => now(app).includes("read only"),
+      () => `a sub-agent's view; the screen was:\n${now(app)}`,
+    );
+    expect(now(app)).toContain("Writing alpha.txt now.");
+    // A finished sub-agent's summary is not shown as a warning.
+    expect(now(app)).not.toContain("now.done");
+    expect(now(app)).toContain("alpha.txt");
+    expect(now(app)).not.toContain("Ask anything");
+    // ctrl+p: back to the main agent and its prompt.
+    app.stdin.write("\u0010");
+    await until(() => now(app).includes("Ask anything"), "the main agent's prompt");
+    // In Auto (nothing set), sub-agents are not pinned to the chat's provider.
+    expect(extras[0]?.provider).toBeUndefined();
     app.unmount();
   });
 });

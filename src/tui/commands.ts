@@ -23,6 +23,10 @@ export const COMMANDS: readonly Command[] = [
   { name: "checkpoint", description: "Save where the work stands, in memory" },
   { name: "orchestrate", description: "Plan a request and run it with several workers" },
   { name: "runs", description: "Earlier runs of this project: see or resume one" },
+  {
+    name: "agents",
+    description: "The main agent and its sub-agents: view one (read only; ctrl+n / ctrl+p)",
+  },
   { name: "upkeep", description: "Report on the memory: duplicates, contradictions" },
   { name: "sidebar", description: "Show or hide the side panel (ctrl+b)" },
   { name: "clear", description: "Clear the conversation from the screen" },

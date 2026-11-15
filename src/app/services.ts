@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import type { Tool } from "../agent/tools.js";
 import { assertBillingAllowed } from "../providers/billing.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -51,8 +52,11 @@ export interface AppServices {
   readonly providers: readonly Provider[];
   /** No memory is set up yet: the first run asks how. */
   needsSetup(): boolean;
-  /** Starts a session with the settings as they are; throws saying why it cannot. */
-  start(): Promise<AgentSession>;
+  /**
+   * Starts a session with the settings as they are; throws saying why it
+   * cannot. `tools`: tools the interface adds (such as `delegate`).
+   */
+  start(extra?: { readonly tools?: readonly Tool[] }): Promise<AgentSession>;
   grafeno(): GrafenoInfo;
   /** Installs and starts the included Grafeno, makes the agent's key and saves it all. */
   includeGrafeno(onProgress?: (done: number, total: number) => void): Promise<string>;
@@ -148,7 +152,7 @@ export function realServices(version: string): AppServices {
       if (mode === "included") return !env.GRAFENO_OWNER_TOKEN?.trim() || !includedInstalled();
       return !env.GRAFENO_AGENT_KEY?.trim();
     },
-    async start() {
+    async start(extra) {
       const config = loadConfig();
       await prepareGrafeno(config);
       const report = await checkGrafeno(config);
@@ -159,6 +163,7 @@ export function realServices(version: string): AppServices {
       return AgentSession.start({
         config,
         provider: providers[0] as Provider,
+        ...(extra?.tools ? { extraTools: extra.tools } : {}),
         ...(report.identity ? { identity: report.identity } : {}),
         ...(chosen ? { embedder: chosen } : {}),
       });

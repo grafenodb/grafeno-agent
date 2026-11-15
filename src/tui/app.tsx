@@ -27,6 +27,10 @@ import { RunView, type RunTask } from "./run-view.js";
 import type { Orchestrator } from "../orchestrator/orchestrator.js";
 import type { ActiveWorker } from "../orchestrator/workers.js";
 import { describeReport } from "../orchestrator/telemetry.js";
+import { delegateTool } from "../app/delegate.js";
+import type { Provider } from "../providers/types.js";
+import { withActivity, withState, withTasks, withWorkers, type SubAgent } from "./agents.js";
+import { AgentsPanel, AgentView, agentKey } from "./agents-panel.js";
 import { describePlan } from "../app/orchestrate.js";
 import { useWheel } from "./mouse.js";
 import { PalacePanel } from "./palace.js";
@@ -44,6 +48,9 @@ const UPKEEP_EVERY_DAYS = 7;
 /** The side panel's width, and the narrowest window that still shows it. */
 const SIDEBAR = 38;
 const SIDEBAR_FROM = 100;
+/** The agents panel's width (left), and the narrowest window that shows it with the side panel. */
+const AGENTS = 30;
+const AGENTS_FROM = 140;
 /** Items kept on screen: older ones stay in the kept conversation. */
 const KEEP = 300;
 
@@ -72,7 +79,16 @@ type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id"> : never) :
 
 type Phase = "starting" | "setup-memory" | "setup-provider" | "ready" | "offline";
 type Mode =
-  "chat" | "models" | "effort" | "resume" | "connect" | "palace" | "plan" | "runs" | "exiting";
+  | "chat"
+  | "models"
+  | "effort"
+  | "resume"
+  | "connect"
+  | "palace"
+  | "plan"
+  | "runs"
+  | "agents"
+  | "exiting";
 
 /** A run being watched: its tasks and who works on them. */
 interface Watched {
@@ -122,6 +138,17 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
   const [, setTick] = useState(0);
   const [watched, setWatched] = useState<Watched | undefined>(undefined);
   const [runChoices, setRunChoices] = useState<PickerItem[]>([]);
+  // Sub-agents the main agent's runs started, and the one shown (undefined: the main agent).
+  const [agents, setAgents] = useState<SubAgent[]>([]);
+  const [viewing, setViewing] = useState<string | undefined>(undefined);
+  /** The run being driven now: whose tasks the sub-agents are. */
+  const runNow = useRef<string | undefined>(undefined);
+  /** The main agent's `delegate` call waiting for the person to run its plan, or not. */
+  const pendingPlan = useRef<((run: boolean) => void) | undefined>(undefined);
+  /** Starts sub-agents for the main agent (set once the functions it needs exist). */
+  const launch = useRef<((request: string, signal: AbortSignal) => Promise<string>) | undefined>(
+    undefined,
+  );
   const orchestration = useRef<
     | {
         orchestrator: Orchestrator;
@@ -166,7 +193,16 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
   const connect = useCallback(async () => {
     setPhase("starting");
     try {
-      const fresh = await services.start();
+      // The main agent may start sub-agents, on any provider.
+      const fresh = await services.start({
+        tools: [
+          delegateTool(
+            (request, signal) =>
+              launch.current?.(request, signal) ??
+              Promise.resolve("Sub-agents cannot be started here."),
+          ),
+        ],
+      });
       fresh.approve = (call: ToolCall, tool, decision) =>
         new Promise<boolean>((resolve) => {
           setApproval({
@@ -303,9 +339,14 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
 
   /** An orchestrator wired to this screen: its questions in the permission box, its changes in the run view. */
   const openOrchestrator = useCallback(
-    async (pool = false): Promise<Orchestrator> => {
+    async (pool = false, pinned?: Provider): Promise<Orchestrator> => {
       return services.orchestrator(
         {
+          // A named provider (not Auto): its sub-agents use it alone.
+          ...(pinned ? { provider: pinned, providers: [pinned], auto: false } : {}),
+          onActivity: (activity) => {
+            setAgents((current) => withActivity(current, activity));
+          },
           ask: (question) =>
             new Promise<boolean>((resolve) => {
               setApproval({
@@ -315,6 +356,12 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
               });
             }),
           onChange: (change) => {
+            const run = runNow.current;
+            if (run && change.type === "task") {
+              setAgents((current) =>
+                withState(current, run, change.task, change.state, change.reason),
+              );
+            }
             setWatched((current) => {
               if (!current) return current;
               if (change.type === "run") return { ...current, state: change.state };
@@ -334,6 +381,8 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
           },
           onWorkers: (active) => {
             setWatched((current) => (current ? { ...current, workers: active } : current));
+            const run = runNow.current;
+            if (run) setAgents((current) => withWorkers(current, run, active));
           },
         },
         pool,
@@ -344,7 +393,11 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
 
   /** Runs (or resumes) a run, watching it, and reports how it ended. */
   const driveRun = useCallback(
-    async (orchestrator: Orchestrator, runId: string) => {
+    async (
+      orchestrator: Orchestrator,
+      runId: string,
+      options: { readonly forAgent?: boolean } = {},
+    ): Promise<{ state: string; lines: string[] }> => {
       const tasks = orchestrator.store.tasks(runId).map((t) => ({
         id: t.id,
         title: t.spec.title,
@@ -352,11 +405,16 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         ...(t.reason ? { reason: t.reason } : {}),
       }));
       setWatched({ runId, state: "running", tasks, workers: [] });
+      runNow.current = runId;
+      setAgents((current) => withTasks(current, runId, tasks));
       orchestration.current = { orchestrator, running: true };
-      setBusy("Running the plan");
+      // For the main agent's own call, its turn keeps the busy line.
+      if (!options.forAgent) setBusy("Running the plan");
+      let lines: string[];
+      let state = "failed";
       try {
-        const state = await orchestrator.run(runId);
-        const lines = describeReport(orchestrator.report(runId));
+        state = await orchestrator.run(runId);
+        lines = describeReport(orchestrator.report(runId));
         if (state === "completed") {
           const branch = orchestrator.integrationBranch(runId);
           lines.push("", `The work is on ${branch}. Look at it, then merge it when you are ready:`);
@@ -366,19 +424,77 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         }
         push({ kind: "block", title: "Run report", lines });
       } catch (error) {
-        notice(
-          `The run stopped: ${error instanceof Error ? error.message : String(error)}`,
-          "error",
-        );
+        const message = `The run stopped: ${error instanceof Error ? error.message : String(error)}`;
+        lines = [message];
+        notice(message, "error");
       } finally {
-        setBusy(undefined);
+        if (!options.forAgent) setBusy(undefined);
         setWatched(undefined);
+        runNow.current = undefined;
         orchestration.current = undefined;
         orchestrator.close();
       }
+      return { state, lines };
     },
     [push, notice],
   );
+
+  /**
+   * The main agent's `delegate`: plans the request, shows the plan, and runs
+   * it as sub-agents once the person says so; gives the agent the report.
+   * In Auto they use every ready provider; otherwise the chat's provider.
+   */
+  useEffect(() => {
+    launch.current = async (request, signal) => {
+      if (orchestration.current) return "A run is already going on: wait for it to end.";
+      const orchestrator = await openOrchestrator(auto, auto ? undefined : provider);
+      let planned: Awaited<ReturnType<Orchestrator["plan"]>>;
+      try {
+        planned = await orchestrator.plan(request, signal);
+      } catch (error) {
+        orchestrator.close();
+        return `No plan could be made: ${error instanceof Error ? error.message : String(error)}`;
+      }
+      orchestration.current = { orchestrator, request, planned, running: false };
+      push({ kind: "block", title: "Plan for sub-agents", lines: describePlan(planned) });
+      const run = await new Promise<boolean>((resolve) => {
+        pendingPlan.current = resolve;
+        setMode("plan");
+        signal.addEventListener("abort", () => {
+          resolve(false);
+        });
+      });
+      pendingPlan.current = undefined;
+      setMode((current) => (current === "plan" ? "chat" : current));
+      if (!run || signal.aborted) {
+        orchestrator.close();
+        orchestration.current = undefined;
+        return "The person chose not to run this plan. Ask them what to change, or do the work yourself.";
+      }
+      const { run: started, uncommitted } = await orchestrator.start(request, planned);
+      const stop = () => {
+        orchestrator.cancel();
+      };
+      signal.addEventListener("abort", stop);
+      try {
+        const done = await driveRun(orchestrator, started.id, { forAgent: true });
+        const branch = orchestrator.integrationBranch(started.id);
+        return [
+          `The sub-agents' run ended: ${done.state}.`,
+          ...(uncommitted.length > 0
+            ? [
+                `${String(uncommitted.length)} files the person changed were not committed, so the run did not see them.`,
+              ]
+            : []),
+          ...done.lines,
+          "",
+          `Their work is on the branch ${branch}; the person merges it (git merge ${branch}).`,
+        ].join("\n");
+      } finally {
+        signal.removeEventListener("abort", stop);
+      }
+    };
+  }, [auto, provider, openOrchestrator, driveRun, push]);
 
   /** What a line typed in the box does. */
   const submit = useCallback(
@@ -447,7 +563,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         notice(`Unknown command /${command.name}. /help lists them.`, "error");
         return;
       }
-      const free = ["help", "connect", "palace", "clear", "exit", "status", "sidebar"];
+      const free = ["help", "connect", "palace", "clear", "exit", "status", "sidebar", "agents"];
       if (!free.includes(command.name) && !session) {
         notice("Not connected yet: /palace sets up the memory.", "warning");
         return;
@@ -534,6 +650,15 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
           });
           break;
         }
+        case "agents":
+          if (agents.length === 0) {
+            notice(
+              "No sub-agents yet: the main agent starts them for work with parallel parts (or /orchestrate).",
+            );
+            break;
+          }
+          setMode("agents");
+          break;
         case "status":
           push({
             kind: "block",
@@ -661,7 +786,14 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
     if (key.pageUp) setScroll((s) => s + Math.max(3, rows - 10));
     else if (key.pageDown) setScroll((s) => Math.max(0, s - Math.max(3, rows - 10)));
     else if (key.ctrl && input === "b") setSidebarOn((on) => !on);
-    else if (key.ctrl && input === "c") {
+    else if (key.ctrl && (input === "n" || input === "p") && agents.length > 0) {
+      // Through the main agent and its sub-agents.
+      const keys = [undefined, ...agents.map(agentKey)];
+      const at = keys.indexOf(viewing);
+      const next = (at + (input === "n" ? 1 : keys.length - 1)) % keys.length;
+      setViewing(keys[next]);
+      setScroll(0);
+    } else if (key.ctrl && input === "c") {
       if (busy !== undefined && abort.current) abort.current.abort();
       else if (mode === "exiting") exit();
       else if (mode !== "chat") setMode("chat");
@@ -670,6 +802,9 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
   });
 
   const showSidebar = sidebarOn && columns >= SIDEBAR_FROM;
+  // The agents panel: once a run started sub-agents, when the window has room for it.
+  const showAgents = agents.length > 0 && columns >= (showSidebar ? AGENTS_FROM : 100);
+  const viewed = viewing ? agents.find((a) => agentKey(a) === viewing) : undefined;
   const grafeno = services.grafeno();
 
   // The first run: memory, then the provider.
@@ -725,39 +860,57 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         narrow={!showSidebar}
       />
       <Box flexDirection="row" flexGrow={1}>
+        {showAgents && (
+          <AgentsPanel
+            width={AGENTS}
+            main={{
+              model: session ? modelLine(session, models) : "not connected",
+              doing: busy ?? "waiting for you",
+              busy: busy !== undefined,
+            }}
+            agents={agents}
+            viewing={viewed ? viewing : undefined}
+          />
+        )}
         <Box flexDirection="column" flexGrow={1} paddingX={1}>
-          <Viewport scroll={scroll} onClamp={setScroll}>
-            {!items.some((i) => i.kind === "user" || i.kind === "assistant") && live === "" && (
-              <Home
-                version={services.version}
-                ready={session !== undefined}
-                starting={phase === "starting"}
-                compact={rows < 34}
-              />
-            )}
-            {items.map((item) => (
-              <ItemView key={item.id} item={item} />
-            ))}
-            {live !== "" && (
-              <Box marginTop={1} paddingLeft={2}>
-                <Markdown text={live} />
-              </Box>
-            )}
-            {tools.map((tool) => (
-              <Box key={tool.id} paddingLeft={2}>
-                <Spinner />
-                <Text color={theme.accent}> {tool.label}</Text>
-              </Box>
-            ))}
-            {watched && (
-              <RunView
-                runId={watched.runId}
-                state={watched.state}
-                tasks={watched.tasks}
-                workers={watched.workers}
-              />
-            )}
-          </Viewport>
+          {viewed ? (
+            <Viewport scroll={scroll} onClamp={setScroll}>
+              <AgentView agent={viewed} />
+            </Viewport>
+          ) : (
+            <Viewport scroll={scroll} onClamp={setScroll}>
+              {!items.some((i) => i.kind === "user" || i.kind === "assistant") && live === "" && (
+                <Home
+                  version={services.version}
+                  ready={session !== undefined}
+                  starting={phase === "starting"}
+                  compact={rows < 34}
+                />
+              )}
+              {items.map((item) => (
+                <ItemView key={item.id} item={item} />
+              ))}
+              {live !== "" && (
+                <Box marginTop={1} paddingLeft={2}>
+                  <Markdown text={live} />
+                </Box>
+              )}
+              {tools.map((tool) => (
+                <Box key={tool.id} paddingLeft={2}>
+                  <Spinner />
+                  <Text color={theme.accent}> {tool.label}</Text>
+                </Box>
+              ))}
+              {watched && (
+                <RunView
+                  runId={watched.runId}
+                  state={watched.state}
+                  tasks={watched.tasks}
+                  workers={watched.workers}
+                />
+              )}
+            </Viewport>
+          )}
           {(busy !== undefined || phase === "starting") && (
             <Working
               label={phase === "starting" ? "Connecting to Grafeno" : (busy ?? "")}
@@ -833,12 +986,21 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
                   { id: "cancel", label: "Not now" },
                 ]}
                 onCancel={() => {
+                  if (pendingPlan.current) {
+                    pendingPlan.current(false);
+                    return;
+                  }
                   orchestration.current?.orchestrator.close();
                   orchestration.current = undefined;
                   setMode("chat");
                 }}
                 onSelect={(item) => {
                   setMode("chat");
+                  // The main agent's own plan: it starts the run and reads the report.
+                  if (pendingPlan.current) {
+                    pendingPlan.current(item.id === "run");
+                    return;
+                  }
                   const current = orchestration.current;
                   if (!current?.planned || item.id !== "run") {
                     current?.orchestrator.close();
@@ -984,7 +1146,42 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
                 }}
               />
             )}
-            {mode === "chat" && !approval && (
+            {mode === "agents" && (
+              <Picker
+                title="Agents"
+                items={[
+                  {
+                    id: "main",
+                    label: "Main",
+                    hint: "the chat: the agent you talk to",
+                    current: viewing === undefined,
+                  },
+                  ...agents.map((a) => ({
+                    id: agentKey(a),
+                    label: a.id,
+                    hint: `${a.doing ?? a.state}${a.model ? ` · ${a.model}` : ""}`,
+                    current: viewing === agentKey(a),
+                  })),
+                ]}
+                onCancel={() => {
+                  setMode("chat");
+                }}
+                onSelect={(item) => {
+                  setMode("chat");
+                  setViewing(item.id === "main" ? undefined : item.id);
+                  setScroll(0);
+                }}
+              />
+            )}
+            {mode === "chat" && !approval && viewed && (
+              <Box borderStyle="round" borderColor={theme.muted} paddingX={1}>
+                <Text dimColor wrap="truncate-end">
+                  Sub-agent {viewed.id} · read only: the main agent orchestrates it · ctrl+n /
+                  ctrl+p switch · /agents
+                </Text>
+              </Box>
+            )}
+            {mode === "chat" && !approval && !viewed && (
               <Prompt
                 active={busy === undefined && phase !== "starting"}
                 placeholder={

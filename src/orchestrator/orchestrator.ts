@@ -30,7 +30,12 @@ import { runReport, type RunReport } from "./telemetry.js";
 import { shellRunner, verifier, verify, type CommandRunner } from "./verify.js";
 import { deliver, type Delivery } from "./deliver.js";
 import { Workspace } from "../tools/workspace.js";
-import { WorkerPool, type ActiveWorker, type ContextPolicy } from "./workers.js";
+import {
+  WorkerPool,
+  type ActiveWorker,
+  type ContextPolicy,
+  type WorkerActivity,
+} from "./workers.js";
 import { runGit, WorktreeManager } from "./worktrees.js";
 
 /** Where the orchestrator keeps runs and worktrees: the agent's data folder. */
@@ -130,6 +135,8 @@ export interface OrchestratorOptions {
   readonly commandRunner?: CommandRunner;
   readonly onChange?: (change: SchedulerChange) => void;
   readonly onWorkers?: (active: readonly ActiveWorker[]) => void;
+  /** What each worker does as it works, for an interface to show (never stored). */
+  readonly onActivity?: (activity: WorkerActivity) => void;
 }
 
 /**
@@ -227,6 +234,7 @@ export class Orchestrator {
       ...(options.context ? { context: options.context } : {}),
       ...(options.makeModel ? { makeModel: options.makeModel } : {}),
       ...(options.onWorkers ? { onChange: options.onWorkers } : {}),
+      ...(options.onActivity ? { onActivity: options.onActivity } : {}),
     });
     this.pipeline = new TaskPipeline({
       store: this.store,

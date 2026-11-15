@@ -135,6 +135,7 @@ The panel hides on narrow windows, or with Ctrl+B.
 | `/checkpoint`  | Save where the work stands, in memory                           |
 | `/orchestrate` | Plan a request and run it with several workers (see below)      |
 | `/runs`        | Earlier runs of this project: see one, or resume it             |
+| `/agents`      | The main agent and its sub-agents: view one, read only          |
 | `/upkeep`      | Report on the memory: duplicates, contradictions                |
 | `/sidebar`     | Show or hide the side panel                                     |
 | `/clear`       | Clear the conversation from the screen                          |
@@ -144,6 +145,7 @@ Keys: Enter sends; `\` then Enter (or Shift+Enter) starts a new line; ↑ ↓
 go through earlier messages; Tab completes a command; PgUp/PgDn scroll the
 conversation (so does the mouse wheel; select text with Shift and the
 mouse, or set `GRAFENO_AGENT_MOUSE=off`); Ctrl+B shows or hides the panel;
+Ctrl+N and Ctrl+P go through the main agent and its sub-agents;
 Esc interrupts the answer; Ctrl+C interrupts, or leaves.
 
 Under each message, a line shows what memory brought to it: how many
@@ -265,6 +267,33 @@ grafeno-agent resume <id>       # go on with a paused or waiting run
 
 Runs are kept in the agent's data folder, so a run stopped by closing the
 terminal, by a pause or by your plan's limit is resumed where it stopped.
+
+### Sub-agents
+
+The agent you chat with can start **sub-agents** itself, on any provider,
+when the work has parts that can go on at once: it calls its `delegate`
+tool with the request. That works the same as `/orchestrate`:
+
+- a plan is shown, and nothing runs until you choose **Run it**;
+- each sub-agent works on one task, in its own worktree, with its own
+  checks;
+- the main agent gets the run's report and goes on from it.
+
+In Auto the sub-agents use every ready provider; with a named provider
+they all use that one.
+
+While they work, the **agents panel** on the left lists the main agent and
+each sub-agent: its model and effort, and what it is doing now (writing,
+the tool it runs, done, waiting for a person). The right panel, with your
+plan's usage, stays as it was.
+
+- **Ctrl+N / Ctrl+P**, or `/agents`, show another agent's work as it goes:
+  its words and the tools it used.
+- A sub-agent is **read only**: it takes no prompts, because the main agent
+  orchestrates it. Go back to the main agent to write.
+- The panel shows when the window is wide enough (140 columns with the
+  right panel, 100 without: Ctrl+B hides it). The keys and `/agents` work
+  in any width.
 
 ### Several providers
 

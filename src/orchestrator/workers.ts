@@ -30,6 +30,14 @@ export interface ActiveWorker {
   readonly started: Date;
 }
 
+/** One thing a worker did: whose, for which task, and the model's event. */
+export interface WorkerActivity {
+  readonly worker: string;
+  readonly task: string;
+  readonly runId: string;
+  readonly event: ModelEvent;
+}
+
 /** What a worker needs from memory (phase A6): its tools, what to know first, how to save where it stands. */
 export interface WorkerMemory {
   readonly tools: readonly Tool[];
@@ -156,6 +164,8 @@ export interface WorkerPoolOptions {
   readonly makeModel?: (choice: ModelChoice) => Model;
   /** Told when workers start and stop. */
   readonly onChange?: (active: readonly ActiveWorker[]) => void;
+  /** What each worker does as it works (its text, tool calls and results), for an interface to show. */
+  readonly onActivity?: (activity: WorkerActivity) => void;
 }
 
 /**
@@ -469,6 +479,7 @@ export class WorkerPool implements TaskRunner {
       quota && quota.limits.length > 0 ? Math.max(...quota.limits.map((l) => l.used)) : undefined;
     let agent = makeAgent();
     const track = (event: ModelEvent) => {
+      this.options.onActivity?.({ worker: name, task: task.id, runId: context.runId, event });
       if (event.type === "context") {
         seen.used = event.used;
         seen.peak = Math.max(seen.peak, event.used);
