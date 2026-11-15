@@ -69,6 +69,16 @@ jobs:
           test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, package $version"; exit 1; }
           grep -q "^## $version" CHANGELOG.md || { echo "CHANGELOG.md has no section for $version"; exit 1; }
           test "$(node -p 'require("./package.json").private === true')" = "false" || { echo "package.json is private"; exit 1; }
+      - name: Already on npm?
+        id: published
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          if npm view "@grafenodb/agent-cli@$version" version >/dev/null 2>&1; then
+            echo "@grafenodb/agent-cli@$version is already on npm: not published again"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
       - run: npm ci --no-audit --no-fund
+        if: steps.published.outputs.skip != 'true'
       - name: Publish
+        if: steps.published.outputs.skip != 'true'
         run: npm publish

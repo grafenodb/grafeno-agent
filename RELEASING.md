@@ -10,7 +10,9 @@ npm trusts the release workflow through trusted publishing (OIDC): no
 token is stored. On npmjs.com, the package's settings name the trusted
 publisher: GitHub Actions, `grafenodb/grafeno-agent`, workflow
 `release.yml`. A package must exist before it can be given one, so its
-very first version was a placeholder published by hand.
+first version (0.1.2) was published by hand; the workflow does not
+publish a version that is already on npm, and goes on to the GitHub
+release.
 
 ## Rules
 
