@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setInterval } from "node:timers";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
@@ -110,6 +111,8 @@ if (message.startsWith("call:")) {
 } else if (message === "logout") {
   fail("Not logged in. Run codex login.");
 } else if (message === "slow") {
+  // A pending promise alone lets Node exit (code 13); a timer keeps it waiting.
+  setInterval(() => {}, 60_000);
   await new Promise(() => {});
 } else {
   say(`echo:${message}`);
