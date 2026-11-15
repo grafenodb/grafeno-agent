@@ -5,7 +5,7 @@ import type { AppServices } from "../app/services.js";
 import { describeCall, type AgentSession } from "../app/session.js";
 import { describeError } from "../chat.js";
 import type { ToolCall } from "../model/index.js";
-import { isAuto, providerIds } from "../providers/index.js";
+import { API_KEY_PROVIDERS, autoMembers, isAuto, providerIds } from "../providers/index.js";
 import { mostRoom } from "../app/triage.js";
 import type { ModelOption, ProviderStatus, ProviderUsage } from "../providers/types.js";
 import type { Recall } from "../memory/session.js";
@@ -120,6 +120,14 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
   const provider = session?.provider ?? services.providers[0];
   // General Auto (B7c): each message is triaged, and may be orchestrated across providers.
   const [auto, setAuto] = useState(() => isAuto(process.env.AGENT_PROVIDERS));
+  // The providers Auto includes (AGENT_AUTO_PROVIDERS): by default, the official CLIs only.
+  const [autoIds, setAutoIds] = useState<readonly string[]>(() => {
+    try {
+      return autoMembers(process.env);
+    } catch {
+      return [];
+    }
+  });
   const [items, setItems] = useState<Item[]>([]);
   const [mode, setMode] = useState<Mode>("chat");
   const [busy, setBusy] = useState<string | undefined>(undefined);
@@ -1078,6 +1086,28 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
                 providers={services.providers}
                 {...(provider && !auto ? { current: provider.id } : {})}
                 auto={auto}
+                autoMembers={autoIds}
+                apiKeyProviders={API_KEY_PROVIDERS}
+                onToggleAuto={(id) => {
+                  const next = autoIds.includes(id)
+                    ? autoIds.filter((x) => x !== id)
+                    : [...autoIds, id];
+                  if (next.length === 0) {
+                    notice("Auto needs at least one provider.", "warning");
+                    return;
+                  }
+                  services.saveChoice({ autoProviders: next });
+                  setAutoIds(next);
+                  const name = services.providers.find((p) => p.id === id)?.name ?? id;
+                  notice(
+                    `${name} is ${next.includes(id) ? "now" : "no longer"} in Auto.${
+                      next.includes(id) && API_KEY_PROVIDERS.includes(id)
+                        ? " It uses an API key: billed per token unless it is a free tier, and never billed without AGENT_ALLOW_BILLING."
+                        : ""
+                    }`,
+                    next.includes(id) && API_KEY_PROVIDERS.includes(id) ? "warning" : "success",
+                  );
+                }}
                 onAuto={() => {
                   setMode("chat");
                   if (!session) return;

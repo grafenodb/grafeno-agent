@@ -14,6 +14,11 @@ export interface ProviderPanelProps {
   readonly auto?: boolean;
   /** Chosen General Auto; without it, the row is not offered (the first run). */
   readonly onAuto?: () => void;
+  /** The providers General Auto includes; with `onToggleAuto`, space includes or leaves one out. */
+  readonly autoMembers?: readonly string[];
+  readonly onToggleAuto?: (id: string) => void;
+  /** Providers reached with an API key (they may bill per token): said on their row. */
+  readonly apiKeyProviders?: readonly string[];
   /** With the status of the provider chosen (Enter), and the provider; nothing on Esc. */
   readonly onDone: (status: ProviderStatus | undefined, provider?: Provider) => void;
 }
@@ -42,6 +47,9 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
     else if (input === "r") {
       setStatuses([]);
       setChecking((c) => c + 1);
+    } else if (input === " " && props.onToggleAuto && selected < props.providers.length) {
+      const chosen = props.providers[selected];
+      if (chosen) props.onToggleAuto(chosen.id);
     } else if (key.return) {
       if (selected === props.providers.length && props.onAuto) props.onAuto();
       else props.onDone(statuses[selected], props.providers[selected]);
@@ -62,7 +70,17 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
               {on ? "▸ " : "  "}
               {provider.name}
               {provider.id === props.current ? " · in use" : ""}
+              {props.autoMembers ? (
+                <Text color={props.autoMembers.includes(provider.id) ? theme.success : theme.muted}>
+                  {props.autoMembers.includes(provider.id) ? "  [✓ in Auto]" : "  [  not in Auto]"}
+                </Text>
+              ) : null}
             </Text>
+            {props.apiKeyProviders?.includes(provider.id) && (
+              <Box paddingLeft={4}>
+                <Text dimColor>API key: may bill per token; in Auto only if you include it.</Text>
+              </Box>
+            )}
             {status === undefined ? (
               <Box paddingLeft={4}>
                 <Spinner />
@@ -102,8 +120,11 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
           </Text>
           <Box paddingLeft={4}>
             <Text dimColor>
-              Every ready provider: a light model triages each message, answered directly or planned
-              across them.
+              The ready providers marked in Auto
+              {props.autoMembers && props.autoMembers.length > 0
+                ? ` (${props.autoMembers.join(", ")})`
+                : ""}
+              : a light model triages each message, answered directly or planned across them.
             </Text>
           </Box>
         </Box>
@@ -114,7 +135,8 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
         </Text>
       </Box>
       <Text dimColor>
-        enter {props.firstRun ? "continue" : "use it"} · r check again · esc{" "}
+        enter {props.firstRun ? "continue" : "use it"}
+        {props.onToggleAuto ? " · space in Auto or not" : ""} · r check again · esc{" "}
         {props.firstRun ? "skip" : "close"}
       </Text>
     </Box>

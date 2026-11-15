@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { billingRefusal } from "../providers/billing.js";
 import type { Tool } from "../agent/tools.js";
 import { assertBillingAllowed } from "../providers/billing.js";
 import { homedir } from "node:os";
@@ -16,7 +17,7 @@ import {
   stopIncluded,
 } from "../grafeno/included.js";
 import { describeUpkeep, upkeep } from "../memory/upkeep.js";
-import { allProviders } from "../providers/index.js";
+import { allProviders, autoMembers } from "../providers/index.js";
 import { lightModel, mostRoom, triage, type PoolMember, type TriageDecision } from "./triage.js";
 import type { ModelChoice, Provider } from "../providers/types.js";
 import { settingsPath, updateSettings } from "../settings-file.js";
@@ -64,8 +65,14 @@ export interface AppServices {
   connectGrafeno(values: ServerValues): Promise<string>;
   /** Stops the included Grafeno, in a line. */
   stopGrafeno(): string;
-  /** Keeps the model and effort chosen, for the next sessions. */
-  saveChoice(choice: { model?: string; effort?: string; provider?: string }): void;
+  /** Keeps the model, effort, provider and Auto's providers chosen, for the next sessions. */
+  saveChoice(choice: {
+    model?: string;
+    effort?: string;
+    provider?: string;
+    /** The providers General Auto includes, in order. */
+    autoProviders?: readonly string[];
+  }): void;
   /** The memory upkeep report for the session's project. */
   upkeep(session: AgentSession): Promise<string>;
   /**
@@ -115,6 +122,12 @@ export function realServices(version: string): AppServices {
   // Every known provider, the chosen ones (AGENT_PROVIDERS) first: the chat uses the first.
   const providers: Provider[] = allProviders(env);
 
+  /** The providers General Auto includes (AGENT_AUTO_PROVIDERS), as the user chose them. */
+  const inAuto = (): Provider[] => {
+    const ids = autoMembers(env);
+    return providers.filter((p) => ids.includes(p.id));
+  };
+
   /** The ready providers, read at most once a minute: statuses and usage are slow to ask. */
   let pooled: { at: number; members: Promise<PoolMember[]> } | undefined;
   const readyPool = (all: readonly Provider[]): Promise<PoolMember[]> => {
@@ -124,6 +137,8 @@ export function realServices(version: string): AppServices {
         all.map(async (provider) => {
           const status = await provider.status().catch(() => undefined);
           if (!status?.installed || !status.signedIn) return undefined;
+          // Billed per token without the user's express say: never in the pool.
+          if (billingRefusal(provider.id, status, env)) return undefined;
           const usage = await provider.usage().catch(() => undefined);
           return { provider, ...(usage ? { usage } : {}) };
         }),
@@ -216,15 +231,20 @@ export function realServices(version: string): AppServices {
         ? "The included Grafeno was stopped. It starts again with the next session."
         : "The included Grafeno was not running from here.";
     },
-    saveChoice(choice: ModelChoice & { provider?: string }) {
+    saveChoice(choice: ModelChoice & { provider?: string; autoProviders?: readonly string[] }) {
+      if (choice.autoProviders !== undefined) {
+        save({ AGENT_AUTO_PROVIDERS: choice.autoProviders.join(",") });
+        pooled = undefined;
+        return;
+      }
       if (choice.provider !== undefined) {
         // The chosen provider first; the model and effort are its own again.
         if (choice.provider === "auto") {
           save({ AGENT_PROVIDERS: "auto" });
           return;
         }
-        const order = providers.map((p) => p.id);
-        const rest = order.filter((id) => id !== choice.provider);
+        // A run may move tasks to another provider: only to those Auto includes.
+        const rest = autoMembers(env).filter((id) => id !== choice.provider);
         save({
           AGENT_PROVIDERS: [choice.provider, ...rest].join(","),
           CLAUDE_MODEL: "",
@@ -244,11 +264,11 @@ export function realServices(version: string): AppServices {
     async orchestrator(extra, auto) {
       // Loaded when used: the orchestrator is not needed to chat.
       const { createOrchestrator } = await import("./orchestrate.js");
-      return createOrchestrator(auto === true ? { auto: true, providers } : {}, extra);
+      return createOrchestrator(auto === true ? { auto: true, providers: inAuto() } : {}, extra);
     },
-    pool: () => readyPool(providers),
+    pool: () => readyPool(inAuto()),
     async triage(message, signal) {
-      const chosen = mostRoom(await readyPool(providers));
+      const chosen = mostRoom(await readyPool(inAuto()));
       if (!chosen) return { route: "direct", reason: "no provider has room to triage" };
       const model = lightModel(chosen.provider);
       return triage(

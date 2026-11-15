@@ -129,11 +129,17 @@ describe("General Auto: one pool of every provider's models", () => {
 });
 
 describe("General Auto settings", () => {
-  it("reads AGENT_PROVIDERS=auto as every known provider", () => {
+  it("reads AGENT_PROVIDERS=auto as the providers Auto includes", () => {
     expect(isAuto("auto")).toBe(true);
     expect(isAuto(" Auto ")).toBe(true);
     expect(isAuto("claude-code")).toBe(false);
-    expect(providerIds("auto")).toEqual(Object.keys(KNOWN_PROVIDERS));
+    // By default, the official CLIs only: no provider reached with an API key.
+    expect(providerIds("auto", {})).toEqual(["claude-code", "codex"]);
+    expect(providerIds("auto", { AGENT_AUTO_PROVIDERS: "codex,openrouter" })).toEqual([
+      "codex",
+      "openrouter",
+    ]);
+    expect(Object.keys(KNOWN_PROVIDERS)).toEqual(["claude-code", "codex", "gemini", "openrouter"]);
   });
 
   it("starts from the user's affinities, and AGENT_AFFINITY changes or removes them", () => {

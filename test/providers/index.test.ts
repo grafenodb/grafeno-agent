@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { TASK_KINDS } from "../../src/orchestrator/plan.js";
 import {
   allProviders,
+  API_KEY_PROVIDERS,
+  autoMembers,
   chosenProviders,
   providerForKinds,
   isAuto,
@@ -9,14 +11,14 @@ import {
 } from "../../src/providers/index.js";
 
 describe("choosing providers", () => {
-  it("uses every ready provider (Auto) unless AGENT_PROVIDERS says otherwise", () => {
-    // Nothing set: Auto, every known provider (the registry keeps the ready ones).
-    expect(providerIds(undefined)).toEqual(["claude-code", "codex", "gemini"]);
-    expect(providerIds(" ")).toEqual(["claude-code", "codex", "gemini"]);
+  it("uses Auto unless AGENT_PROVIDERS says otherwise, with the official CLIs by default", () => {
+    // Nothing set: Auto, with what it includes (the registry keeps the ready ones).
+    expect(providerIds(undefined, {})).toEqual(["claude-code", "codex"]);
+    expect(providerIds(" ", {})).toEqual(["claude-code", "codex"]);
     expect(isAuto(undefined)).toBe(true);
     expect(isAuto("")).toBe(true);
     expect(isAuto("claude-code")).toBe(false);
-    expect(chosenProviders({}).map((p) => p.id)).toEqual(["claude-code", "codex", "gemini"]);
+    expect(chosenProviders({}).map((p) => p.id)).toEqual(["claude-code", "codex"]);
     expect(chosenProviders({ AGENT_PROVIDERS: "claude-code" }).map((p) => p.id)).toEqual([
       "claude-code",
     ]);
@@ -32,7 +34,22 @@ describe("choosing providers", () => {
       "codex",
       "claude-code",
       "gemini",
+      "openrouter",
     ]);
+  });
+
+  it("lets the user choose what Auto includes; an API-key provider only when named", () => {
+    expect(autoMembers({})).toEqual(["claude-code", "codex"]);
+    expect(API_KEY_PROVIDERS).toEqual(["gemini", "openrouter"]);
+    expect(autoMembers({ AGENT_AUTO_PROVIDERS: " claude-code , gemini, gemini " })).toEqual([
+      "claude-code",
+      "gemini",
+    ]);
+    expect(() => autoMembers({ AGENT_AUTO_PROVIDERS: "claude-code,gpt" })).toThrow(
+      /unknown provider: gpt/,
+    );
+    // A named provider's list is the user's, Auto or not.
+    expect(providerIds("openrouter", {})).toEqual(["openrouter"]);
   });
 
   it("reads which provider takes which kind of task", () => {

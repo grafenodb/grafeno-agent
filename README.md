@@ -18,6 +18,8 @@ session picks up where the last one left off.
   [Several providers](#several-providers).
 - **Gemini** (optional), through Google AI Studio's API with your own key:
   `grafeno-agent login gemini`. No program to install.
+- **OpenRouter** (optional), with your own key: `grafeno-agent login
+openrouter`. Free models only by default.
 - **Memory (Grafeno)**: nothing to install beforehand. On first run you
   choose to **include Grafeno** (the agent downloads the official build and
   runs it on this computer; Windows x64 and Linux), or to connect to **a
@@ -74,24 +76,26 @@ grafeno-agent init --grafeno-url http://127.0.0.1:7810 --key <key>
 
 ### Settings
 
-| Variable              | Default                 | What                                                                      |
-| --------------------- | ----------------------- | ------------------------------------------------------------------------- |
-| `GRAFENO_MODE`        | `external`              | `included` (Grafeno runs with the agent) or `external`                    |
-| `GRAFENO_URL`         | `http://127.0.0.1:7810` | The Grafeno server, when external                                         |
-| `GRAFENO_AGENT_KEY`   | (required)              | The agent's key                                                           |
-| `GRAFENO_NAMESPACE`   | `grafeno-agent`         | Where the agent keeps its memory                                          |
-| `AGENT_MODEL`         | `claude-code`           | The model (`claude-code`: your Claude subscription)                       |
-| `CLAUDE_MODEL`        | Claude Code's own       | `haiku`, `sonnet`, `opus`, `fable` (set by `/models`)                     |
-| `AGENT_EFFORT`        | the model's own         | `low` … `max` (set by `/effort`)                                          |
-| `AGENT_PROJECT`       | the git repository      | The project whose memory the agent uses                                   |
-| `AGENT_EMBEDDER`      | `e5-small`              | Meaning for memory (a local model), or `none`                             |
-| `AGENT_PALACE`        | `shared`                | `shared` with other agents, or `own` (see below)                          |
-| `AGENT_SHELL`         | Git's bash on Windows   | The shell for commands, with its arguments                                |
-| `AGENT_PROVIDERS`     | `auto`                  | `claude-code`, `codex`, `gemini`, in order, or `auto` (set by `/connect`) |
-| `GEMINI_TIER`         | none                    | `free` or `paid`: your Gemini key's tier (set by `login gemini`)          |
-| `AGENT_ALLOW_BILLING` | none                    | Providers allowed to bill by consumption, such as `gemini`                |
-| `AGENT_AFFINITY`      | the defaults below      | Where each task kind goes first in `auto`                                 |
-| `AGENT_MEMORY_BUDGET` | see [Memory](#memory)   | How much memory may reach the model                                       |
+| Variable               | Default                 | What                                                                      |
+| ---------------------- | ----------------------- | ------------------------------------------------------------------------- |
+| `GRAFENO_MODE`         | `external`              | `included` (Grafeno runs with the agent) or `external`                    |
+| `GRAFENO_URL`          | `http://127.0.0.1:7810` | The Grafeno server, when external                                         |
+| `GRAFENO_AGENT_KEY`    | (required)              | The agent's key                                                           |
+| `GRAFENO_NAMESPACE`    | `grafeno-agent`         | Where the agent keeps its memory                                          |
+| `AGENT_MODEL`          | `claude-code`           | The model (`claude-code`: your Claude subscription)                       |
+| `CLAUDE_MODEL`         | Claude Code's own       | `haiku`, `sonnet`, `opus`, `fable` (set by `/models`)                     |
+| `AGENT_EFFORT`         | the model's own         | `low` … `max` (set by `/effort`)                                          |
+| `AGENT_PROJECT`        | the git repository      | The project whose memory the agent uses                                   |
+| `AGENT_EMBEDDER`       | `e5-small`              | Meaning for memory (a local model), or `none`                             |
+| `AGENT_PALACE`         | `shared`                | `shared` with other agents, or `own` (see below)                          |
+| `AGENT_SHELL`          | Git's bash on Windows   | The shell for commands, with its arguments                                |
+| `AGENT_PROVIDERS`      | `auto`                  | `claude-code`, `codex`, `gemini`, in order, or `auto` (set by `/connect`) |
+| `AGENT_AUTO_PROVIDERS` | the official CLIs       | The providers Auto includes (set in `/connect` with space)                |
+| `GEMINI_TIER`          | none                    | `free` or `paid`: your Gemini key's tier (set by `login gemini`)          |
+| `OPENROUTER_MODELS`    | `free`                  | `free` (never billed) or `all` (set by `login openrouter`)                |
+| `AGENT_ALLOW_BILLING`  | none                    | Providers allowed to bill by consumption, such as `gemini`                |
+| `AGENT_AFFINITY`       | the defaults below      | Where each task kind goes first in `auto`                                 |
+| `AGENT_MEMORY_BUDGET`  | see [Memory](#memory)   | How much memory may reach the model                                       |
 
 Variables set in the environment win over the file. The agent never reads
 the `.env` of the folder it runs in: that belongs to your project.
@@ -299,22 +303,46 @@ plan's usage, stays as it was.
 
 Besides Claude Code, the agent can reason with **Codex CLI**, OpenAI's
 official CLI, signed in with your ChatGPT subscription, and with **Gemini**
-through Google AI Studio's API and your own key.
+(Google AI Studio) and **OpenRouter**, each with your own API key.
+
+- **Auto uses only what you include.** By default that is the official CLIs
+  on this computer (Claude Code, Codex), so Auto never spends an API key's
+  tokens. In `/connect`, each provider says whether it is in Auto, and
+  **space** includes it or leaves it out (`AGENT_AUTO_PROVIDERS`). When you
+  choose one provider, a run may still move tasks to another, but only to
+  one that Auto includes.
+- **Keys are checked before they are kept.** `grafeno-agent login gemini`
+  and `grafeno-agent login openrouter` ask the provider about the key with
+  a call that spends nothing: Gemini lists models, OpenRouter reads the
+  key's own record (its credits, and today's free requests). A refused key
+  is not kept. A key set in an environment variable is checked the same
+  way whenever the provider's status is read.
+- **OpenRouter** uses free models only by default: models ending in
+  `:free`, or `openrouter/free`, which picks a free model with tools.
+  - A paid model is refused before any request, and no fallback list is
+    ever sent, so nothing can be billed.
+  - `OPENROUTER_MODELS=all` allows paid models. They bill per token, so
+    they run only with `AGENT_ALLOW_BILLING=openrouter`.
+  - `/usage` shows today's free requests and the key's credit limit.
+  - Free models' providers may keep prompts: see OpenRouter's privacy
+    settings.
 
 - **Sign-in stays with each provider.** Claude and Codex sign in with their
   own programs (`claude` /login, `codex login`); the agent never reads or
   reuses their credentials. Gemini takes your AI Studio key:
   `grafeno-agent login gemini` checks it with a call that spends nothing and
   keeps it in the system's secure store (DPAPI on Windows, the Secret
-  Service on Linux, the Keychain on macOS) or reads `GEMINI_API_KEY`. No key
+  Service on Linux, the Keychain on macOS) or reads `GEMINI_API_KEY`
+  (`OPENROUTER_API_KEY` for OpenRouter). No key
   is ever stored in Grafeno, the settings file or a log, and commands the
   agent runs never see these variables. A consumer Google sign-in, or
   Antigravity's `agy`, is never used: Google's terms forbid it in
   third-party tools.
 - **Three ways of paying, kept apart:** a subscription's quota (Claude,
-  ChatGPT), an API's free quota (a Gemini key you declare `free`), and
-  billing by consumption (a paid or undeclared Gemini key, or Claude Code or
-  Codex signed in with an API key). A provider that bills by consumption is
+  ChatGPT), an API's free quota (a Gemini key you declare `free`,
+  OpenRouter's free models), and billing by consumption (a paid or
+  undeclared Gemini key, OpenRouter's paid models, or Claude Code or Codex
+  signed in with an API key). A provider that bills by consumption is
   used only if `AGENT_ALLOW_BILLING` names it, never as a fallback.
 - **Quick answers:** each provider's status and plan usage are reused for a
   minute, across the agent's processes; `/usage` says how old the reading

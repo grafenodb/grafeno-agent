@@ -1,5 +1,10 @@
 import { GEMINI_API } from "../model/gemini.js";
 import { GEMINI_ACCOUNT, geminiBilling } from "../providers/gemini.js";
+import {
+  checkOpenRouterKey,
+  OPENROUTER_ACCOUNT,
+  openRouterBilling,
+} from "../providers/openrouter.js";
 import type { SecretStore } from "../providers/secrets.js";
 
 export interface LoginIo {
@@ -13,7 +18,28 @@ export interface GeminiLoginOptions {
   readonly store: SecretStore;
   /** Saves settings that are not secret (the tier) to the settings file. */
   readonly saveSettings: (values: Record<string, string>) => void;
+  /** The providers General Auto includes now; the person may add this one. */
+  readonly autoMembers?: readonly string[];
   readonly fetch?: typeof fetch;
+}
+
+/** The same options, for any provider reached with an API key. */
+export type ApiKeyLoginOptions = GeminiLoginOptions;
+
+/**
+ * Asks whether General Auto may use this provider too (no by default):
+ * Auto uses only what the person includes.
+ */
+async function askAuto(options: ApiKeyLoginOptions, id: string, name: string): Promise<void> {
+  const members = options.autoMembers;
+  if (!members || members.includes(id)) return;
+  const answer = (await options.io.ask(`Include ${name} in Auto too? [y/N]: `)).trim();
+  if (/^(y|yes|s|si|sí)$/i.test(answer)) {
+    options.saveSettings({ AGENT_AUTO_PROVIDERS: [...members, id].join(",") });
+    options.io.say(`Auto now includes ${name} (/connect, space, takes it out again).`);
+  } else {
+    options.io.say(`Auto does not include ${name}; /connect (space) adds it when you want.`);
+  }
 }
 
 /**
@@ -67,7 +93,7 @@ export async function geminiLogin(options: GeminiLoginOptions): Promise<number> 
   if (billing.kind === "metered") {
     io.say("It bills by consumption: the agent uses it only with AGENT_ALLOW_BILLING=gemini.");
   }
-  io.say("Use it with AGENT_PROVIDERS=claude-code,gemini (or auto).");
+  await askAuto(options, "gemini", "Gemini");
   return 0;
 }
 
@@ -76,5 +102,73 @@ export async function geminiLogout(options: Omit<GeminiLoginOptions, "fetch">): 
   await options.store.delete(GEMINI_ACCOUNT).catch(() => undefined);
   options.saveSettings({ GEMINI_TIER: "" });
   options.io.say(`The Gemini key was removed from ${options.store.name}.`);
+  return 0;
+}
+
+/**
+ * Sets up OpenRouter: the user's key, checked with OpenRouter's key
+ * endpoint (which spends nothing) before it is kept, in the system's secure
+ * store, never in Grafeno, the settings file or a log. Then which models it
+ * may use: free ones only (never billed, the default), or paid ones, which
+ * bill per token and run only with AGENT_ALLOW_BILLING=openrouter.
+ */
+export async function openRouterLogin(options: ApiKeyLoginOptions): Promise<number> {
+  const { io } = options;
+  io.say("OpenRouter, with your own API key.");
+  io.say("Create one at https://openrouter.ai/settings/keys (it is never stored in Grafeno).");
+  const key = (await io.ask("OpenRouter API key: ", { hidden: true })).trim();
+  if (!key) {
+    io.say("No key given: nothing changed.");
+    return 1;
+  }
+  const checked = await checkOpenRouterKey(key, options.fetch ? { fetch: options.fetch } : {});
+  if (!checked.ok) {
+    io.say(`${checked.reason}: nothing changed.`);
+    return 1;
+  }
+  const info = checked.info;
+  const free = info.free_model_daily_requests;
+  io.say("");
+  io.say(
+    `OpenRouter accepted the key${info.label ? ` (${info.label})` : ""}: ${
+      info.is_free_tier ? "your account never bought credits" : "your account has bought credits"
+    }.`,
+  );
+  if (free?.limit) {
+    io.say(`Free models today: ${String(free.used ?? 0)} of ${String(free.limit)} requests used.`);
+  }
+  if (typeof info.limit === "number") {
+    io.say(`This key's credit limit: ${String(info.usage ?? 0)} of ${String(info.limit)} used.`);
+  }
+  io.say("");
+  io.say("Which models may the agent use with it?");
+  io.say(
+    "  free: only OpenRouter's free models (:free); never billed. Their providers may keep prompts.",
+  );
+  io.say("  all: paid models too, billed per token; only with AGENT_ALLOW_BILLING=openrouter.");
+  const answer = (await io.ask("Models [free/all] (free): ")).trim().toLowerCase() || "free";
+  if (answer !== "free" && answer !== "all") {
+    io.say("Answer free or all: nothing changed.");
+    return 1;
+  }
+  await options.store.set(OPENROUTER_ACCOUNT, key);
+  options.saveSettings({ OPENROUTER_MODELS: answer });
+  const billing = openRouterBilling(answer);
+  io.say("");
+  io.say(`Saved in ${options.store.name}. ${billing.detail}.`);
+  if (billing.kind === "metered") {
+    io.say("It bills per token: the agent uses it only with AGENT_ALLOW_BILLING=openrouter.");
+  }
+  await askAuto(options, "openrouter", "OpenRouter");
+  return 0;
+}
+
+/** Removes the stored OpenRouter key and its choice of models. */
+export async function openRouterLogout(
+  options: Omit<ApiKeyLoginOptions, "fetch">,
+): Promise<number> {
+  await options.store.delete(OPENROUTER_ACCOUNT).catch(() => undefined);
+  options.saveSettings({ OPENROUTER_MODELS: "" });
+  options.io.say(`The OpenRouter key was removed from ${options.store.name}.`);
   return 0;
 }

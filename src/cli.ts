@@ -45,9 +45,12 @@ Commands:
   init     Set up: --include-grafeno (Grafeno runs on this computer), or
            --grafeno-url <url> --key <key> (a Grafeno server you have).
   check    Check the settings, that Grafeno answers and that the agent's key works.
-  login gemini   Gemini through Google AI Studio with your own key: checked, kept in the
-                 system's secure store (never in Grafeno), with its tier (free or paid).
-                 logout gemini removes it. Claude and Codex sign in with their own programs.
+  login gemini | login openrouter
+                 A provider reached with your own API key: the key is checked with the
+                 provider before it is kept, in the system's secure store (never in
+                 Grafeno). Gemini: its tier (free or paid). OpenRouter: free models only
+                 (the default) or paid ones. Either may join Auto only if you say so.
+                 logout <provider> removes it. Claude and Codex sign in with their own programs.
   version  Show the version.
   upkeep  Look after the project's memory: duplicates, contradictions, the palace's
           arrangement. Add --apply to carry out the safe fixes.
@@ -715,16 +718,19 @@ async function replanCommand(argv: readonly string[]): Promise<number> {
   return drive(orchestrator, id, argv.includes("--yes"));
 }
 
-/** `login gemini` / `logout gemini`: a provider's key, kept in the system's secure store. */
+/** `login gemini|openrouter` / `logout …`: a provider's key, checked, kept in the system's secure store. */
 async function loginCommand(command: "login" | "logout", args: readonly string[]): Promise<number> {
-  if (args[0] !== "gemini") {
+  const which = args[0];
+  if (which !== "gemini" && which !== "openrouter") {
     console.error(
-      "Only Gemini signs in through the agent: login gemini. Claude and Codex sign in with their own programs (claude /login, codex login).",
+      "Providers with an API key sign in here: login gemini, login openrouter. Claude and Codex sign in with their own programs (claude /login, codex login).",
     );
     return 2;
   }
-  const { geminiLogin, geminiLogout } = await import("./app/login.js");
+  const { geminiLogin, geminiLogout, openRouterLogin, openRouterLogout } =
+    await import("./app/login.js");
   const { geminiStore } = await import("./providers/gemini.js");
+  const { autoMembers } = await import("./providers/index.js");
   const { updateSettings } = await import("./settings-file.js");
   const io = {
     ask: (question: string, options: { hidden?: boolean } = {}) => askLine(question, options),
@@ -734,11 +740,16 @@ async function loginCommand(command: "login" | "logout", args: readonly string[]
   };
   const options = {
     io,
+    // The same secure store for every key (DPAPI, Secret Service, Keychain).
     store: geminiStore(),
     saveSettings: (v: Record<string, string>) => {
       updateSettings(v);
     },
+    autoMembers: autoMembers(),
   };
+  if (which === "openrouter") {
+    return command === "login" ? openRouterLogin(options) : openRouterLogout(options);
+  }
   return command === "login" ? geminiLogin(options) : geminiLogout(options);
 }
 

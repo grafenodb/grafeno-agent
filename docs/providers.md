@@ -108,9 +108,56 @@ Claude first, then Codex, then Gemini.
   the Codex CLI. Not built: per the decision, it is looked at only, and
   building it is the user's call.
 
+## Auto's providers, and OpenRouter (2026-11-15)
+
+Asked by the user: choose which providers Auto includes, so that it uses
+the subscriptions (the official CLIs on this computer) and never an API
+that bills per token; add OpenRouter with an API key; check every key when
+it is added, not only when it is first used.
+
+- **`AGENT_AUTO_PROVIDERS`** lists what Auto includes. Empty means the
+  providers used through their official CLI (`claude-code`, `codex`).
+  Providers reached with an API key (`API_KEY_PROVIDERS`: `gemini`,
+  `openrouter`) are only in it when the user names them.
+  - In `/connect`, **space** toggles one.
+  - Login asks whether to include the provider, with no as the default.
+  - Auto's pool, its triage and its runs use only these providers, and
+    never a metered one unless allowed.
+  - A named provider's fallbacks are limited to Auto's members too.
+    Before, they were every known provider.
+- **OpenRouter** (`src/providers/openrouter.ts`, `src/model/openai-chat.ts`):
+  - **Authentication:** the user's key, from `OPENROUTER_API_KEY` or the
+    secure store, checked with `GET /api/v1/key` (it spends nothing; a 401
+    is a refused key).
+  - **Billing:** `OPENROUTER_MODELS=free` (the default) is free-api;
+    `all` is metered.
+  - **Models:** `GET /api/v1/models?supported_parameters=tools`, keeping
+    in free mode only `:free` models priced `"0"`. Every tier goes to
+    `openrouter/free`, OpenRouter's router that picks a free model and
+    falls back only to free ones. Its listing, checked on 2026-11-15, is
+    priced `"0"` and takes `tools`.
+  - **Execution:** chat completions in OpenAI's format; the agent's tools
+    as functions, run by its own host. In free mode a model that is not
+    free is refused before any request, and no `models` fallback list is
+    ever sent.
+  - **Errors:** a 401 is a key problem; a 402 means no credits; a 429 is a
+    rate limit, retried after `Retry-After`; 5xx and 408 are unavailable;
+    an error in a 200 is a failure.
+  - **Usage:** today's free requests and the key's credit limit, both from
+    `/key`.
+  - Sources: OpenRouter's [limits](https://openrouter.ai/docs/api-reference/limits),
+    [tool calling](https://openrouter.ai/docs/features/tool-calling),
+    [free variants](https://openrouter.ai/docs/guides/routing/model-variants/free.md)
+    and [errors](https://openrouter.ai/docs/api_reference/errors-and-debugging.md).
+- **Keys checked when added:** `login gemini` and `login openrouter` keep
+  a key only after the provider accepted it, and say what it reported. A
+  key from the environment is checked whenever the status is read (once a
+  minute at most, with the cache).
+
 ## Open
 
 - A Codex sign-in of the agent's own, through OpenAI's documented flow
   above, if the user wants it.
-- Gemini has not been run for real yet: no key is set up on this machine.
+- Gemini and OpenRouter have not been run for real yet: no key is set up
+  on this machine. OpenRouter's public model list was checked for real.
   `login gemini`, then a short real turn on the free tier, will show it.

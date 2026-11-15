@@ -1,6 +1,7 @@
 import { ClaudeCodeProvider } from "./claude-code.js";
 import { CodexProvider } from "./codex.js";
 import { GeminiProvider } from "./gemini.js";
+import { OpenRouterProvider } from "./openrouter.js";
 import { TIERS, type TaskKind, type Tier } from "../orchestrator/plan.js";
 import { DEFAULT_AFFINITY, type Affinity } from "../orchestrator/router.js";
 import type { Provider } from "./types.js";
@@ -33,13 +34,48 @@ export const KNOWN_PROVIDERS: Readonly<Record<string, () => Provider>> = {
   "claude-code": () => withCache(new ClaudeCodeProvider()),
   codex: () => withCache(new CodexProvider()),
   gemini: () => withCache(new GeminiProvider()),
+  openrouter: () => withCache(new OpenRouterProvider()),
 };
 
 /** Environment variables that hold the providers' keys: commands the agent runs never see them. */
-export const PROVIDER_SECRET_ENV = ["GEMINI_API_KEY", "GOOGLE_API_KEY"] as const;
+export const PROVIDER_SECRET_ENV = [
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "OPENROUTER_API_KEY",
+] as const;
 
-/** The setting's word for General Auto: every known provider, as one pool. */
+/**
+ * Providers reached with an API key of the user's (not an official CLI on
+ * this computer): they may bill per token, so General Auto uses them only
+ * when the user includes them (AGENT_AUTO_PROVIDERS).
+ */
+export const API_KEY_PROVIDERS: readonly string[] = ["gemini", "openrouter"];
+
+/** The setting's word for General Auto: the providers it includes, as one pool. */
 export const AUTO = "auto";
+
+/**
+ * The providers General Auto may use, in order: those AGENT_AUTO_PROVIDERS
+ * names, or by default every provider used through its official CLI and
+ * your subscription (never one reached with an API key). Throws on an id
+ * it does not know.
+ */
+export function autoMembers(env: Record<string, string | undefined> = process.env): string[] {
+  const listed = (env.AGENT_AUTO_PROVIDERS ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  if (listed.length === 0) {
+    return Object.keys(KNOWN_PROVIDERS).filter((id) => !API_KEY_PROVIDERS.includes(id));
+  }
+  const unknown = listed.filter((id) => !(id in KNOWN_PROVIDERS));
+  if (unknown.length > 0) {
+    throw new Error(
+      `AGENT_AUTO_PROVIDERS names an unknown provider: ${unknown.join(", ")}. Known: ${Object.keys(KNOWN_PROVIDERS).join(", ")}`,
+    );
+  }
+  return [...new Set(listed)];
+}
 
 /**
  * Whether a setting asks for General Auto (`AGENT_PROVIDERS=auto`). An
@@ -53,11 +89,15 @@ export function isAuto(setting: string | undefined): boolean {
 
 /**
  * The ids in a setting such as "claude-code,codex"; throws on one it does
- * not know. "auto", or nothing (the default), is every known provider
- * (General Auto): the registry then keeps only the ready ones.
+ * not know. "auto", or nothing (the default), is General Auto: the
+ * providers it includes (`autoMembers`), of which the registry keeps the
+ * ready ones.
  */
-export function providerIds(setting: string | undefined): string[] {
-  if (isAuto(setting)) return Object.keys(KNOWN_PROVIDERS);
+export function providerIds(
+  setting: string | undefined,
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  if (isAuto(setting)) return autoMembers(env);
   const ids = (setting ?? "")
     .split(",")
     .map((id) => id.trim())
@@ -78,7 +118,9 @@ export function providerIds(setting: string | undefined): string[] {
  * task to one of them.
  */
 export function chosenProviders(env: Record<string, string | undefined> = process.env): Provider[] {
-  return providerIds(env.AGENT_PROVIDERS).map((id) => (KNOWN_PROVIDERS[id] as () => Provider)());
+  return providerIds(env.AGENT_PROVIDERS, env).map((id) =>
+    (KNOWN_PROVIDERS[id] as () => Provider)(),
+  );
 }
 
 /**
@@ -107,7 +149,7 @@ export function providerForKinds(
 
 /** Every known provider, the chosen ones first: what `/connect` shows. */
 export function allProviders(env: Record<string, string | undefined> = process.env): Provider[] {
-  const chosen = providerIds(env.AGENT_PROVIDERS);
+  const chosen = providerIds(env.AGENT_PROVIDERS, env);
   const rest = Object.keys(KNOWN_PROVIDERS).filter((id) => !chosen.includes(id));
   return [...chosen, ...rest].map((id) => (KNOWN_PROVIDERS[id] as () => Provider)());
 }
