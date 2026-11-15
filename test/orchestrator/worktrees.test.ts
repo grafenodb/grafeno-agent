@@ -42,7 +42,9 @@ afterEach(() => {
   }
 });
 
-describe("WorktreeManager", () => {
+// Each test runs some forty git processes, 60-250 ms each on Windows (more while
+// every Vitest worker starts at once): the default 5 s is for tests that spawn nothing.
+describe("WorktreeManager", { timeout: 30_000 }, () => {
   it("gives each task its own worktree and branch, and merges finished work into the integration branch", async () => {
     const base = await manager.head();
     const api = await manager.prepare("run-2026-11-14-aaaa1111", "api", base);
@@ -172,7 +174,7 @@ function spec(id: string, touches: string[], extra: Partial<TaskSpec> = {}): Tas
   };
 }
 
-describe("the pipeline with the scheduler", () => {
+describe("the pipeline with the scheduler", { timeout: 30_000 }, () => {
   /** A worker that writes the files its task names, with the given text, in its own workspace. */
   function writer(text: (id: string) => string) {
     return (

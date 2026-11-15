@@ -219,7 +219,8 @@ function spec(id: string, exist: string[]): TaskSpec {
   };
 }
 
-describe("verification in a run", () => {
+// Real worktrees, commits and merges: git on Windows is slow to start (see worktrees.test.ts).
+describe("verification in a run", { timeout: 30_000 }, () => {
   function gitRepo(): string {
     const repo = join(dir, "project");
     mkdirSync(repo);
