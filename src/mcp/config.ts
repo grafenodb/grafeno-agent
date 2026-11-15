@@ -30,8 +30,17 @@ export function mcpConfigPath(env: Record<string, string | undefined> = process.
   return join(dirname(settingsPath(env)), "mcp.json");
 }
 
+/**
+ * The name of Grafeno's own MCP server: the agent's memory, built in and
+ * always on. No external server may take it.
+ */
+export const GRAFENO_MCP = "grafeno";
+
 /** Why a server's name cannot be used, or undefined. */
 export function mcpNameProblem(name: string): string | undefined {
+  if (name.toLowerCase() === GRAFENO_MCP) {
+    return "grafeno is the agent's own MCP server (its memory), built in and always on: give yours another name";
+  }
   return /^[a-z0-9][a-z0-9_-]{0,31}$/i.test(name)
     ? undefined
     : "a server's name has 1 to 32 letters, digits, - or _, starting with a letter or digit";

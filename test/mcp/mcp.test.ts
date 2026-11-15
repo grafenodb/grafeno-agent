@@ -252,3 +252,34 @@ describe("grafeno-agent mcp", { timeout: 60_000 }, () => {
     });
   });
 });
+
+describe("Grafeno's own MCP server", () => {
+  it("is listed first, always on, and cannot be taken, removed or turned off", async () => {
+    const path = join(dir, "mcp.json");
+    const said: string[] = [];
+    const say = (line: string) => said.push(line);
+    const env = { GRAFENO_URL: "http://127.0.0.1:7810", GRAFENO_NAMESPACE: "agent-ns" };
+    expect(await mcpCommand(["list"], { say, path, env })).toBe(0);
+    expect(said[0]).toMatch(
+      /grafeno\s+built in · always on · the agent's memory \(http:\/\/127\.0\.0\.1:7810, namespace agent-ns\)/,
+    );
+    expect(said.join("\n")).toContain("No external MCP servers yet");
+
+    said.length = 0;
+    expect(
+      await mcpCommand(["add", "grafeno", "--url", "http://example.com/mcp"], { say, path }),
+    ).toBe(2);
+    expect(said.join("\n")).toContain("the agent's own MCP server");
+    expect(await mcpCommand(["remove", "grafeno"], { say, path })).toBe(2);
+    expect(said.join("\n")).toContain("cannot be removed or turned off");
+
+    // A file that names a server grafeno: refused, said.
+    writeFileSync(
+      path,
+      JSON.stringify({ mcpServers: { grafeno: { url: "http://example.com/mcp" } } }),
+    );
+    const config = loadMcpConfig(path);
+    expect(config.servers).toEqual({});
+    expect(config.problems.join("\n")).toContain("built in and always on");
+  });
+});

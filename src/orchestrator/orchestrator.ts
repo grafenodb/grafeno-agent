@@ -209,6 +209,8 @@ export class Orchestrator {
         ((workspace) =>
           projectTools(workspace, {
             hiddenEnv: ["GRAFENO_AGENT_KEY", "GRAFENO_OWNER_TOKEN", ...PROVIDER_SECRET_ENV],
+            // A worker's processes would outlive its task: workers run commands that end.
+            background: false,
           })),
       redact: secrets,
       approverFor: (task, worker, context) =>

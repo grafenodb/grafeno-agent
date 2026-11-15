@@ -139,6 +139,7 @@ function render(tree: Parameters<typeof renderInk>[0]): ReturnType<typeof render
 
 const ENTER = "\r";
 const DOWN = "\u001B[B";
+const UP = "\u001B[A";
 
 async function until(
   check: () => boolean,
@@ -317,7 +318,10 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     await type(app, "/connect");
     app.stdin.write(ENTER);
     await until(() => now(app).includes("Auto") && !now(app).includes("checking"), "the panel");
-    app.stdin.write(DOWN);
+    // Auto is the first row, above the providers.
+    app.stdin.write(UP);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    app.stdin.write(UP);
     await new Promise((resolve) => setTimeout(resolve, 30));
     app.stdin.write(ENTER);
     await until(() => seen(app).includes("General Auto: each message is triaged"), "Auto on");
@@ -380,8 +384,11 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
       "the providers",
     );
     await until(() => !now(app).includes("checking"), "their status");
-    app.stdin.write(DOWN);
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    // Down to the last row: Auto, then the first provider, then the other one.
+    for (let i = 0; i < 3; i++) {
+      app.stdin.write(DOWN);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
     app.stdin.write(ENTER);
     await until(
       () => seen(app).includes("Provider: Other Provider, model Auto"),
@@ -404,6 +411,21 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     await until(() => seen(app).includes("as the provider reports it"), "the usage");
     expect(seen(app)).toContain("Week (all models)");
     expect(seen(app)).toContain("resets Nov 14, 1:19pm");
+    app.unmount();
+  });
+
+  it("lists Grafeno's own MCP server with /mcp, always on, and the plugins with /plugins", async () => {
+    const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
+    await ready(app);
+    await type(app, "/mcp");
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("built in · always on"), "the MCP servers");
+    expect(seen(app)).toMatch(/grafeno\s+\d+ tools? · built in · always on/);
+    await ready(app);
+    await type(app, "/plugins");
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("No plugin is on"), "the plugins");
+    expect(seen(app)).toContain("grafeno-agent plugins enable github");
     app.unmount();
   });
 

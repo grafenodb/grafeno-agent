@@ -49,6 +49,11 @@ Commands:
                  External MCP servers (mcp.json next to the settings): their tools reach
                  the agent, asking you before they change anything. A server is checked
                  when it is added. grafeno-agent mcp help says more.
+  plugins [enable|disable] <id>
+                 Services the agent works with, as you: github, gitlab. Off until you turn
+                 one on; each is checked first, with the service's own documented sign-in
+                 (the official gh / glab CLI's, or a token you made). Reading runs at once,
+                 anything that changes something asks you first.
   skills [add|find|remove|update|new|check]
                  The skills the agent uses (.agents/skills, ~/.agents/skills,
                  ~/.config/agents/skills): install with the Skills CLI (npx skills),
@@ -824,6 +829,14 @@ async function main(argv: readonly string[]): Promise<number> {
     case "mcp": {
       const { mcpCommand } = await import("./app/mcp-command.js");
       return mcpCommand(argv.slice(1), {
+        say: (line) => {
+          console.log(line);
+        },
+      });
+    }
+    case "plugins": {
+      const { pluginsCommand } = await import("./app/plugins-command.js");
+      return pluginsCommand(argv.slice(1), {
         say: (line) => {
           console.log(line);
         },

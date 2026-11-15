@@ -1,5 +1,7 @@
 import { connectMcp, type McpConnection } from "../mcp/client.js";
+import { DEFAULTS, INCLUDED_GRAFENO_URL } from "../config.js";
 import {
+  GRAFENO_MCP,
   loadMcpConfig,
   looksLikeSecret,
   mcpConfigPath,
@@ -15,6 +17,17 @@ export interface McpCommandOptions {
   readonly path?: string;
   /** Connects to a server; default: for real. */
   readonly connect?: (name: string, config: McpServerConfig) => Promise<McpConnection>;
+  /** The settings, for where Grafeno's own server is; default: the environment. */
+  readonly env?: Record<string, string | undefined>;
+}
+
+/** Where Grafeno's own MCP server is, by the settings. */
+function grafenoWhere(env: Record<string, string | undefined>): string {
+  const url =
+    env.GRAFENO_MODE?.trim() === "included"
+      ? INCLUDED_GRAFENO_URL
+      : env.GRAFENO_URL?.trim() || DEFAULTS.grafenoUrl;
+  return `${url}, namespace ${env.GRAFENO_NAMESPACE?.trim() || DEFAULTS.namespace}`;
 }
 
 const USAGE = `grafeno-agent mcp                                   the servers, each checked: its tools, or why not
@@ -42,10 +55,14 @@ export async function mcpCommand(
     case "list":
     case "ls": {
       const config = loadMcpConfig(path);
+      say(
+        `  ${GRAFENO_MCP.padEnd(20)} built in · always on · the agent's memory (${grafenoWhere(options.env ?? process.env)})`,
+      );
+      say(`  ${" ".repeat(20)}   it cannot be turned off or removed: the agent works through it`);
       for (const problem of config.problems) say(`Problem: ${problem}`);
       const names = Object.keys(config.servers);
       if (names.length === 0) {
-        say(`No MCP servers yet (${path}).`);
+        say(`No external MCP servers yet (${path}).`);
         say(USAGE);
         return config.problems.length > 0 ? 1 : 0;
       }
@@ -116,6 +133,12 @@ export async function mcpCommand(
     case "remove":
     case "rm": {
       const name = args[1] ?? "";
+      if (name.toLowerCase() === GRAFENO_MCP) {
+        say(
+          "grafeno is the agent's own MCP server (its memory): it cannot be removed or turned off.",
+        );
+        return 2;
+      }
       if (!removeMcpServer(name, path)) {
         say(`No MCP server is named ${name}.`);
         return 1;

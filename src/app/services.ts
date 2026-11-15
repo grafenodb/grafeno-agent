@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { connectAll } from "../mcp/client.js";
 import { loadMcpConfig, mcpConfigPath } from "../mcp/config.js";
+import { connectPlugins } from "../plugins/index.js";
 import { billingRefusal } from "../providers/billing.js";
 import type { Tool } from "../agent/tools.js";
 import { assertBillingAllowed } from "../providers/billing.js";
@@ -118,15 +119,20 @@ export async function prepareGrafeno(config: Config, env = process.env): Promise
 }
 
 /**
- * The external MCP servers of mcp.json, connected: their tools for the
- * agent, and for the session what to tell the person and what to close.
+ * The external MCP servers of mcp.json and the plugins turned on,
+ * connected: their tools for the agent, and for the session what to tell
+ * the person and what to close.
  */
 async function connectExtensions(
   env: Record<string, string | undefined>,
   version: string,
+  root: string,
 ): Promise<{ tools: Tool[]; session: SessionExtensions }> {
   const config = loadMcpConfig(mcpConfigPath(env));
-  const connections = await connectAll(config.servers, { env, version });
+  const [connections, plugins] = await Promise.all([
+    connectAll(config.servers, { env, version }),
+    connectPlugins(env, root),
+  ]);
   const notes = [
     ...config.problems.map((p) => `MCP: ${p}`),
     ...connections.flatMap((c) => [
@@ -135,11 +141,13 @@ async function connectExtensions(
         ? [`MCP server ${c.name}: ${[...new Set(c.missing)].join(", ")} not set in the environment`]
         : []),
     ]),
+    ...plugins.notes,
   ];
   return {
-    tools: connections.flatMap((c) => [...c.tools]),
+    tools: [...connections.flatMap((c) => [...c.tools]), ...plugins.tools],
     session: {
       notes,
+      plugins: plugins.states,
       mcp: connections.map((c) => ({
         name: c.name,
         tools: c.tools.length,
@@ -212,8 +220,8 @@ export function realServices(version: string): AppServices {
       const chosen = await embedder;
       // A provider that bills by consumption is not used without the user's express say.
       await assertBillingAllowed(providers[0] as Provider, env);
-      // External MCP servers: their tools join the agent's; one not reached is said.
-      const extensions = await connectExtensions(env, version);
+      // External MCP servers and plugins: their tools join the agent's; one not reached is said.
+      const extensions = await connectExtensions(env, version, process.cwd());
       const tools = [...(extra?.tools ?? []), ...extensions.tools];
       return AgentSession.start({
         config,

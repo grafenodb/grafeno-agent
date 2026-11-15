@@ -41,7 +41,11 @@ describe("/connect and Auto", () => {
     expect(screen).toContain("API key: may bill per token");
     expect(screen).toContain("space in Auto or not");
     expect(screen).toContain("(claude-code)");
-    // Down to OpenRouter, then space: it is offered to Auto.
+    // Auto is the first row, above every provider, and in use here: it is where the panel opens.
+    expect(screen.indexOf("Auto · in use")).toBeLessThan(screen.indexOf("Claude"));
+    // Down past Claude to OpenRouter, then space: it is offered to Auto.
+    app.stdin.write("\u001B[B");
+    await wait();
     app.stdin.write("\u001B[B");
     await wait();
     app.stdin.write(" ");

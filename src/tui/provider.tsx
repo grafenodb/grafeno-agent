@@ -10,7 +10,7 @@ export interface ProviderPanelProps {
   readonly firstRun?: boolean;
   /** The provider the chat uses now. */
   readonly current?: string;
-  /** General Auto is on: offered as the last row, after the providers. */
+  /** General Auto is on: offered as the first row, above every provider. */
   readonly auto?: boolean;
   /** Chosen General Auto; without it, the row is not offered (the first run). */
   readonly onAuto?: () => void;
@@ -38,7 +38,12 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
   const [statuses, setStatuses] = useState<ReadonlyMap<string, ProviderStatus>>(new Map());
   const [checking, setChecking] = useState(0);
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState(0);
+  // The row of what is in use: Auto (the first row) or the current provider.
+  const [selected, setSelected] = useState(() => {
+    if (props.auto && props.onAuto) return 0;
+    const index = props.providers.findIndex((p) => p.id === props.current);
+    return index < 0 ? 0 : index + (props.onAuto ? 1 : 0);
+  });
 
   const shown = useMemo(
     () => props.providers.filter((p) => matchesProvider(p, query)),
@@ -47,8 +52,11 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
   const offerAuto =
     props.onAuto !== undefined &&
     (query.trim() === "" || "auto".includes(query.trim().toLowerCase()));
-  const rows = shown.length + (offerAuto ? 1 : 0);
+  // Auto is always the first row; the providers follow it.
+  const first = offerAuto ? 1 : 0;
+  const rows = shown.length + first;
   const at = Math.min(selected, Math.max(0, rows - 1));
+  const onAuto = offerAuto && at === 0;
   const autoEmpty = props.autoMembers !== undefined && props.autoMembers.length === 0;
 
   useEffect(() => {
@@ -74,13 +82,13 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
     else if (key.ctrl && input === "r") {
       setStatuses(new Map());
       setChecking((c) => c + 1);
-    } else if (input === " " && props.onToggleAuto && at < shown.length) {
-      const chosen = shown[at];
+    } else if (input === " " && props.onToggleAuto && !onAuto) {
+      const chosen = shown[at - first];
       if (chosen) props.onToggleAuto(chosen.id);
     } else if (key.return) {
-      if (at === shown.length && props.onAuto && offerAuto) props.onAuto();
+      if (onAuto) props.onAuto();
       else {
-        const chosen = shown[at];
+        const chosen = shown[at - first];
         if (chosen) props.onDone(statuses.get(chosen.id), chosen);
       }
     } else if (key.backspace || key.delete) {
@@ -101,12 +109,33 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
         <Text dimColor> · {String(props.providers.length)} known · search: </Text>
         <Text color={theme.accent}>{query === "" ? "type a name" : query}</Text>
       </Text>
+      {offerAuto && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text {...(onAuto ? { color: theme.accent } : {})} bold={onAuto}>
+            {onAuto ? "▸ " : "  "}
+            Auto{props.auto ? " · in use" : ""}
+          </Text>
+          <Box paddingLeft={4}>
+            {autoEmpty ? (
+              <Text color={theme.warning}>
+                No provider is in Auto yet: mark one with space before using Auto.
+              </Text>
+            ) : (
+              <Text dimColor>
+                The ready providers marked in Auto
+                {props.autoMembers ? ` (${props.autoMembers.join(", ")})` : ""}: a light model
+                triages each message, answered directly or planned across them.
+              </Text>
+            )}
+          </Box>
+        </Box>
+      )}
       {shown.length === 0 && (
         <Text color={theme.warning}>No provider matches “{query}”. esc clears the search.</Text>
       )}
       {shown.map((provider, index) => {
         const status = statuses.get(provider.id);
-        const on = index === at;
+        const on = index + first === at;
         return (
           <Box key={provider.id} flexDirection="column" marginTop={1}>
             <Text {...(on ? { color: theme.accent } : {})} bold={on}>
@@ -152,30 +181,6 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
           </Box>
         );
       })}
-      {offerAuto && (
-        <Box flexDirection="column" marginTop={1}>
-          <Text
-            {...(at === shown.length ? { color: theme.accent } : {})}
-            bold={at === shown.length}
-          >
-            {at === shown.length ? "▸ " : "  "}
-            Auto{props.auto ? " · in use" : ""}
-          </Text>
-          <Box paddingLeft={4}>
-            {autoEmpty ? (
-              <Text color={theme.warning}>
-                No provider is in Auto yet: mark one with space before using Auto.
-              </Text>
-            ) : (
-              <Text dimColor>
-                The ready providers marked in Auto
-                {props.autoMembers ? ` (${props.autoMembers.join(", ")})` : ""}: a light model
-                triages each message, answered directly or planned across them.
-              </Text>
-            )}
-          </Box>
-        </Box>
-      )}
       <Box marginTop={1}>
         <Text dimColor>
           The chat uses the one chosen here; a run may give tasks to the ones in Auto.

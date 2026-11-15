@@ -141,7 +141,8 @@ The panel hides on narrow windows, or with Ctrl+B.
 | `/runs`        | Earlier runs of this project: see one, or resume it             |
 | `/agents`      | The main agent and its sub-agents: view one, read only          |
 | `/skills`      | The skills the agent can use                                    |
-| `/mcp`         | External MCP servers and their tools                            |
+| `/mcp`         | MCP servers: Grafeno's own (always on) and yours                |
+| `/plugins`     | Services the agent works with: GitHub, GitLab                   |
 | `/upkeep`      | Report on the memory: duplicates, contradictions                |
 | `/sidebar`     | Show or hide the side panel                                     |
 | `/clear`       | Clear the conversation from the screen                          |
@@ -170,13 +171,23 @@ Piped input, or `grafeno-agent chat --plain`, talks line by line instead.
 Its tools work only in the project's folder (the git repository you run it
 in):
 
-| Tool                                      | Permission                                                    |
-| ----------------------------------------- | ------------------------------------------------------------- |
-| `read_file`, `list_files`, `search_files` | runs freely                                                   |
-| `write_file`, `edit_file`                 | asks you, showing the change                                  |
-| `run_command`                             | runs freely when it only reads (`git status`…); else asks you |
-| `web_fetch`                               | asks you                                                      |
-| memory tools                              | run freely (the memory is the agent's own)                    |
+| Tool                                                           | Permission                                                    |
+| -------------------------------------------------------------- | ------------------------------------------------------------- |
+| `read_file`, `list_files`, `search_files`, `file_info`         | runs freely                                                   |
+| `environment_info` (system, shell, branch, programs installed) | runs freely                                                   |
+| `write_file`, `edit_file`, `multi_edit`                        | asks you, showing the change                                  |
+| `move_file`, `delete_file` (a file or an empty folder)         | asks you                                                      |
+| `run_command`                                                  | runs freely when it only reads (`git status`…); else asks you |
+| `start_process` (a dev server or a watcher, in the background) | asks you                                                      |
+| `process_output`, `list_processes`, `stop_process`             | run freely (only the agent's own processes)                   |
+| `local_http` (a server on this computer: localhost)            | GET and HEAD run freely; other methods ask you                |
+| `web_fetch`                                                    | asks you                                                      |
+| memory tools (from Grafeno's MCP server)                       | run freely (the memory is the agent's own)                    |
+| plugin tools (GitHub, GitLab: see below)                       | reading runs freely; anything that changes something asks you |
+
+Background processes stop when the agent ends; at most eight run at once.
+Workers of a run (`/orchestrate`) get the same tools except background
+processes and plugins.
 
 These are never allowed, whatever the answer:
 
@@ -223,9 +234,55 @@ grafeno-agent skills remove frontend-design
 - **Trust:** treat a skill like code. Its scripts run with your rights, as
   the agent's commands do, asking you first.
 
-## External MCP servers
+## Plugins
 
-The agent can use the tools of MCP servers you add: a program on this
+Plugins let the agent work with services outside this computer, as you:
+read and open issues, pull requests and merge requests, follow CI, search,
+and call the service's REST API for the rest.
+
+| Plugin   | What it does                                                 | Sign-in                                                     |
+| -------- | ------------------------------------------------------------ | ----------------------------------------------------------- |
+| `github` | Repositories, issues, pull requests (files, checks), search  | the `gh` CLI's own (`gh auth login`), or `GITHUB_TOKEN`     |
+| `gitlab` | Projects, issues, merge requests, pipelines and jobs, search | the `glab` CLI's own (`glab auth login`), or `GITLAB_TOKEN` |
+
+```bash
+grafeno-agent plugins                  # each one: on or off, connected or not, its terms
+grafeno-agent plugins enable github    # checked first: turned on only when connected
+grafeno-agent plugins disable github
+```
+
+- **Off until you turn one on** (`AGENT_PLUGINS`). Turning one on checks the
+  connection first, and says the service's terms.
+- **Only sign-ins the services document.** The official CLI's own sign-in
+  comes first: the agent asks the CLI to make each request (`gh api`,
+  `glab api`) and never reads its token. Otherwise a personal access token
+  you made, in the environment. No sign-in flow of the agent's own, no
+  tokens taken from other programs, no scraping of web pages.
+- **Within the service's terms.** Each plugin uses the service's public
+  REST API (GitHub's, GitLab's v4), with your account's own permissions and
+  rate limits. Give a token only the scopes you want the agent to have
+  (`read_api` on GitLab to only read).
+- **A GitLab of your own:** set `GITLAB_HOST` (such as `git.example.com`).
+- **The repository** of a call is the project's own git remote, unless the
+  model names another.
+- **Permissions.** Reading runs at once. Opening an issue, a pull or merge
+  request, or commenting asks you, showing what will be posted. Raw API
+  calls (`github_api`, `gitlab_api`): GET runs, any other method asks.
+  Never, whatever the answer: secrets, CI variables, keys and tokens;
+  deleting or transferring a whole repository, project, group or
+  organization; changing the account itself; webhooks.
+- `/plugins` shows the session's plugins. A plugin turned on but not
+  connected is said when a session starts.
+
+## MCP servers
+
+**Grafeno's own MCP server** comes first: the agent's memory tools are
+those of its namespace's MCP endpoint. It is built in and always on: it
+cannot be turned off or removed, and no server you add may take its name
+(`grafeno`), since the agent works through it. `/mcp` and
+`grafeno-agent mcp` list it first.
+
+The agent can also use the tools of MCP servers you add: a program on this
 computer (stdio) or a server at a URL (Streamable HTTP). They are kept in
 `mcp.json`, next to the settings file.
 
@@ -366,6 +423,8 @@ Besides Claude Code, the agent can reason with **Codex CLI**, OpenAI's
 official CLI, signed in with your ChatGPT subscription, and with **Gemini**
 (Google AI Studio) and **OpenRouter**, each with your own API key.
 
+- **Auto is always the first row of `/connect`**, above every provider.
+  The panel opens on what is in use.
 - **Auto uses only what you include, and starts with nothing.** In
   `/connect`, each provider says whether it is in Auto, and **space**
   includes it or leaves it out (`AGENT_AUTO_PROVIDERS`). Type to search the

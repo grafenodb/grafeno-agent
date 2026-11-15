@@ -34,6 +34,7 @@ import {
   type SessionSummary,
 } from "../sessions/store.js";
 import { projectTools, toolsPrompt } from "../tools/index.js";
+import type { PluginState } from "../plugins/index.js";
 import { Workspace } from "../tools/workspace.js";
 
 /** Errors after which the model's conversation is gone. */
@@ -78,15 +79,17 @@ export interface AgentSessionOptions {
 /** Characters of the conversation carried into a renewed one. */
 const RENEWAL_CARRY = 3000;
 
-/** External MCP servers connected for a session. */
+/** External MCP servers and plugins connected for a session. */
 export interface SessionExtensions {
-  /** Things to tell the person: a server not reached, a variable not set. */
+  /** Things to tell the person: a server not reached, a variable not set, a plugin not connected. */
   readonly notes: readonly string[];
   readonly mcp: readonly {
     readonly name: string;
     readonly tools: number;
     readonly error?: string;
   }[];
+  /** The plugins turned on (GitHub, GitLab…), each one's state. */
+  readonly plugins?: readonly PluginState[];
   close(): Promise<void>;
 }
 
@@ -389,9 +392,17 @@ export class AgentSession {
     await this.options.extensions?.close().catch(() => undefined);
   }
 
-  /** What was connected for the session (external MCP servers), when anything was. */
+  /** What was connected for the session (external MCP servers, plugins), when anything was. */
   get extensions(): SessionExtensions | undefined {
     return this.options.extensions;
+  }
+
+  /**
+   * Grafeno's own MCP server: the memory tools the agent uses from it (its
+   * namespace's tools endpoint). Always on: the agent's memory is there.
+   */
+  get grafenoMcp(): { readonly namespace: string; readonly tools: readonly string[] } {
+    return { namespace: this.vault.namespace, tools: this.memoryTools.map((t) => t.name) };
   }
 
   #ensureAgent(): Agent {

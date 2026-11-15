@@ -255,7 +255,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         });
       setSession(fresh);
       setPhase("ready");
-      // External MCP servers: one not reached, or a variable not set, is said.
+      // External MCP servers and plugins: one not reached, or a variable not set, is said.
       for (const note of fresh.extensions?.notes ?? []) notice(note, "warning");
       void readEnvironment(fresh.workspace.root).then(setEnvironment);
       const last = await fresh.memory.lastUpkeep();
@@ -719,12 +719,15 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         }
         case "mcp": {
           const servers = active.extensions?.mcp ?? [];
+          const grafeno = active.grafenoMcp;
           push({
             kind: "block",
             title: "MCP servers",
             lines: [
+              `  ${"grafeno".padEnd(20)} ${String(grafeno.tools.length)} tool${grafeno.tools.length === 1 ? "" : "s"} · built in · always on`,
+              `  ${" ".repeat(20)} the agent's memory (namespace ${grafeno.namespace}): it cannot be turned off, the agent works through it`,
               ...(servers.length === 0
-                ? ["No external MCP servers yet."]
+                ? ["", "No external MCP servers yet."]
                 : servers.map(
                     (m) =>
                       `  ${m.name.padEnd(20)} ${m.error ? `not reached: ${m.error}` : `${String(m.tools)} tool${m.tools === 1 ? "" : "s"}`}`,
@@ -732,6 +735,27 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
               "",
               "Add one: grafeno-agent mcp add <name> -- <command> [args] · or --url <url>",
               "Their tools ask you before they change anything, unless the server marks them read-only.",
+              "Changes reach the agent from its next session.",
+            ],
+          });
+          break;
+        }
+        case "plugins": {
+          const plugins = active.extensions?.plugins ?? [];
+          push({
+            kind: "block",
+            title: "Plugins",
+            lines: [
+              ...(plugins.length === 0
+                ? ["No plugin is on. Plugins: GitHub, GitLab."]
+                : plugins.map(
+                    (p) =>
+                      `  ${p.name.padEnd(10)} ${p.status.ready ? `✓ ${String(p.tools)} tools · ${p.status.detail}` : `✗ ${p.status.detail}`}`,
+                  )),
+              "",
+              "grafeno-agent plugins shows each one, how to connect it and its terms.",
+              "Turn one on: grafeno-agent plugins enable github (it is checked first).",
+              "Reading runs at once; opening, commenting or changing anything asks you first.",
               "Changes reach the agent from its next session.",
             ],
           });

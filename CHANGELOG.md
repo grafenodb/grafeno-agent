@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- **More tools for the environment**: `environment_info` (the system, the
+  shell, the branch and the development programs installed), `file_info`,
+  `multi_edit` (several edits to one file, all or none), `move_file`,
+  `delete_file` (a file or an empty folder), background processes
+  (`start_process`, `process_output`, `list_processes`, `stop_process`: a
+  dev server or a watcher, stopped when the agent ends) and `local_http`
+  (a server on this computer; GET and HEAD run freely, other methods ask).
+- **Plugins**: GitHub and GitLab, off until turned on with
+  `grafeno-agent plugins enable <id>` (checked first). They sign in only as
+  the services document: the official `gh` / `glab` CLI's own sign-in (its
+  token never read), or a personal access token you made. Reading runs at
+  once; opening, commenting or any other change asks; secrets, keys,
+  tokens and deleting a whole repository are never touched. `/plugins`
+  shows them.
+- **Grafeno's own MCP server is listed** first in `/mcp` and
+  `grafeno-agent mcp`, built in and always on: it cannot be turned off or
+  removed, and its name is reserved.
+- **Auto is the first row of `/connect`**, above every provider; the panel
+  opens on what is in use.
+
 - **Orchestration (phase A)**: `/orchestrate <request>` and
   `grafeno-agent run|runs|resume` plan a request into a DAG of tasks checked
   by code and run it with several workers at once: each in its own git
