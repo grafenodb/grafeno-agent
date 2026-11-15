@@ -534,6 +534,72 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.unmount();
   });
 
+  it("/permissions: skipped for this session, a tool runs without asking; unattended says so", async () => {
+    const note: Tool = {
+      name: "write_note",
+      description: "Writes a note.",
+      inputSchema: { type: "object", properties: { text: { type: "string" } } },
+      writes: true,
+      describe: () => "write a note",
+      run: () => "written",
+    };
+    const app = render(
+      <App
+        services={services({
+          turns: [
+            [
+              { call: "write_note", input: { text: "x" } },
+              { say: (c) => `result: ${c.results[0]?.content ?? ""}` },
+            ],
+            [
+              {
+                say: (c) =>
+                  c.message.includes("[Unattended: nobody is watching") ? "Alone-OK" : "Not-told",
+              },
+            ],
+          ],
+          tools: [note],
+        })}
+      />,
+    );
+    await ready(app);
+    await type(app, "/permissions");
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("Skip permissions"), "the modes");
+    expect(now(app)).toContain("Automatic");
+    // Down twice: Skip permissions; then the scope: This session.
+    app.stdin.write(DOWN);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    app.stdin.write(DOWN);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("for what?"), "the scopes");
+    expect(now(app)).toContain("This session and its sub-agents");
+    app.stdin.write(DOWN);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    app.stdin.write(ENTER);
+    await until(
+      () => seen(app).includes("Permissions: Skip permissions, this session."),
+      "the choice",
+    );
+    await until(() => now(app).includes("permissions: skip permissions"), "the footer");
+    await ready(app);
+    await type(app, "write it");
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("result: written"), "the answer");
+    expect(seen(app)).not.toContain("Permission needed");
+
+    await ready(app);
+    await type(app, "/unattended");
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("UNATTENDED"), "the unattended badge");
+    await ready(app);
+    await type(app, "keep going with the task");
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("Alone-OK"), "the model told it is unattended");
+    app.unmount();
+  });
+
   it("guides the first run: memory, then the provider", async () => {
     const app = render(<App services={services({ turns: [[{ say: "hi" }]], needsSetup: true })} />);
     await until(() => now(app).includes("The agent's own Grafeno"), "the memory choice");
@@ -683,60 +749,66 @@ ${now(app)}`,
   });
 });
 
+/** A git project and a fake provider whose planner splits the work in two files. */
+function subagentWorld(): { repo: string; workers: Provider } {
+  const repo = join(dir, "project");
+  mkdirSync(repo);
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, windowsHide: true });
+  git("init", "-q", "-b", "main");
+  git("config", "user.name", "Test");
+  git("config", "user.email", "test@example.invalid");
+  writeFileSync(join(repo, "README.md"), "# p\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "start");
+  const plan = {
+    goal: "Two files",
+    risks: [],
+    tasks: ["alpha", "beta"].map((id) => ({
+      id,
+      title: `Write ${id}`,
+      description: `Create ${id}.txt.`,
+      kind: "docs",
+      dependsOn: [],
+      complexity: 1,
+      capabilities: ["code"],
+      touches: [`${id}.txt`],
+      acceptance: [{ check: "files", exist: [`${id}.txt`] }],
+      parallelSafe: true,
+    })),
+  };
+  const workers: Provider = {
+    id: "fake-workers",
+    name: "Fake workers",
+    signIn: "",
+    tiers: { deep: ["m"], standard: ["m"], light: ["m"] },
+    status: () => Promise.resolve({ installed: true, signedIn: true, detail: "" }),
+    models: () => Promise.resolve([{ id: "m", name: "M" }]),
+    efforts: () => [],
+    usage: () => Promise.resolve(undefined),
+    modelName: (id) => id,
+    create: () =>
+      new FakeModel({
+        turns: [
+          (context) => {
+            if (context.system.includes("You are the planner")) {
+              return [{ say: `\`\`\`json\n${JSON.stringify(plan)}\n\`\`\`` }];
+            }
+            const file = /these files exist: (\S+)/.exec(context.message)?.[1] ?? "x.txt";
+            return [
+              { say: `Writing ${file} now.` },
+              { call: "write_file", input: { path: file, content: "ok\n" } },
+              { say: "done" },
+            ];
+          },
+        ],
+      }),
+  };
+  return { repo, workers };
+}
+
 describe("sub-agents in the interface", { timeout: 90_000 }, () => {
   it("lets the main agent start sub-agents, lists them on the left, and shows each read only", async () => {
-    const repo = join(dir, "project");
-    mkdirSync(repo);
-    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, windowsHide: true });
-    git("init", "-q", "-b", "main");
-    git("config", "user.name", "Test");
-    git("config", "user.email", "test@example.invalid");
-    writeFileSync(join(repo, "README.md"), "# p\n");
-    git("add", "-A");
-    git("commit", "-q", "-m", "start");
-    const plan = {
-      goal: "Two files",
-      risks: [],
-      tasks: ["alpha", "beta"].map((id) => ({
-        id,
-        title: `Write ${id}`,
-        description: `Create ${id}.txt.`,
-        kind: "docs",
-        dependsOn: [],
-        complexity: 1,
-        capabilities: ["code"],
-        touches: [`${id}.txt`],
-        acceptance: [{ check: "files", exist: [`${id}.txt`] }],
-        parallelSafe: true,
-      })),
-    };
-    const workers: Provider = {
-      id: "fake-workers",
-      name: "Fake workers",
-      signIn: "",
-      tiers: { deep: ["m"], standard: ["m"], light: ["m"] },
-      status: () => Promise.resolve({ installed: true, signedIn: true, detail: "" }),
-      models: () => Promise.resolve([{ id: "m", name: "M" }]),
-      efforts: () => [],
-      usage: () => Promise.resolve(undefined),
-      modelName: (id) => id,
-      create: () =>
-        new FakeModel({
-          turns: [
-            (context) => {
-              if (context.system.includes("You are the planner")) {
-                return [{ say: `\`\`\`json\n${JSON.stringify(plan)}\n\`\`\`` }];
-              }
-              const file = /these files exist: (\S+)/.exec(context.message)?.[1] ?? "x.txt";
-              return [
-                { say: `Writing ${file} now.` },
-                { call: "write_file", input: { path: file, content: "ok\n" } },
-                { say: "done" },
-              ];
-            },
-          ],
-        }),
-    };
+    const { repo, workers } = subagentWorld();
     const extras: Record<string, unknown>[] = [];
     const app = render(
       <App
@@ -805,6 +877,56 @@ describe("sub-agents in the interface", { timeout: 90_000 }, () => {
     await until(() => now(app).includes("Ask anything"), "the main agent's prompt");
     // In Auto (nothing set), sub-agents are not pinned to the chat's provider.
     expect(extras[0]?.provider).toBeUndefined();
+    app.unmount();
+  });
+});
+
+describe("unattended operation", { timeout: 90_000 }, () => {
+  it("runs the main agent's plan without asking, with sub-agents' permissions skipped and the run extended", async () => {
+    const { repo, workers } = subagentWorld();
+    const extras: Record<string, unknown>[] = [];
+    const app = render(
+      <App
+        services={services({
+          turns: [
+            [
+              { call: "delegate", input: { request: "Write alpha.txt and beta.txt" } },
+              {
+                say: (context) => `Report: ${context.results[0]?.content.split("\n", 1)[0] ?? ""}`,
+              },
+            ],
+          ],
+          orchestrator: (extra) => {
+            extras.push({ ...extra });
+            return Promise.resolve(
+              new Orchestrator({
+                ...extra,
+                provider: workers,
+                providers: [workers],
+                project: { name: "p", path: repo },
+                projectRoot: repo,
+                dataDir: join(dir, "data"),
+              }),
+            );
+          },
+        })}
+      />,
+    );
+    await ready(app);
+    await type(app, "/unattended");
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("UNATTENDED"), "unattended on");
+    await ready(app);
+    await type(app, "build both files");
+    app.stdin.write(ENTER);
+    await until(
+      () => now(app).includes("Report: The sub-agents' run ended: completed."),
+      () => `the report; the screen was:\n${now(app)}`,
+      60_000,
+    );
+    expect(seen(app)).toContain("Unattended: the plan runs without asking.");
+    expect(seen(app)).not.toContain("Run this plan?");
+    expect(extras[0]).toMatchObject({ permissions: "skip", mode: "extended" });
     app.unmount();
   });
 });

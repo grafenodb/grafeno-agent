@@ -33,6 +33,19 @@ import { findSkills, skillRoots } from "../skills/skills.js";
 import type { Provider } from "../providers/types.js";
 import { withActivity, withState, withTasks, withWorkers, type SubAgent } from "./agents.js";
 import { AgentsPanel, AgentView, agentKey } from "./agents-panel.js";
+import {
+  PERMISSION_LABELS,
+  settingsPermissionMode,
+  type PermissionMode,
+  type PermissionScope,
+} from "../agent/permissions.js";
+
+/** How each permission scope is named. */
+const SCOPE_LABELS: Readonly<Record<PermissionScope, string>> = {
+  agent: "The whole agent",
+  session: "This session",
+  "session+subagents": "This session and its sub-agents",
+};
 import { describePlan } from "../app/orchestrate.js";
 import { useWheel } from "./mouse.js";
 import { PalacePanel } from "./palace.js";
@@ -87,6 +100,7 @@ type Mode =
   | "resume"
   | "connect"
   | "palace"
+  | "permissions"
   | "plan"
   | "runs"
   | "agents"
@@ -134,6 +148,8 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
   });
   const [items, setItems] = useState<Item[]>([]);
   const [mode, setMode] = useState<Mode>("chat");
+  /** /permissions: the mode chosen, before its scope is. */
+  const [permissionChoice, setPermissionChoice] = useState<PermissionMode | undefined>(undefined);
   const [busy, setBusy] = useState<string | undefined>(undefined);
   const [live, setLive] = useState("");
   const [tools, setTools] = useState<LiveTool[]>([]);
@@ -429,6 +445,9 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         {
           // A named provider (not Auto): its sub-agents use it alone.
           ...(pinned ? { provider: pinned, providers: [pinned], auto: false } : {}),
+          // The person's permissions for sub-agents; unattended, the run goes on alone.
+          permissions: session?.subagentPermissions ?? settingsPermissionMode(),
+          ...(session?.unattended ? { mode: "extended" as const } : {}),
           onActivity: (activity) => {
             setAgents((current) => withActivity(current, activity));
           },
@@ -473,7 +492,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         pool,
       );
     },
-    [services],
+    [services, session],
   );
 
   /** Runs (or resumes) a run, watching it, and reports how it ended. */
@@ -524,6 +543,23 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
     [push, notice],
   );
 
+  /** Starts the plan on screen and watches it: after "Run it", or at once when unattended. */
+  const startPlanned = useCallback(async () => {
+    const current = orchestration.current;
+    if (!current?.planned) return;
+    const { run, uncommitted } = await current.orchestrator.start(
+      current.request ?? "",
+      current.planned,
+    );
+    if (uncommitted.length > 0) {
+      notice(
+        `${String(uncommitted.length)} changed files are not committed: the run starts from your last commit and does not see them.`,
+        "warning",
+      );
+    }
+    await driveRun(current.orchestrator, run.id);
+  }, [notice, driveRun]);
+
   /**
    * The main agent's `delegate`: plans the request, shows the plan, and runs
    * it as sub-agents once the person says so; gives the agent the report.
@@ -545,13 +581,15 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
       }
       orchestration.current = { orchestrator, request, planned, running: false };
       push({ kind: "block", title: "Plan for sub-agents", lines: describePlan(planned) });
-      const run = await new Promise<boolean>((resolve) => {
-        pendingPlan.current = resolve;
-        setMode("plan");
-        signal.addEventListener("abort", () => {
-          resolve(false);
-        });
-      });
+      const run = session?.unattended
+        ? (notice("Unattended: the plan runs without asking.", "info"), true)
+        : await new Promise<boolean>((resolve) => {
+            pendingPlan.current = resolve;
+            setMode("plan");
+            signal.addEventListener("abort", () => {
+              resolve(false);
+            });
+          });
       pendingPlan.current = undefined;
       setMode((current) => (current === "plan" ? "chat" : current));
       if (!run || signal.aborted) {
@@ -582,7 +620,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         signal.removeEventListener("abort", stop);
       }
     };
-  }, [auto, autoIds, provider, openOrchestrator, driveRun, push]);
+  }, [auto, autoIds, provider, openOrchestrator, driveRun, push, notice, session]);
 
   /** What a line typed in the box does. */
   const submit = useCallback(
@@ -600,7 +638,12 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
           const planned = await orchestrator.plan(request);
           orchestration.current = { orchestrator, request, planned, running: false };
           push({ kind: "block", title: "Plan", lines: describePlan(planned) });
-          setMode("plan");
+          if (session?.unattended) {
+            notice("Unattended: the plan runs without asking.", "info");
+            void startPlanned();
+          } else {
+            setMode("plan");
+          }
         } catch (error) {
           notice(`No plan: ${error instanceof Error ? error.message : String(error)}`, "error");
         } finally {
@@ -717,6 +760,23 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         case "palace":
           setMode("palace");
           break;
+        case "permissions":
+          setPermissionChoice(undefined);
+          setMode("permissions");
+          break;
+        case "unattended": {
+          const on =
+            command.args === "on" ? true : command.args === "off" ? false : !active.unattended;
+          active.setUnattended(on);
+          setTick((t) => t + 1);
+          notice(
+            on
+              ? "Unattended: the session and its sub-agents go on alone until the task is done. Tools run without asking (what is never allowed stays so), plans run without being confirmed, runs merge when their checks pass. /unattended off ends it."
+              : `Unattended is off: permissions are ${PERMISSION_LABELS[active.permissionMode]} again.`,
+            on ? "warning" : "success",
+          );
+          break;
+        }
         case "usage": {
           // A reading of the last minute is shown at once; "/usage refresh" asks anew.
           const ask = { fresh: command.args === "refresh" };
@@ -914,6 +974,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
       notice,
       leave,
       openOrchestrator,
+      startPlanned,
       auto,
       autoIds,
       agents,
@@ -1114,6 +1175,80 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
                 }}
               />
             )}
+            {mode === "permissions" && session && permissionChoice === undefined && (
+              <Picker
+                title={`Permissions · now ${PERMISSION_LABELS[session.permissionMode]} (${SCOPE_LABELS[session.permissionScope]})${session.unattended ? " · unattended" : ""}`}
+                items={[
+                  {
+                    id: "ask",
+                    label: PERMISSION_LABELS.ask,
+                    hint: "asks you before anything that changes something",
+                    current: session.permissionMode === "ask",
+                  },
+                  {
+                    id: "auto",
+                    label: PERMISSION_LABELS.auto,
+                    hint: "the agent decides: project changes run, deleting, pushing, installing or reaching outside asks",
+                    current: session.permissionMode === "auto",
+                  },
+                  {
+                    id: "skip",
+                    label: PERMISSION_LABELS.skip,
+                    hint: "runs everything without asking (what is never allowed stays so)",
+                    current: session.permissionMode === "skip",
+                  },
+                ]}
+                onCancel={() => {
+                  setMode("chat");
+                }}
+                onSelect={(item) => {
+                  setPermissionChoice(item.id as PermissionMode);
+                }}
+              />
+            )}
+            {mode === "permissions" && session && permissionChoice !== undefined && (
+              <Picker
+                title={`${PERMISSION_LABELS[permissionChoice]} · for what?`}
+                items={[
+                  {
+                    id: "agent",
+                    label: SCOPE_LABELS.agent,
+                    hint: "every session and sub-agent, from now on (saved in the settings)",
+                  },
+                  {
+                    id: "session",
+                    label: SCOPE_LABELS.session,
+                    hint: "only this conversation, until it ends",
+                  },
+                  {
+                    id: "session+subagents",
+                    label: SCOPE_LABELS["session+subagents"],
+                    hint: "this conversation and the sub-agents it starts",
+                  },
+                ]}
+                onCancel={() => {
+                  setPermissionChoice(undefined);
+                }}
+                onSelect={(item) => {
+                  const chosen = permissionChoice;
+                  const scope = item.id as PermissionScope;
+                  setMode("chat");
+                  setPermissionChoice(undefined);
+                  if (session.unattended) session.setUnattended(false);
+                  if (scope === "agent") {
+                    services.saveChoice({ permissions: chosen });
+                    session.setPermissions(undefined);
+                  } else {
+                    session.setPermissions(chosen, scope === "session+subagents");
+                  }
+                  setTick((t) => t + 1);
+                  notice(
+                    `Permissions: ${PERMISSION_LABELS[chosen]}, ${SCOPE_LABELS[scope].toLowerCase()}.${chosen === "skip" ? " Everything runs without asking, except what is never allowed." : ""}`,
+                    chosen === "skip" ? "warning" : "success",
+                  );
+                }}
+              />
+            )}
             {mode === "effort" && session && (
               <Picker
                 title={`Effort · ${modelName(session, models)}`}
@@ -1176,20 +1311,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
                     orchestration.current = undefined;
                     return;
                   }
-                  const { orchestrator, planned } = current;
-                  void (async () => {
-                    const { run, uncommitted } = await orchestrator.start(
-                      current.request ?? "",
-                      planned,
-                    );
-                    if (uncommitted.length > 0) {
-                      notice(
-                        `${String(uncommitted.length)} changed files are not committed: the run starts from your last commit and does not see them.`,
-                        "warning",
-                      );
-                    }
-                    await driveRun(orchestrator, run.id);
-                  })();
+                  void startPlanned();
                 }}
               />
             )}
@@ -1567,10 +1689,22 @@ function Footer({
   return (
     <Box paddingX={1} justifyContent="space-between" flexShrink={0} gap={2}>
       <Box flexShrink={1} minWidth={10}>
-        <Text dimColor wrap="truncate-end">
-          {narrow
-            ? "/ commands · pgup/pgdn · esc stop"
-            : "enter send · / commands · pgup/pgdn scroll · ctrl+b panel · esc interrupt"}
+        <Text wrap="truncate-end">
+          {session?.unattended ? (
+            <Text inverse bold color={theme.warning}>
+              {" UNATTENDED "}
+            </Text>
+          ) : session && session.permissionMode !== "ask" ? (
+            <Text color={session.permissionMode === "skip" ? theme.warning : theme.accent}>
+              {`permissions: ${PERMISSION_LABELS[session.permissionMode].toLowerCase()}`}
+            </Text>
+          ) : null}
+          {session && (session.unattended || session.permissionMode !== "ask") ? " · " : ""}
+          <Text dimColor>
+            {narrow
+              ? "/ commands · pgup/pgdn · esc stop"
+              : "enter send · / commands · pgup/pgdn scroll · ctrl+b panel · esc interrupt"}
+          </Text>
         </Text>
       </Box>
       {narrow && session && (

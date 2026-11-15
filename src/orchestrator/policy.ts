@@ -1,4 +1,5 @@
 import type { Approver, PermissionDecision, Tool } from "../agent/tools.js";
+import { autoAllows, type PermissionMode } from "../agent/permissions.js";
 
 /** How much a run may do without asking. */
 export const AUTONOMY = ["supervised", "controlled", "extended"] as const;
@@ -27,7 +28,7 @@ export type RunAction =
   | "outside-project";
 
 /** Commands that ask in every mode: they reach beyond the worktree, or cannot be undone. */
-const SENSITIVE: readonly { pattern: RegExp; reason: string }[] = [
+export const SENSITIVE_COMMANDS: readonly { pattern: RegExp; reason: string }[] = [
   { pattern: /\bgit\s+push\b/i, reason: "it publishes changes" },
   {
     pattern: /\b(npm|pnpm|yarn|cargo|twine|gem)\s+publish\b|\bdotnet\s+nuget\s+push\b/i,
@@ -74,6 +75,13 @@ export interface PolicyOptions {
   readonly mode: Autonomy;
   /** Commands `controlled` allows; default: `CHECK_COMMANDS`. */
   readonly checkCommands?: readonly RegExp[];
+  /**
+   * The person's permission mode for the run's workers (/permissions):
+   * `skip` lets every call the policy would ask about run; `auto` lets
+   * those the automatic rules find safe run; `ask` (the default) leaves the
+   * policy as it is. What is never allowed stays so.
+   */
+  readonly permissions?: PermissionMode;
 }
 
 /**
@@ -84,10 +92,12 @@ export interface PolicyOptions {
  */
 export class Policy {
   readonly mode: Autonomy;
+  readonly permissions: PermissionMode;
   readonly #checks: readonly RegExp[];
 
   constructor(options: PolicyOptions) {
     this.mode = options.mode;
+    this.permissions = options.permissions ?? "ask";
     this.#checks = options.checkCommands ?? CHECK_COMMANDS;
   }
 
@@ -127,7 +137,7 @@ export class Policy {
    */
   command(command: string, ownChecks: readonly string[] = []): Verdict {
     const trimmed = command.trim();
-    const sensitive = SENSITIVE.find((rule) => rule.pattern.test(trimmed));
+    const sensitive = SENSITIVE_COMMANDS.find((rule) => rule.pattern.test(trimmed));
     if (sensitive) return { decision: "ask", reason: `${sensitive.reason}: always asked` };
     if (this.mode === "supervised")
       return { decision: "ask", reason: "supervised: every command is asked" };
@@ -180,6 +190,9 @@ export class Policy {
       const verdict = this.tool(tool, call.input, decision, ownChecks);
       if (verdict.decision === "allow") return true;
       if (verdict.decision === "never") return false;
+      // The person's permission mode, for what the policy would ask.
+      if (this.permissions === "skip") return true;
+      if (this.permissions === "auto" && autoAllows(tool, call.input).allow) return true;
       const question: Question = {
         ...who,
         action: tool.describe

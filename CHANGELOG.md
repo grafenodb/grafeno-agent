@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Permissions** (`/permissions`): **Ask** (the default), **Automatic**
+  (the agent decides by risk, in code: project changes, checks and builds
+  run; deleting, pushing, publishing, installing and reaching outside ask)
+  or **Skip permissions** (nothing is asked). For the whole agent
+  (`AGENT_PERMISSIONS`), this session only, or this session and its
+  sub-agents (their runs' policy lets through what the mode allows). What
+  is never allowed stays so in every mode. `run --permissions`.
+- **Unattended operation** (`/unattended`, `run --unattended`): permissions
+  skipped for the session and its sub-agents, plans run without being
+  confirmed, runs in extended mode (retries, replans, merges when checks
+  pass), and the model told nobody is watching, to work on until the task
+  is done. The footer shows it.
 - **Answers in your language**: each message's language is told from its
   words (Spanish, English, Portuguese, French, German, Italian), and the
   model is reminded just before your words to answer in it, since memory,

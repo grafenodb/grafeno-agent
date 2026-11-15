@@ -14,6 +14,15 @@ export const COMMANDS: readonly Command[] = [
   { name: "connect", description: "Choose the provider the chat uses (Claude, Codex…)" },
   { name: "palace", description: "Grafeno: included, or a server you already have" },
   {
+    name: "permissions",
+    description:
+      "Ask, automatic or skip permissions: for the agent, this session, or with its sub-agents",
+  },
+  {
+    name: "unattended",
+    description: "Work on alone until the task is done: no questions, plans run, sub-agents too",
+  },
+  {
     name: "usage",
     description:
       "Your provider's real usage (a reading of the last minute; /usage refresh asks anew), and this session's",

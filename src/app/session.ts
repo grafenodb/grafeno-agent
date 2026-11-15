@@ -35,6 +35,12 @@ import {
 } from "../sessions/store.js";
 import { projectTools, toolsPrompt } from "../tools/index.js";
 import { detectLanguage, withLanguage } from "../agent/language.js";
+import {
+  decide,
+  settingsPermissionMode,
+  type PermissionMode,
+  type PermissionScope,
+} from "../agent/permissions.js";
 import type { PluginState } from "../plugins/index.js";
 import { Workspace } from "../tools/workspace.js";
 
@@ -77,6 +83,10 @@ export interface AgentSessionOptions {
   readonly now?: () => Date;
 }
 
+/** What the model is told on each message while the session is unattended. */
+export const UNATTENDED_NOTE =
+  "[Unattended: nobody is watching this session. Do not ask the user questions or wait for confirmations: decide sensibly, keep working until the task is done (plan it, run it, check it, retry what fails a few times, then try another way), and report what you did at the end. Tools run without asking, except what is never allowed.]";
+
 /** Characters of the conversation carried into a renewed one. */
 const RENEWAL_CARRY = 3000;
 
@@ -111,6 +121,68 @@ export interface SendOptions {
 export class AgentSession {
   /** Asked before a tool that needs permission runs; the interface sets it. */
   approve: Approver = () => false;
+
+  /** This session's own permission mode, over the agent-wide one (/permissions). */
+  #permissions: { mode: PermissionMode; subagents: boolean } | undefined;
+  /** Unattended: nobody is watching; the session and its sub-agents go on alone. */
+  #unattended: { before: { mode: PermissionMode; subagents: boolean } | undefined } | undefined;
+
+  /** The mode the session's own calls are decided by: its own, else the agent-wide one. */
+  get permissionMode(): PermissionMode {
+    return this.#permissions?.mode ?? settingsPermissionMode();
+  }
+
+  /** Where the mode in force comes from. */
+  get permissionScope(): PermissionScope {
+    if (!this.#permissions) return "agent";
+    return this.#permissions.subagents ? "session+subagents" : "session";
+  }
+
+  /** The mode this session's sub-agents get: its own when it covers them, else the agent-wide one. */
+  get subagentPermissions(): PermissionMode {
+    return this.#permissions?.subagents ? this.#permissions.mode : settingsPermissionMode();
+  }
+
+  /**
+   * Sets this session's permission mode (`session`: its own calls;
+   * `session+subagents`: and its sub-agents'); `undefined` goes back to the
+   * agent-wide mode. The agent-wide mode is a setting, saved elsewhere.
+   */
+  setPermissions(mode: PermissionMode | undefined, subagents = false): void {
+    this.#permissions = mode === undefined ? undefined : { mode, subagents };
+  }
+
+  get unattended(): boolean {
+    return this.#unattended !== undefined;
+  }
+
+  /**
+   * Unattended operation: permissions skipped for the session and its
+   * sub-agents, plans run without being confirmed, and the model told that
+   * nobody is watching, to decide and go on until the task is done. Off,
+   * the permissions go back to what they were.
+   */
+  setUnattended(on: boolean): void {
+    if (on && !this.#unattended) {
+      this.#unattended = { before: this.#permissions };
+      this.#permissions = { mode: "skip", subagents: true };
+    } else if (!on && this.#unattended) {
+      this.#permissions = this.#unattended.before;
+      this.#unattended = undefined;
+    }
+  }
+
+  /** Decides a call by the permission mode, then asks the interface when it must. */
+  async #decide(
+    call: Parameters<Approver>[0],
+    tool: Parameters<Approver>[1],
+    decision: Parameters<Approver>[2],
+  ): Promise<boolean> {
+    const decided = decide(this.permissionMode, tool, call.input, decision);
+    if (decided.verdict === "allow") return true;
+    if (decided.verdict === "never") return false;
+    return this.approve(call, tool, { ...decision, reason: decided.reason });
+  }
 
   #agent: Agent | undefined;
   #choice: ModelChoice;
@@ -430,7 +502,7 @@ export class AgentSession {
           ...(skills.length > 0 ? [skillTool(() => skills)] : []),
           ...(this.options.extraTools ?? []),
         ],
-        (call, tool, decision) => this.approve(call, tool, decision),
+        (call, tool, decision) => this.#decide(call, tool, decision),
         { redact: [config.agentKey] },
       ),
       prepare: async (message) => {
@@ -442,7 +514,8 @@ export class AgentSession {
         if (message !== this.memory.endOfSession()) {
           this.#language = detectLanguage(message) ?? this.#language;
         }
-        return withLanguage(prepared, message, this.#language);
+        const withNote = withLanguage(prepared, message, this.#language);
+        return this.#unattended ? `${UNATTENDED_NOTE}\n\n${withNote}` : withNote;
       },
     });
     return this.#agent;

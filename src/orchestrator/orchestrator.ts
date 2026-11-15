@@ -1,3 +1,4 @@
+import type { PermissionMode } from "../agent/permissions.js";
 import { CapabilityRegistry } from "../providers/registry.js";
 import { PROVIDER_SECRET_ENV } from "../providers/index.js";
 import { assertBillingAllowed } from "../providers/billing.js";
@@ -62,6 +63,8 @@ export interface OrchestratorOptions {
   /** Secrets never stored or shown (the agent's key). */
   readonly secrets?: readonly string[];
   readonly mode?: Autonomy;
+  /** The person's permission mode for the workers' calls (see `Policy`). */
+  readonly permissions?: PermissionMode;
   readonly maxWorkers?: number;
   readonly maxAttempts?: number;
   readonly attemptTimeoutMs?: number;
@@ -173,7 +176,10 @@ export class Orchestrator {
       repo: options.projectRoot,
       root: join(root, "worktrees", folder),
     });
-    this.policy = new Policy({ mode: options.mode ?? "controlled" });
+    this.policy = new Policy({
+      mode: options.mode ?? "controlled",
+      ...(options.permissions ? { permissions: options.permissions } : {}),
+    });
     const secrets = options.secrets ?? [];
     const providers = options.providers ?? [options.provider];
     this.registry =

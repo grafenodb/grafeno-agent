@@ -13,6 +13,13 @@ import { Agent } from "./agent/agent.js";
 import { SYSTEM_PROMPT } from "./agent/builtin-tools.js";
 import { ToolRegistry } from "./agent/tools.js";
 import { detectLanguage, withLanguage } from "./agent/language.js";
+import {
+  decide,
+  isPermissionMode,
+  PERMISSION_MODES,
+  settingsPermissionMode,
+  type PermissionMode,
+} from "./agent/permissions.js";
 import { runChat } from "./chat.js";
 import { ConfigError, describeConfig, loadConfig, type Config } from "./config.js";
 import type { Embedder } from "./embed/types.js";
@@ -80,7 +87,11 @@ Commands:
           (failed attempts); reaching one pauses the run, saying which. --review: after
           a task's checks pass, a reviewer on another model reads its change and may
           send it back with issues (twice at most); it never approves, and a
-          disagreement left over goes to a person.
+          disagreement left over goes to a person. --permissions ask|auto|skip: how
+          the workers' calls that would ask are decided (default AGENT_PERMISSIONS, ask).
+          --unattended: nobody watches: the plan runs without asking, permissions are
+          skipped, the run goes on in extended mode (replans, retries, merges when its
+          checks pass) until it ends. What is never allowed stays so.
   runs [id]  The project's runs, or one run's report.
   resume <id>  Go on with a paused or waiting run (the same limit flags, higher, let a
           run paused by one go on).
@@ -253,9 +264,18 @@ async function chat(plain: boolean): Promise<number> {
       new Agent({
         model,
         system,
-        tools: new ToolRegistry([...ownTools, ...memoryTools], approve, {
-          redact: [config.agentKey],
-        }),
+        // AGENT_PERMISSIONS decides first; what it leaves to the user is asked here.
+        tools: new ToolRegistry(
+          [...ownTools, ...memoryTools],
+          async (call, tool, decision) => {
+            const decided = decide(settingsPermissionMode(), tool, call.input, decision);
+            if (decided.verdict !== "ask") return decided.verdict === "allow";
+            return approve(call, tool, { ...decision, reason: decided.reason });
+          },
+          {
+            redact: [config.agentKey],
+          },
+        ),
         prepare: async (message) => {
           if (message !== memory.endOfSession()) language = detectLanguage(message) ?? language;
           return withLanguage(await memory.beforeTurn(message), message, language);
@@ -410,6 +430,7 @@ async function orchestrateCommand(argv: readonly string[]): Promise<number> {
         !arg.startsWith("--") &&
         ![
           "--mode",
+          "--permissions",
           "--workers",
           "--providers",
           "--provider-for",
@@ -426,10 +447,32 @@ async function orchestrateCommand(argv: readonly string[]): Promise<number> {
     );
     return 2;
   }
-  const settings = runSettings(argv);
+  // Unattended: nobody watches; the plan runs, permissions are skipped, the run goes on alone.
+  const unattended = argv.includes("--unattended");
+  const asked = flag(argv, "--permissions");
+  if (asked !== undefined && !isPermissionMode(asked)) {
+    console.error(`--permissions is one of ${PERMISSION_MODES.join(", ")}: ${asked}`);
+    return 2;
+  }
+  const permissions: PermissionMode = unattended
+    ? "skip"
+    : asked !== undefined && isPermissionMode(asked)
+      ? asked
+      : settingsPermissionMode();
+  const settings = {
+    ...runSettings(argv),
+    ...(unattended && flag(argv, "--mode") === undefined ? { mode: "extended" as const } : {}),
+  };
+  if (unattended) {
+    console.log(
+      "Unattended: the plan runs without asking, workers' calls run without asking (what is never allowed stays so), and the run merges when its checks pass.",
+    );
+  }
   const orchestrator = await createOrchestrator(settings, {
     ...printChanges(),
+    permissions,
     ask: async (question) =>
+      unattended ||
       confirm(
         `\n  ? ${question.worker ?? "The run"} wants to ${question.action} (${question.reason}). Allow it?`,
       ),
@@ -437,7 +480,7 @@ async function orchestrateCommand(argv: readonly string[]): Promise<number> {
   console.log("Planning…");
   const planned = await orchestrator.plan(request);
   for (const line of describePlan(planned)) console.log(line);
-  if (!argv.includes("--yes") && !(await confirm("\nRun this plan?"))) {
+  if (!argv.includes("--yes") && !unattended && !(await confirm("\nRun this plan?"))) {
     console.log("Not run.");
     orchestrator.close();
     return 0;

@@ -126,6 +126,7 @@ agent asks again when it starts.
 | `AGENT_PALACE`         | `shared`                | `shared` with other agents, or `own` (see below)                          |
 | `AGENT_SHELL`          | Git's bash on Windows   | The shell for commands, with its arguments                                |
 | `AGENT_PROVIDERS`      | `auto`                  | `claude-code`, `codex`, `gemini`, in order, or `auto` (set by `/connect`) |
+| `AGENT_PERMISSIONS`    | `ask`                   | `ask`, `auto` or `skip`, for the whole agent (set by `/permissions`)      |
 | `AGENT_AUTO_PROVIDERS` | none (you choose)       | The providers Auto includes (set in `/connect` with space)                |
 | `GEMINI_TIER`          | none                    | `free` or `paid`: your Gemini key's tier (set by `login gemini`)          |
 | `OPENROUTER_MODELS`    | `free`                  | `free` (never billed) or `all` (set by `login openrouter`)                |
@@ -172,6 +173,8 @@ The panel hides on narrow windows, or with Ctrl+B.
 | `/effort`      | Choose how hard the model thinks (Low … Max)                    |
 | `/connect`     | The provider: Claude today, more later; whether it is signed in |
 | `/palace`      | Grafeno: included, or a server you already have                 |
+| `/permissions` | Ask, automatic or skip permissions, and for what (see below)    |
+| `/unattended`  | Work on alone until the task is done (see below)                |
 | `/usage`       | Your provider's real usage, and this session's tokens           |
 | `/status`      | Provider, Grafeno, agent, project and model                     |
 | `/memory`      | What memory brought back when the session started               |
@@ -240,6 +243,52 @@ These are never allowed, whatever the answer:
 
 These rules guard against mistakes. They are not a sandbox: a command you
 allow runs with your rights, so read what you allow.
+
+### Permissions
+
+`/permissions` chooses how the calls that would ask you are decided:
+
+| Mode                 | What happens                                                                                                                                                                                                                                                                          |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Ask** (default)    | You are asked, as in the table above.                                                                                                                                                                                                                                                 |
+| **Automatic**        | The agent decides by the call's risk, in code: changes to the project's files, checks, builds, `git add` / `commit`, local servers and reading the web run; deleting, pushing, publishing, installing programs, commands it cannot tell are safe, plugins and external MCP tools ask. |
+| **Skip permissions** | Nothing is asked: every such call runs.                                                                                                                                                                                                                                               |
+
+Then for what:
+
+- **The whole agent**: every session and sub-agent from now on
+  (`AGENT_PERMISSIONS` in the settings);
+- **This session**: only this conversation, until it ends;
+- **This session and its sub-agents**: this conversation and the runs it
+  starts.
+
+In every mode, what is never allowed stays so (the list above). The footer
+says when permissions are not **Ask**. `grafeno-agent run` takes
+`--permissions ask|auto|skip` for a run's workers.
+
+### Unattended operation
+
+`/unattended` (or `/unattended on` / `off`) is for work nobody watches:
+
+- the session and its sub-agents run with permissions skipped;
+- plans run without being confirmed: the main agent's, `/orchestrate`'s
+  and Auto's;
+- runs go on in **extended** mode: they retry what fails, replan on their
+  own (twice at most) and merge into your branch when every check passes;
+- the model is told on each message that nobody is watching: it decides,
+  keeps working until the task is done, and reports at the end, instead of
+  asking you.
+
+So it can change code, commit, push to GitHub, install programs with
+`winget`, `npm -g` or `pip`, and retry failures, on its own. What is never
+allowed stays so: forced pushes, raised privileges (`sudo`, so system
+package managers that need it), deleting everything, piping code from the
+internet into a shell, secrets. The footer shows **UNATTENDED** while it
+is on; `/permissions` or `/unattended off` ends it. Without the interface:
+
+```bash
+grafeno-agent run "add the orders API with tests and push it" --unattended
+```
 
 ## Skills
 

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { connectAll } from "../mcp/client.js";
 import { loadMcpConfig, mcpConfigPath } from "../mcp/config.js";
 import { connectPlugins } from "../plugins/index.js";
+import { PERMISSIONS_SETTING, type PermissionMode } from "../agent/permissions.js";
 import { billingRefusal } from "../providers/billing.js";
 import type { Tool } from "../agent/tools.js";
 import { assertBillingAllowed } from "../providers/billing.js";
@@ -107,6 +108,8 @@ export interface AppServices {
     provider?: string;
     /** The providers General Auto includes, in order. */
     autoProviders?: readonly string[];
+    /** The agent-wide permission mode (AGENT_PERMISSIONS). */
+    permissions?: PermissionMode;
   }): void;
   /** The memory upkeep report for the session's project. */
   upkeep(session: AgentSession): Promise<string>;
@@ -329,7 +332,17 @@ export function realServices(version: string): AppServices {
         ? "The included Grafeno was stopped. It starts again with the next session."
         : "The included Grafeno was not running from here.";
     },
-    saveChoice(choice: ModelChoice & { provider?: string; autoProviders?: readonly string[] }) {
+    saveChoice(
+      choice: ModelChoice & {
+        provider?: string;
+        autoProviders?: readonly string[];
+        permissions?: PermissionMode;
+      },
+    ) {
+      if (choice.permissions !== undefined) {
+        save({ [PERMISSIONS_SETTING]: choice.permissions === "ask" ? "" : choice.permissions });
+        return;
+      }
       if (choice.autoProviders !== undefined) {
         save({ AGENT_AUTO_PROVIDERS: choice.autoProviders.join(",") });
         pooled = undefined;
