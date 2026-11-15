@@ -1,5 +1,6 @@
 import { ClaudeCodeProvider } from "./claude-code.js";
 import { CodexProvider } from "./codex.js";
+import { GeminiProvider } from "./gemini.js";
 import { TIERS, type TaskKind, type Tier } from "../orchestrator/plan.js";
 import { DEFAULT_AFFINITY, type Affinity } from "../orchestrator/router.js";
 import type { Provider } from "./types.js";
@@ -31,7 +32,11 @@ export function withCache<P extends Provider>(provider: P): P | ComposedProvider
 export const KNOWN_PROVIDERS: Readonly<Record<string, () => Provider>> = {
   "claude-code": () => withCache(new ClaudeCodeProvider()),
   codex: () => withCache(new CodexProvider()),
+  gemini: () => withCache(new GeminiProvider()),
 };
+
+/** Environment variables that hold the providers' keys: commands the agent runs never see them. */
+export const PROVIDER_SECRET_ENV = ["GEMINI_API_KEY", "GOOGLE_API_KEY"] as const;
 
 /** The setting's word for General Auto: every known provider, as one pool. */
 export const AUTO = "auto";

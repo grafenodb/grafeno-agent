@@ -1,4 +1,5 @@
 import { CapabilityRegistry } from "../providers/registry.js";
+import { PROVIDER_SECRET_ENV } from "../providers/index.js";
 import { assertBillingAllowed } from "../providers/billing.js";
 import { join } from "node:path";
 import type { Tool } from "../agent/tools.js";
@@ -199,7 +200,9 @@ export class Orchestrator {
       tools:
         options.tools ??
         ((workspace) =>
-          projectTools(workspace, { hiddenEnv: ["GRAFENO_AGENT_KEY", "GRAFENO_OWNER_TOKEN"] })),
+          projectTools(workspace, {
+            hiddenEnv: ["GRAFENO_AGENT_KEY", "GRAFENO_OWNER_TOKEN", ...PROVIDER_SECRET_ENV],
+          })),
       redact: secrets,
       approverFor: (task, worker, context) =>
         this.policy.approver(

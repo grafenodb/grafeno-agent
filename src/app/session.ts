@@ -1,4 +1,5 @@
 import { Agent, type AgentTurn } from "../agent/agent.js";
+import { PROVIDER_SECRET_ENV } from "../providers/index.js";
 import { SYSTEM_PROMPT } from "../agent/builtin-tools.js";
 import { ToolRegistry, type Approver, type Tool } from "../agent/tools.js";
 import type { Config } from "../config.js";
@@ -365,7 +366,9 @@ export class AgentSession {
     const model = this.options.makeModel?.(this.#choice) ?? this.provider.create(this.#choice);
     const own =
       this.options.tools?.(this.workspace) ??
-      projectTools(this.workspace, { hiddenEnv: ["GRAFENO_AGENT_KEY"] });
+      projectTools(this.workspace, {
+        hiddenEnv: ["GRAFENO_AGENT_KEY", ...PROVIDER_SECRET_ENV],
+      });
     this.#agent = new Agent({
       model,
       system: `${this.memory.systemPrompt(SYSTEM_PROMPT)}\n\n${toolsPrompt(this.workspace)}`,

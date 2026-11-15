@@ -22,6 +22,7 @@ describe("choosing providers", () => {
     expect(allProviders({ AGENT_PROVIDERS: "codex" }).map((p) => p.id)).toEqual([
       "codex",
       "claude-code",
+      "gemini",
     ]);
   });
 

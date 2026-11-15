@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 import { TASK_KINDS } from "./orchestrator/plan.js";
-import { isAuto, KNOWN_PROVIDERS, providerForKinds, providerIds } from "./providers/index.js";
+import {
+  isAuto,
+  KNOWN_PROVIDERS,
+  PROVIDER_SECRET_ENV,
+  providerForKinds,
+  providerIds,
+} from "./providers/index.js";
 import type { Provider } from "./providers/types.js";
 import { existsSync, readFileSync } from "node:fs";
 import { Agent } from "./agent/agent.js";
@@ -39,6 +45,9 @@ Commands:
   init     Set up: --include-grafeno (Grafeno runs on this computer), or
            --grafeno-url <url> --key <key> (a Grafeno server you have).
   check    Check the settings, that Grafeno answers and that the agent's key works.
+  login gemini   Gemini through Google AI Studio with your own key: checked, kept in the
+                 system's secure store (never in Grafeno), with its tier (free or paid).
+                 logout gemini removes it. Claude and Codex sign in with their own programs.
   version  Show the version.
   upkeep  Look after the project's memory: duplicates, contradictions, the palace's
           arrangement. Add --apply to carry out the safe fixes.
@@ -214,7 +223,9 @@ async function chat(plain: boolean): Promise<number> {
     ...(config.claudeModel === undefined ? {} : { claudeModel: config.claudeModel }),
   });
   const workspace = new Workspace(project.path ?? process.cwd());
-  const ownTools = projectTools(workspace, { hiddenEnv: ["GRAFENO_AGENT_KEY"] });
+  const ownTools = projectTools(workspace, {
+    hiddenEnv: ["GRAFENO_AGENT_KEY", ...PROVIDER_SECRET_ENV],
+  });
   const system = `${memory.systemPrompt(SYSTEM_PROMPT)}\n\n${toolsPrompt(workspace)}`;
   await runChat({
     input: process.stdin,
@@ -704,6 +715,52 @@ async function replanCommand(argv: readonly string[]): Promise<number> {
   return drive(orchestrator, id, argv.includes("--yes"));
 }
 
+/** `login gemini` / `logout gemini`: a provider's key, kept in the system's secure store. */
+async function loginCommand(command: "login" | "logout", args: readonly string[]): Promise<number> {
+  if (args[0] !== "gemini") {
+    console.error(
+      "Only Gemini signs in through the agent: login gemini. Claude and Codex sign in with their own programs (claude /login, codex login).",
+    );
+    return 2;
+  }
+  const { geminiLogin, geminiLogout } = await import("./app/login.js");
+  const { geminiStore } = await import("./providers/gemini.js");
+  const { updateSettings } = await import("./settings-file.js");
+  const io = {
+    ask: (question: string, options: { hidden?: boolean } = {}) => askLine(question, options),
+    say: (line: string) => {
+      console.log(line);
+    },
+  };
+  const options = {
+    io,
+    store: geminiStore(),
+    saveSettings: (v: Record<string, string>) => {
+      updateSettings(v);
+    },
+  };
+  return command === "login" ? geminiLogin(options) : geminiLogout(options);
+}
+
+/** Reads a line from the terminal; `hidden`: what is typed is not echoed. */
+async function askLine(question: string, options: { hidden?: boolean } = {}): Promise<string> {
+  if (!process.stdin.isTTY) throw new Error("This needs a terminal.");
+  const lines = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+  if (options.hidden) {
+    // Echo nothing of what is typed (a key), only the question.
+    const output = lines as unknown as { _writeToOutput?: (text: string) => void };
+    output._writeToOutput = (text: string) => {
+      if (text.includes(question)) process.stdout.write(question);
+    };
+  }
+  try {
+    return await lines.question(question);
+  } finally {
+    if (options.hidden) process.stdout.write("\n");
+    lines.close();
+  }
+}
+
 async function main(argv: readonly string[]): Promise<number> {
   // Real environment variables win over the settings file. Run from the
   // source (development), ./.env is read too; installed, never.
@@ -745,6 +802,9 @@ async function main(argv: readonly string[]): Promise<number> {
       return controlCommand("pause", argv.slice(1));
     case "cancel":
       return controlCommand("cancel", argv.slice(1));
+    case "login":
+    case "logout":
+      return loginCommand(command, argv.slice(1));
     case "help":
     case "--help":
     case "-h":

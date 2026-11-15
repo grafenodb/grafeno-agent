@@ -466,6 +466,11 @@ real runs are in [`docs/measurements/`](docs/measurements/).
 | C     | A router that learns from real metrics                       | **Done** (C1–C5)                                              |
 | D     | Long autonomous runs: replanning, a supervisor, cross review | **Done** (D1–D6), checked against §D in docs/orchestration.md |
 
+**Providers (2026-11-15):** sign-in, model selection and execution kept
+apart; a subscription, a free API quota and billing by consumption told
+apart, with nothing metered used unasked; a minute's cache for statuses and
+usage; Gemini through Google AI Studio. See [`docs/providers.md`](docs/providers.md).
+
 ### Phase A against the brief's acceptance list (§A.10)
 
 | #   | Criterion                                             | Shown by                                                                                                             |
