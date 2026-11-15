@@ -1,5 +1,5 @@
-import { homedir } from "node:os";
 import { CapabilityRegistry } from "../providers/registry.js";
+import { assertBillingAllowed } from "../providers/billing.js";
 import { join } from "node:path";
 import type { Tool } from "../agent/tools.js";
 import type { Embedder } from "../embed/types.js";
@@ -33,12 +33,8 @@ import { WorkerPool, type ActiveWorker, type ContextPolicy } from "./workers.js"
 import { runGit, WorktreeManager } from "./worktrees.js";
 
 /** Where the orchestrator keeps runs and worktrees: the agent's data folder. */
-export function dataDir(env: Record<string, string | undefined> = process.env): string {
-  if (env.GRAFENO_AGENT_DATA) return env.GRAFENO_AGENT_DATA;
-  if (process.platform === "win32" && env.LOCALAPPDATA)
-    return join(env.LOCALAPPDATA, "grafeno-agent");
-  return join(env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"), "grafeno-agent");
-}
+import { dataDir } from "../data-dir.js";
+export { dataDir };
 
 /** Where a project's runs are kept, in the data folder. */
 export function runStoreFile(root: string, project: string): string {
@@ -154,6 +150,8 @@ export class Orchestrator {
   /** Where every run's attempts and outcomes go, for the router to learn from. */
   readonly metrics: MetricsStore | undefined;
   #scheduler: Scheduler | undefined;
+  /** An order given before the scheduler started running (it resets its own when it starts). */
+  #order: "pause" | "cancel" | undefined;
 
   constructor(private readonly options: OrchestratorOptions) {
     const root = options.dataDir ?? dataDir();
@@ -290,6 +288,7 @@ export class Orchestrator {
     request: string,
     signal?: AbortSignal,
   ): Promise<Planned & { routes: Map<string, Route>; planner: string }> {
+    await this.#billingAllowed();
     // The planner's model, made with the provider it was routed to.
     const planner = this.options.planner
       ? { choice: this.options.planner, provider: this.options.provider }
@@ -370,7 +369,13 @@ export class Orchestrator {
       obey();
     }, owner.heartbeatMs ?? 3000);
     try {
-      const state = await scheduler.run(runId);
+      // After the scheduler exists, so a pause or cancel sent meanwhile is kept.
+      await this.#billingAllowed();
+      const running = scheduler.run(runId);
+      if (this.#order === "pause") scheduler.pause();
+      else if (this.#order === "cancel") scheduler.cancel();
+      this.#order = undefined;
+      const state = await running;
       if (state === "completed" && this.policy.action("merge-user").decision === "allow") {
         // Phase D6: only in the extended mode, the work goes into the user's branch.
         await this.deliver(runId);
@@ -379,6 +384,7 @@ export class Orchestrator {
       return state;
     } finally {
       this.#scheduler = undefined;
+      this.#order = undefined;
       clearInterval(beat);
       this.store.unsupervise(runId);
       // What this process used while it ran the run, where Node can measure it
@@ -448,10 +454,12 @@ export class Orchestrator {
   }
 
   pause(): void {
+    this.#order = "pause";
     this.#scheduler?.pause();
   }
 
   cancel(): void {
+    this.#order = "cancel";
     this.#scheduler?.cancel();
   }
 
@@ -531,6 +539,14 @@ export class Orchestrator {
       provider: this.pool.providerById(route.provider),
       model: route.model,
     };
+  }
+
+  /**
+   * One provider and no registry: it must not bill by consumption unless the
+   * user allowed it. With several, the registry leaves such providers out.
+   */
+  async #billingAllowed(): Promise<void> {
+    if (!this.registry) await assertBillingAllowed(this.options.provider);
   }
 
   /** What the planner is told about the project: its files, as data. */

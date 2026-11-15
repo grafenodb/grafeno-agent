@@ -13,7 +13,11 @@ export const COMMANDS: readonly Command[] = [
   { name: "effort", description: "Choose how hard the model thinks" },
   { name: "connect", description: "Choose the provider the chat uses (Claude, Codex…)" },
   { name: "palace", description: "Grafeno: included, or a server you already have" },
-  { name: "usage", description: "Your provider's real usage, and this session's" },
+  {
+    name: "usage",
+    description:
+      "Your provider's real usage (a reading of the last minute; /usage refresh asks anew), and this session's",
+  },
   { name: "status", description: "Provider, Grafeno, agent, project and model" },
   { name: "memory", description: "What memory brought back when the session started" },
   { name: "checkpoint", description: "Save where the work stands, in memory" },

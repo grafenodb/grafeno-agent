@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { ModelOption, Provider, ProviderFeatures, ProviderStatus } from "./types.js";
+import { billingRefusal } from "./billing.js";
+import type { Billing, ModelOption, Provider, ProviderFeatures, ProviderStatus } from "./types.js";
 
 /** A model as the registry knows it: what the provider calls it, and its efforts. */
 export interface ModelCapabilities extends ModelOption {
@@ -15,6 +16,8 @@ export interface Capabilities {
   readonly signedIn: boolean;
   readonly version?: string;
   readonly plan?: string;
+  /** How its answers are paid for, when it says. */
+  readonly billing?: Billing;
   /** What to do next, or what is fine. */
   readonly detail: string;
   readonly models: readonly ModelCapabilities[];
@@ -39,6 +42,8 @@ export interface RegistryOptions {
   readonly maxAgeMs?: number;
   /** A provider's status (installed, signed in, version) is asked again after this. Default: 5 minutes. */
   readonly statusAgeMs?: number;
+  /** Where the user's express authorizations to bill by consumption are read (AGENT_ALLOW_BILLING). */
+  readonly env?: Record<string, string | undefined>;
   readonly now?: () => Date;
 }
 
@@ -114,6 +119,7 @@ export class CapabilityRegistry {
       signedIn: status.signedIn,
       ...(status.version === undefined ? {} : { version: status.version }),
       ...(status.plan === undefined ? {} : { plan: status.plan }),
+      ...(status.billing === undefined ? {} : { billing: status.billing }),
       detail: status.detail,
       models,
       tiers: provider.tiers ?? {
@@ -133,7 +139,9 @@ export class CapabilityRegistry {
 
   /**
    * The providers a task may be given to now, in order: installed, signed
-   * in, able to use the agent's tools without a person, and not set aside.
+   * in, able to use the agent's tools without a person, not set aside, and
+   * not billing by consumption unless the user expressly allowed it (so no
+   * fallback ever lands on a metered one by itself).
    */
   async ready(): Promise<Capabilities[]> {
     const all = await this.all();
@@ -143,6 +151,7 @@ export class CapabilityRegistry {
         c.signedIn &&
         c.features.agentTools &&
         c.features.nonInteractive &&
+        billingRefusal(c.id, c, this.options.env) === undefined &&
         this.unavailable(c.id) === undefined,
     );
   }

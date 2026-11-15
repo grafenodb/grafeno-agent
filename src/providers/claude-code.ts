@@ -1,10 +1,14 @@
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { createModel } from "../model/index.js";
+import { ComposedProvider } from "./compose.js";
 import type {
+  Billing,
+  ModelCatalog,
   ModelChoice,
   ModelOption,
-  Provider,
+  ProviderAuth,
+  ProviderRuntime,
   ProviderStatus,
   ProviderUsage,
   UsageLimit,
@@ -50,33 +54,19 @@ function resultOf(output: string): string {
 }
 
 /**
- * Claude through the user's own Claude Code. Everything here asks the
- * official `claude` program: its version, `auth status`, and its built-in
- * `/model` and `/usage` commands, which answer locally without spending any
- * of the plan. Credentials are never read.
+ * Claude Code's authentication: the official `claude` program holds the
+ * sign-in. Its version, `auth status` and its built-in `/usage` command
+ * answer locally without spending any of the plan. Credentials are never
+ * read. A sign-in that bills by consumption (an API key, a cloud
+ * provider) is reported as metered, so it is not used without the
+ * user's say.
  */
-export class ClaudeCodeProvider implements Provider {
-  readonly id = "claude-code";
-  readonly name = "Claude (Claude Code)";
+export class ClaudeCodeAuth implements ProviderAuth {
+  readonly method = "provider-cli";
   readonly signIn =
     "Run `claude` in a terminal and sign in with /login (your Claude subscription).";
-  /** Claude Code's aliases always name the latest of each family. */
-  readonly tiers = {
-    deep: ["opus", "fable", "sonnet"],
-    standard: ["sonnet", "opus"],
-    light: ["haiku", "sonnet"],
-  } as const;
-  readonly features = {
-    agentTools: true,
-    streaming: true,
-    // Cancelling stops Claude Code, and the conversation with it.
-    keepsConversation: false,
-    usageReport: true,
-    nonInteractive: true,
-  } as const;
-  #models: Promise<readonly ModelOption[]> | undefined;
 
-  constructor(private readonly run: RunClaude = runClaude("claude")) {}
+  constructor(private readonly run: RunClaude) {}
 
   async status(): Promise<ProviderStatus> {
     let version: string;
@@ -89,9 +79,16 @@ export class ClaudeCodeProvider implements Provider {
         detail: "Claude Code was not found. Install it from claude.com/claude-code, then sign in.",
       };
     }
-    let auth: { loggedIn?: boolean; subscriptionType?: string; authMethod?: string } = {};
+    let auth: {
+      loggedIn?: boolean;
+      subscriptionType?: string;
+      authMethod?: string;
+      apiProvider?: string;
+    } = {};
+    let known = false;
     try {
       auth = JSON.parse(await this.run(["auth", "status"], 15_000)) as typeof auth;
+      known = true;
     } catch {
       // Older versions: unknown until the first answer.
     }
@@ -101,14 +98,62 @@ export class ClaudeCodeProvider implements Provider {
     if (auth.loggedIn === false) {
       return { installed: true, signedIn: false, version, detail: this.signIn };
     }
+    const billing = known ? claudeBilling(auth, plan) : undefined;
     return {
       installed: true,
       signedIn: true,
       version,
       ...(plan === undefined ? {} : { plan }),
-      detail: `Signed in${plan ? ` with ${plan}` : ""}: answers spend your Claude plan.`,
+      ...(billing === undefined ? {} : { billing }),
+      detail:
+        billing?.kind === "metered"
+          ? `Signed in, but ${billing.detail.toLowerCase()}: it bills by consumption.`
+          : `Signed in${plan ? ` with ${plan}` : ""}: answers spend your Claude plan.`,
     };
   }
+
+  async usage(): Promise<ProviderUsage | undefined> {
+    let text: string;
+    try {
+      text = resultOf(await this.run(headless("/usage"), 30_000));
+    } catch {
+      return undefined;
+    }
+    const limits = parseUsage(text);
+    if (limits.length === 0) return undefined;
+    const note = /subscription/i.test(text) ? "Your Claude subscription" : undefined;
+    return { limits, at: new Date(), ...(note === undefined ? {} : { note }) };
+  }
+}
+
+/** How a Claude Code sign-in is paid for: a claude.ai plan, or by consumption. */
+export function claudeBilling(
+  auth: { authMethod?: string; apiProvider?: string },
+  plan: string | undefined,
+): Billing {
+  const firstParty = auth.apiProvider === undefined || auth.apiProvider === "firstParty";
+  if (auth.authMethod === "claude.ai" && firstParty) {
+    return { kind: "subscription", detail: `Your ${plan ?? "Claude"} plan` };
+  }
+  return {
+    kind: "metered",
+    detail: firstParty
+      ? "Claude Code is signed in with an API key"
+      : `Claude Code goes through ${auth.apiProvider ?? "a cloud provider"}`,
+  };
+}
+
+/** Claude Code's model selection: its family aliases, their exact names, and efforts. */
+export class ClaudeCodeCatalog implements ModelCatalog {
+  /** Claude Code's aliases always name the latest of each family. */
+  readonly tiers = {
+    deep: ["opus", "fable", "sonnet"],
+    standard: ["sonnet", "opus"],
+    light: ["haiku", "sonnet"],
+  } as const;
+  #models: Promise<readonly ModelOption[]> | undefined;
+
+  constructor(private readonly run: RunClaude) {}
 
   models(): Promise<readonly ModelOption[]> {
     this.#models ??= Promise.all([
@@ -131,28 +176,8 @@ export class ClaudeCodeProvider implements Provider {
     return CLAUDE_EFFORTS;
   }
 
-  async usage(): Promise<ProviderUsage | undefined> {
-    let text: string;
-    try {
-      text = resultOf(await this.run(headless("/usage"), 30_000));
-    } catch {
-      return undefined;
-    }
-    const limits = parseUsage(text);
-    if (limits.length === 0) return undefined;
-    const note = /subscription/i.test(text) ? "Your Claude subscription" : undefined;
-    return { limits, at: new Date(), ...(note === undefined ? {} : { note }) };
-  }
-
   modelName(id: string): string {
     return claudeModelName(id);
-  }
-
-  create(choice: ModelChoice) {
-    return createModel("claude-code", {
-      ...(choice.model === undefined ? {} : { claudeModel: choice.model }),
-      ...(choice.effort === undefined ? {} : { claudeEffort: choice.effort }),
-    });
   }
 
   /** The exact name Claude Code gives the model of an alias: "Opus 5.5". */
@@ -164,6 +189,36 @@ export class ClaudeCodeProvider implements Provider {
     } catch {
       return undefined;
     }
+  }
+}
+
+/** Claude Code's execution: `claude -p` as the brain, the agent's tools over MCP. */
+export class ClaudeCodeRuntime implements ProviderRuntime {
+  readonly features = {
+    agentTools: true,
+    streaming: true,
+    // Cancelling stops Claude Code, and the conversation with it.
+    keepsConversation: false,
+    usageReport: true,
+    nonInteractive: true,
+  } as const;
+
+  create(choice: ModelChoice) {
+    return createModel("claude-code", {
+      ...(choice.model === undefined ? {} : { claudeModel: choice.model }),
+      ...(choice.effort === undefined ? {} : { claudeEffort: choice.effort }),
+    });
+  }
+}
+
+/** Claude through the user's own Claude Code: its three parts, as one provider. */
+export class ClaudeCodeProvider extends ComposedProvider {
+  constructor(run: RunClaude = runClaude("claude")) {
+    super("claude-code", "Claude (Claude Code)", {
+      auth: new ClaudeCodeAuth(run),
+      catalog: new ClaudeCodeCatalog(run),
+      runtime: new ClaudeCodeRuntime(),
+    });
   }
 }
 

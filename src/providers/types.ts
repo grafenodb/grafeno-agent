@@ -12,6 +12,26 @@ export interface ProviderStatus {
   readonly plan?: string;
   /** What to do next, or what is fine, in a sentence. */
   readonly detail: string;
+  /** How what it answers is paid for, once it is signed in. */
+  readonly billing?: Billing;
+}
+
+/**
+ * How a provider's answers are paid for. The agent keeps the three apart and
+ * never uses a metered one without the user's express say (AGENT_ALLOW_BILLING).
+ */
+export type BillingKind =
+  /** A plan paid for anyway (Claude Pro, ChatGPT Plus): it spends the plan's quota. */
+  | "subscription"
+  /** An API's free quota: no charge, with its own limits. */
+  | "free-api"
+  /** Billed by consumption (tokens): only with the user's express authorization. */
+  | "metered";
+
+export interface Billing {
+  readonly kind: BillingKind;
+  /** In a sentence: "Your Claude Pro plan", "Gemini API free tier"… */
+  readonly detail: string;
 }
 
 /** A model a provider offers. */
@@ -63,6 +83,42 @@ export interface ProviderFeatures {
 }
 
 /**
+ * Authentication: who the provider answers as, and that account's state
+ * (sign-in, billing, usage). Credentials stay under the provider's control
+ * (its own program) or in the system's secure store; never in Grafeno.
+ */
+export interface ProviderAuth {
+  /** `provider-cli`: the provider's official program holds the sign-in; `api-key`: a key of the user's. */
+  readonly method: "provider-cli" | "api-key";
+  /** How to sign in, in a sentence. */
+  readonly signIn: string;
+  status(): Promise<ProviderStatus>;
+  /** The real usage of the account, without spending any; undefined when it cannot say. `fresh`: not a recent reading. */
+  usage(options?: { fresh?: boolean }): Promise<ProviderUsage | undefined>;
+}
+
+/** Model selection: what the provider offers, and how tiers map to it. */
+export interface ModelCatalog {
+  readonly tiers: Readonly<Record<"deep" | "standard" | "light", readonly string[]>>;
+  models(): Promise<readonly ModelOption[]>;
+  efforts(model?: string): readonly string[];
+  modelName(id: string): string;
+}
+
+/** Execution: a model to reason with, and what the adapter can do. */
+export interface ProviderRuntime {
+  readonly features: ProviderFeatures;
+  create(choice: ModelChoice): Model;
+}
+
+/** A provider as its three separate parts. */
+export interface ProviderParts {
+  readonly auth: ProviderAuth;
+  readonly catalog: ModelCatalog;
+  readonly runtime: ProviderRuntime;
+}
+
+/**
  * Where the reasoning comes from: Claude through Claude Code, Codex through
  * the Codex CLI, others later. Each says whether it is ready, which models and efforts
  * it has, and how much of the user's plan is used.
@@ -75,8 +131,12 @@ export interface Provider {
   models(): Promise<readonly ModelOption[]>;
   /** The efforts it takes, lowest first; empty when it has none. */
   efforts(model?: string): readonly string[];
-  /** The real usage of the plan, without spending any; undefined when it cannot say. */
-  usage(): Promise<ProviderUsage | undefined>;
+  /**
+   * The real usage of the plan, without spending any; undefined when it
+   * cannot say. It may be a reading of the last minute (its `at` says
+   * when); `fresh` asks the provider anew.
+   */
+  usage(options?: { fresh?: boolean }): Promise<ProviderUsage | undefined>;
   /** The exact name of a model from its id: `claude-opus-5-5` → "Opus 5.5". */
   modelName(id: string): string;
   /** A model to reason with. */
@@ -91,4 +151,6 @@ export interface Provider {
   readonly tiers?: Readonly<Record<"deep" | "standard" | "light", readonly string[]>>;
   /** What its adapter can do. */
   readonly features?: ProviderFeatures;
+  /** Its authentication, model selection and execution, kept apart (when it is built from them). */
+  readonly parts?: ProviderParts;
 }

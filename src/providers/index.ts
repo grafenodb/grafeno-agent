@@ -3,11 +3,34 @@ import { CodexProvider } from "./codex.js";
 import { TIERS, type TaskKind, type Tier } from "../orchestrator/plan.js";
 import { DEFAULT_AFFINITY, type Affinity } from "../orchestrator/router.js";
 import type { Provider } from "./types.js";
+import { join } from "node:path";
+import { dataDir } from "../data-dir.js";
+import { CachedAuth, ProviderStateCache } from "./cache.js";
+import { ComposedProvider } from "./compose.js";
+
+let sharedCache: ProviderStateCache | undefined;
+
+/**
+ * What providers answered in the last minute, shared by every provider the
+ * agent makes in this process and, through a file in the data folder, by
+ * its other processes.
+ */
+export function providerCache(): ProviderStateCache {
+  sharedCache ??= new ProviderStateCache(join(dataDir(), "provider-state.json"));
+  return sharedCache;
+}
+
+/** A provider whose authentication answers (status, usage) are reused for a minute. */
+export function withCache<P extends Provider>(provider: P): P | ComposedProvider {
+  return provider instanceof ComposedProvider
+    ? provider.withAuth(new CachedAuth(provider.id, provider.parts.auth, providerCache()))
+    : provider;
+}
 
 /** The providers the agent knows, by the id `AGENT_PROVIDERS` names them with. */
 export const KNOWN_PROVIDERS: Readonly<Record<string, () => Provider>> = {
-  "claude-code": () => new ClaudeCodeProvider(),
-  codex: () => new CodexProvider(),
+  "claude-code": () => withCache(new ClaudeCodeProvider()),
+  codex: () => withCache(new CodexProvider()),
 };
 
 /** The setting's word for General Auto: every known provider, as one pool. */

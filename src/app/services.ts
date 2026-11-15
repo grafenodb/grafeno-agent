@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { assertBillingAllowed } from "../providers/billing.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DEFAULTS, INCLUDED_GRAFENO_URL, loadConfig, type Config } from "../config.js";
@@ -153,6 +154,8 @@ export function realServices(version: string): AppServices {
       const report = await checkGrafeno(config);
       embedder ??= embedderFor(config.embedder, () => undefined);
       const chosen = await embedder;
+      // A provider that bills by consumption is not used without the user's express say.
+      await assertBillingAllowed(providers[0] as Provider, env);
       return AgentSession.start({
         config,
         provider: providers[0] as Provider,

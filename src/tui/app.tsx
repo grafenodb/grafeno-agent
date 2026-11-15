@@ -495,21 +495,32 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
           setMode("palace");
           break;
         case "usage": {
+          // A reading of the last minute is shown at once; "/usage refresh" asks anew.
+          const ask = { fresh: command.args === "refresh" };
           setBusy("Asking the provider");
           let fresh = usage;
           // The other providers a run may use (AGENT_PROVIDERS), each with its own plan.
-          const others: { name: string; usage: ProviderUsage | undefined }[] = [];
+          let others: { name: string; usage: ProviderUsage | undefined }[];
           try {
+            const chosen = providerIds(process.env.AGENT_PROVIDERS);
+            const [mine, theirs] = await Promise.all([
+              provider ? provider.usage(ask) : Promise.resolve(undefined),
+              Promise.all(
+                services.providers
+                  .slice(1)
+                  .filter((other) => chosen.includes(other.id))
+                  .map(async (other) => ({
+                    name: other.name,
+                    usage: await other.usage(ask).catch(() => undefined),
+                  })),
+              ),
+            ]);
             if (provider) {
               usageAt.current = Date.now();
-              fresh = (await provider.usage()) ?? usage;
+              fresh = mine ?? usage;
               if (fresh) setUsage(fresh);
             }
-            const chosen = providerIds(process.env.AGENT_PROVIDERS);
-            for (const other of services.providers.slice(1)) {
-              if (!chosen.includes(other.id)) continue;
-              others.push({ name: other.name, usage: await other.usage().catch(() => undefined) });
-            }
+            others = theirs;
           } finally {
             setBusy(undefined);
           }
