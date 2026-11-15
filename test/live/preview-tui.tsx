@@ -121,6 +121,7 @@ const services: AppServices = {
   stopGrafeno: () => "",
   saveChoice: () => undefined,
   upkeep: () => Promise.resolve(""),
+  orchestrator: () => Promise.reject(new Error("not in the preview")),
 };
 
 const app = render(<App services={services} />);

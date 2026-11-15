@@ -21,6 +21,11 @@ import {
 } from "./labels.js";
 import { Glyph, Logo } from "./logo.js";
 import { Markdown } from "./markdown.js";
+import { RunView, type RunTask } from "./run-view.js";
+import type { Orchestrator } from "../orchestrator/orchestrator.js";
+import type { ActiveWorker } from "../orchestrator/workers.js";
+import { describeReport } from "../orchestrator/telemetry.js";
+import { describePlan } from "../app/orchestrate.js";
 import { useWheel } from "./mouse.js";
 import { PalacePanel } from "./palace.js";
 import { Picker, type PickerItem } from "./picker.js";
@@ -64,7 +69,16 @@ type Item =
 type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id"> : never) : never;
 
 type Phase = "starting" | "setup-memory" | "setup-provider" | "ready" | "offline";
-type Mode = "chat" | "models" | "effort" | "resume" | "connect" | "palace" | "exiting";
+type Mode =
+  "chat" | "models" | "effort" | "resume" | "connect" | "palace" | "plan" | "runs" | "exiting";
+
+/** A run being watched: its tasks and who works on them. */
+interface Watched {
+  readonly runId: string;
+  readonly state: string;
+  readonly tasks: readonly RunTask[];
+  readonly workers: readonly ActiveWorker[];
+}
 
 interface Approval {
   readonly what: string;
@@ -101,6 +115,17 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
   const [sidebarOn, setSidebarOn] = useState(true);
   const [scroll, setScroll] = useState(0);
   const [, setTick] = useState(0);
+  const [watched, setWatched] = useState<Watched | undefined>(undefined);
+  const [runChoices, setRunChoices] = useState<PickerItem[]>([]);
+  const orchestration = useRef<
+    | {
+        orchestrator: Orchestrator;
+        request?: string;
+        planned?: Awaited<ReturnType<Orchestrator["plan"]>>;
+        running: boolean;
+      }
+    | undefined
+  >(undefined);
   const nextId = useRef(0);
   const abort = useRef<AbortController | undefined>(undefined);
   const exiting = useRef(false);
@@ -268,6 +293,75 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
     exit();
   }, [session, runTurn, notice, exit]);
 
+  /** An orchestrator wired to this screen: its questions in the permission box, its changes in the run view. */
+  const openOrchestrator = useCallback(async (): Promise<Orchestrator> => {
+    return services.orchestrator({
+      ask: (question) =>
+        new Promise<boolean>((resolve) => {
+          setApproval({
+            what: `${question.action}${question.worker ? ` (${question.worker})` : ""}`,
+            reason: question.reason,
+            resolve,
+          });
+        }),
+      onChange: (change) => {
+        setWatched((current) => {
+          if (!current) return current;
+          if (change.type === "run") return { ...current, state: change.state };
+          return {
+            ...current,
+            tasks: current.tasks.map((t) =>
+              t.id === change.task
+                ? { ...t, state: change.state, ...(change.reason ? { reason: change.reason } : {}) }
+                : t,
+            ),
+          };
+        });
+      },
+      onWorkers: (active) => {
+        setWatched((current) => (current ? { ...current, workers: active } : current));
+      },
+    });
+  }, [services]);
+
+  /** Runs (or resumes) a run, watching it, and reports how it ended. */
+  const driveRun = useCallback(
+    async (orchestrator: Orchestrator, runId: string) => {
+      const tasks = orchestrator.store.tasks(runId).map((t) => ({
+        id: t.id,
+        title: t.spec.title,
+        state: t.state,
+        ...(t.reason ? { reason: t.reason } : {}),
+      }));
+      setWatched({ runId, state: "running", tasks, workers: [] });
+      orchestration.current = { orchestrator, running: true };
+      setBusy("Running the plan");
+      try {
+        const state = await orchestrator.run(runId);
+        const lines = describeReport(orchestrator.report(runId));
+        if (state === "completed") {
+          const branch = orchestrator.integrationBranch(runId);
+          lines.push("", `The work is on ${branch}. Look at it, then merge it when you are ready:`);
+          lines.push(`  git diff HEAD...${branch}`, `  git merge ${branch}`);
+        } else if (state === "paused" || state === "waiting") {
+          lines.push("", `The run is ${state}: /runs takes it up again.`);
+        }
+        push({ kind: "block", title: "Run report", lines });
+      } catch (error) {
+        notice(
+          `The run stopped: ${error instanceof Error ? error.message : String(error)}`,
+          "error",
+        );
+      } finally {
+        setBusy(undefined);
+        setWatched(undefined);
+        orchestration.current = undefined;
+        orchestrator.close();
+      }
+    },
+    [push, notice],
+  );
+
   /** What a line typed in the box does. */
   const submit = useCallback(
     async (line: string) => {
@@ -386,6 +480,53 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
             setBusy(undefined);
           }
           break;
+        case "orchestrate": {
+          if (command.args === "") {
+            notice("Say what to build: /orchestrate build the orders API with tests", "warning");
+            break;
+          }
+          setBusy("Planning");
+          try {
+            const orchestrator = await openOrchestrator();
+            const planned = await orchestrator.plan(command.args);
+            orchestration.current = {
+              orchestrator,
+              request: command.args,
+              planned,
+              running: false,
+            };
+            push({ kind: "block", title: "Plan", lines: describePlan(planned) });
+            setMode("plan");
+          } catch (error) {
+            notice(`No plan: ${error instanceof Error ? error.message : String(error)}`, "error");
+          } finally {
+            setBusy(undefined);
+          }
+          break;
+        }
+        case "runs": {
+          try {
+            const orchestrator = await openOrchestrator();
+            const runs = orchestrator.runs();
+            if (runs.length === 0) {
+              notice("No runs in this project yet: /orchestrate starts one.");
+              orchestrator.close();
+              break;
+            }
+            orchestration.current = { orchestrator, running: false };
+            setRunChoices(
+              runs.map((run) => ({
+                id: run.id,
+                label: run.request.length > 60 ? `${run.request.slice(0, 59)}…` : run.request,
+                hint: `${run.state} · ${ago(run.updated)}`,
+              })),
+            );
+            setMode("runs");
+          } catch (error) {
+            notice(error instanceof Error ? error.message : String(error), "error");
+          }
+          break;
+        }
         case "sidebar":
           setSidebarOn((on) => !on);
           break;
@@ -397,7 +538,19 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
           break;
       }
     },
-    [session, services, provider, models, usage, status, runTurn, push, notice, leave],
+    [
+      session,
+      services,
+      provider,
+      models,
+      usage,
+      status,
+      runTurn,
+      push,
+      notice,
+      leave,
+      openOrchestrator,
+    ],
   );
 
   const onWheel = useCallback((direction: number) => {
@@ -416,6 +569,16 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         setApproval(undefined);
         notice(`Not allowed: ${firstLine(approval.what)}`, "warning");
       }
+      return;
+    }
+    if (key.escape && orchestration.current?.running) {
+      orchestration.current.orchestrator.pause();
+      notice("Pausing the run: what runs now finishes, nothing new starts.", "warning");
+      return;
+    }
+    if (key.ctrl && input === "c" && orchestration.current?.running) {
+      orchestration.current.orchestrator.cancel();
+      notice("Cancelling the run.", "warning");
       return;
     }
     if (key.escape && busy !== undefined) {
@@ -513,6 +676,14 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
                 <Text color={theme.accent}> {tool.label}</Text>
               </Box>
             ))}
+            {watched && (
+              <RunView
+                runId={watched.runId}
+                state={watched.state}
+                tasks={watched.tasks}
+                workers={watched.workers}
+              />
+            )}
           </Viewport>
           {(busy !== undefined || phase === "starting") && (
             <Working
@@ -574,6 +745,75 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
                     notice(`Effort: ${item.label}. The conversation goes on with it.`, "success");
                     setTick((t) => t + 1);
                   });
+                }}
+              />
+            )}
+            {mode === "plan" && orchestration.current?.planned && (
+              <Picker
+                title="Run this plan?"
+                items={[
+                  {
+                    id: "run",
+                    label: "Run it",
+                    hint: `${orchestration.current.orchestrator.policy.mode} · each task in its own worktree`,
+                  },
+                  { id: "cancel", label: "Not now" },
+                ]}
+                onCancel={() => {
+                  orchestration.current?.orchestrator.close();
+                  orchestration.current = undefined;
+                  setMode("chat");
+                }}
+                onSelect={(item) => {
+                  setMode("chat");
+                  const current = orchestration.current;
+                  if (!current?.planned || item.id !== "run") {
+                    current?.orchestrator.close();
+                    orchestration.current = undefined;
+                    return;
+                  }
+                  const { orchestrator, planned } = current;
+                  void (async () => {
+                    const { run, uncommitted } = await orchestrator.start(
+                      current.request ?? "",
+                      planned,
+                    );
+                    if (uncommitted.length > 0) {
+                      notice(
+                        `${String(uncommitted.length)} changed files are not committed: the run starts from your last commit and does not see them.`,
+                        "warning",
+                      );
+                    }
+                    await driveRun(orchestrator, run.id);
+                  })();
+                }}
+              />
+            )}
+            {mode === "runs" && orchestration.current && (
+              <Picker
+                title="Runs of this project"
+                items={runChoices}
+                onCancel={() => {
+                  orchestration.current?.orchestrator.close();
+                  orchestration.current = undefined;
+                  setMode("chat");
+                }}
+                onSelect={(item) => {
+                  setMode("chat");
+                  const current = orchestration.current;
+                  if (!current) return;
+                  const run = current.orchestrator.store.run(item.id);
+                  if (run && (run.state === "completed" || run.state === "cancelled")) {
+                    push({
+                      kind: "block",
+                      title: "Run report",
+                      lines: describeReport(current.orchestrator.report(item.id)),
+                    });
+                    current.orchestrator.close();
+                    orchestration.current = undefined;
+                    return;
+                  }
+                  void driveRun(current.orchestrator, item.id);
                 }}
               />
             )}

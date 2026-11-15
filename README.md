@@ -110,23 +110,25 @@ for the commands), and a side panel with:
 
 The panel hides on narrow windows, or with Ctrl+B.
 
-| Command       | What it does                                                    |
-| ------------- | --------------------------------------------------------------- |
-| `/help`       | Commands and keys                                               |
-| `/new`        | A new conversation (the current one is kept)                    |
-| `/resume`     | Take up an earlier conversation of this project                 |
-| `/models`     | Choose the model, by its exact name                             |
-| `/effort`     | Choose how hard the model thinks (Low … Max)                    |
-| `/connect`    | The provider: Claude today, more later; whether it is signed in |
-| `/palace`     | Grafeno: included, or a server you already have                 |
-| `/usage`      | Your provider's real usage, and this session's tokens           |
-| `/status`     | Provider, Grafeno, agent, project and model                     |
-| `/memory`     | What memory brought back when the session started               |
-| `/checkpoint` | Save where the work stands, in memory                           |
-| `/upkeep`     | Report on the memory: duplicates, contradictions                |
-| `/sidebar`    | Show or hide the side panel                                     |
-| `/clear`      | Clear the conversation from the screen                          |
-| `/exit`       | Leave, saving where the session stands                          |
+| Command        | What it does                                                    |
+| -------------- | --------------------------------------------------------------- |
+| `/help`        | Commands and keys                                               |
+| `/new`         | A new conversation (the current one is kept)                    |
+| `/resume`      | Take up an earlier conversation of this project                 |
+| `/models`      | Choose the model, by its exact name                             |
+| `/effort`      | Choose how hard the model thinks (Low … Max)                    |
+| `/connect`     | The provider: Claude today, more later; whether it is signed in |
+| `/palace`      | Grafeno: included, or a server you already have                 |
+| `/usage`       | Your provider's real usage, and this session's tokens           |
+| `/status`      | Provider, Grafeno, agent, project and model                     |
+| `/memory`      | What memory brought back when the session started               |
+| `/checkpoint`  | Save where the work stands, in memory                           |
+| `/orchestrate` | Plan a request and run it with several workers (see below)      |
+| `/runs`        | Earlier runs of this project: see one, or resume it             |
+| `/upkeep`      | Report on the memory: duplicates, contradictions                |
+| `/sidebar`     | Show or hide the side panel                                     |
+| `/clear`       | Clear the conversation from the screen                          |
+| `/exit`        | Leave, saving where the session stands                          |
 
 Keys: Enter sends; `\` then Enter (or Shift+Enter) starts a new line; ↑ ↓
 go through earlier messages; Tab completes a command; PgUp/PgDn scroll the
@@ -198,6 +200,42 @@ meaning too. The first session downloads a small multilingual model (about
 With it, the memory that answers a question reached the model 93% of the
 time instead of 63% on the measured set (`docs/measurements/`). If the
 model is not installed or fails, memory works by words alone.
+
+### Several workers on one request
+
+`/orchestrate <request>` (or `grafeno-agent run "<request>"`) turns a
+request into a plan of tasks with dependencies, shows it, and, when you say
+so, runs it with several workers at once:
+
+- each task works in its own **git worktree and branch**; your working tree
+  and branch are never written;
+- each worker gets the model and effort its task needs (architecture and
+  hard backend work on the deepest model, tests and docs on the lightest),
+  checked against what your provider really offers and how much of your plan
+  is used;
+- workers share memory through Grafeno: decisions of the tasks they build
+  on reach them, with who made them;
+- a task is done only when its **checks pass, run by code** (its tests,
+  typecheck, build or files); a failed check goes back to its worker;
+- finished tasks are merged into the run's **integration branch**
+  (`grafeno/<run>/integration`); you look at it and merge it yourself.
+
+The run's policy decides what workers may do alone: `controlled` (default)
+lets them write in their worktree and run checks and builds; `supervised`
+asks for every change; `extended` allows commands in the worktree. Pushing,
+publishing, deploying, infrastructure and deleting folders are always asked.
+Commands run with your rights: the worktree is the boundary, not a sandbox.
+
+```bash
+grafeno-agent run "add an orders API with tests" --workers 3
+grafeno-agent run "three small utilities with tests" --light --yes   # light models, low effort
+grafeno-agent runs              # this project's runs
+grafeno-agent runs <id>         # one run's report
+grafeno-agent resume <id>       # go on with a paused or waiting run
+```
+
+Runs are kept in the agent's data folder, so a run stopped by closing the
+terminal, by a pause or by your plan's limit is resumed where it stopped.
 
 ### Several agents
 

@@ -19,6 +19,7 @@ import type { ModelChoice, Provider } from "../providers/types.js";
 import { settingsPath, updateSettings } from "../settings-file.js";
 import { checkGrafeno } from "../startup.js";
 import { AgentSession } from "./session.js";
+import type { Orchestrator, OrchestratorOptions } from "../orchestrator/orchestrator.js";
 
 /** What the interface shows about the Grafeno the agent uses. */
 export interface GrafenoInfo {
@@ -61,6 +62,8 @@ export interface AppServices {
   saveChoice(choice: { model?: string; effort?: string }): void;
   /** The memory upkeep report for the session's project. */
   upkeep(session: AgentSession): Promise<string>;
+  /** An orchestrator for the project, on the settings, wired to the interface. */
+  orchestrator(extra: Partial<OrchestratorOptions>): Promise<Orchestrator>;
 }
 
 /** The embedder the settings name, when it can run here; `say` tells the user what happens. */
@@ -186,6 +189,11 @@ export function realServices(version: string): AppServices {
           ? {}
           : { AGENT_EFFORT: choice.effort === "default" ? "" : choice.effort }),
       });
+    },
+    async orchestrator(extra) {
+      // Loaded when used: the orchestrator is not needed to chat.
+      const { createOrchestrator } = await import("./orchestrate.js");
+      return createOrchestrator({}, extra);
     },
     async upkeep(session: AgentSession) {
       const report = await upkeep({

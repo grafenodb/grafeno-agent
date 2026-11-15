@@ -55,6 +55,7 @@ export const CHECK_COMMANDS: readonly RegExp[] = [
   /^npx\s+(--no-install\s+)?(tsc|vitest|jest|eslint|prettier|tsx|ts-node|playwright|biome)(\s+[\w@/.:=,*-]+)*$/,
   /^(tsc|vitest|jest|eslint|prettier|biome)(\s+[\w@/.:=,*-]+)*$/,
   /^node\s+[\w./-]+\.(m?js|cjs|ts)(\s+[\w@/.:=,-]+)*$/,
+  /^node\s+--test(\s+[\w@/.:=,*-]+)*$/,
   /^(python3?\s+-m\s+)?(pytest|unittest|mypy|ruff|black)(\s+[\w@/.:=,-]+)*$/,
   /^cargo\s+(test|build|check|clippy|fmt)(\s+[\w@/.:=,-]+)*$/,
   /^go\s+(test|build|vet)(\s+[\w@/.:=,-]+)*$/,
@@ -91,7 +92,12 @@ export class Policy {
   }
 
   /** A tool call, given what the tool itself decided about it. */
-  tool(tool: Pick<Tool, "name">, input: Record<string, unknown>, own: PermissionDecision): Verdict {
+  tool(
+    tool: Pick<Tool, "name">,
+    input: Record<string, unknown>,
+    own: PermissionDecision,
+    ownChecks: readonly string[] = [],
+  ): Verdict {
     if (own.permission === "never")
       return { decision: "never", reason: own.reason ?? "the tool refuses it" };
     if (own.permission === "free")
@@ -102,7 +108,7 @@ export class Policy {
         : { decision: "allow", reason: "it writes in the task's own worktree" };
     }
     if (tool.name === "run_command")
-      return this.command(typeof input.command === "string" ? input.command : "");
+      return this.command(typeof input.command === "string" ? input.command : "", ownChecks);
     if (tool.name === "web_fetch") {
       return this.mode === "extended"
         ? { decision: "allow", reason: "extended: reading the web is allowed" }
@@ -113,8 +119,13 @@ export class Policy {
       : { decision: "ask", reason: own.reason ?? "it needs permission" };
   }
 
-  /** A command a worker wants to run in its worktree. */
-  command(command: string): Verdict {
+  /**
+   * A command a worker wants to run in its worktree. `ownChecks` are the
+   * commands of its task's acceptance: the verifier runs them anyway, so in
+   * `controlled` the worker may run them too, exactly as written, to check
+   * its own work before it says it is done.
+   */
+  command(command: string, ownChecks: readonly string[] = []): Verdict {
     const trimmed = command.trim();
     const sensitive = SENSITIVE.find((rule) => rule.pattern.test(trimmed));
     if (sensitive) return { decision: "ask", reason: `${sensitive.reason}: always asked` };
@@ -122,6 +133,9 @@ export class Policy {
       return { decision: "ask", reason: "supervised: every command is asked" };
     if (this.mode === "extended")
       return { decision: "allow", reason: "extended: commands in the worktree" };
+    if (ownChecks.some((check) => check.trim() === trimmed)) {
+      return { decision: "allow", reason: "one of the task's own checks" };
+    }
     if (!COMPOUND.test(trimmed) && this.#checks.some((pattern) => pattern.test(trimmed))) {
       return { decision: "allow", reason: "a check or a build" };
     }
@@ -160,9 +174,10 @@ export class Policy {
     who: { worker?: string; task?: string },
     ask?: (question: Question) => Promise<boolean>,
     record?: (question: Question, answer: boolean | "nobody") => void,
+    ownChecks: readonly string[] = [],
   ): Approver {
     return async (call, tool, decision) => {
-      const verdict = this.tool(tool, call.input, decision);
+      const verdict = this.tool(tool, call.input, decision, ownChecks);
       if (verdict.decision === "allow") return true;
       if (verdict.decision === "never") return false;
       const question: Question = {

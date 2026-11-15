@@ -67,11 +67,12 @@ export class TaskPipeline implements TaskRunner {
 
   async workspaceFor(task: TaskRecord, context: AttemptContext): Promise<Workspace> {
     if (!(await this.isolated())) return new Workspace(this.options.projectRoot);
-    const worktree = await this.#worktrees().prepare(
-      context.runId,
-      task.id,
-      await this.base(context.runId),
-    );
+    const worktrees = this.#worktrees();
+    // From the work merged so far (its dependencies' included), else the base.
+    // Found by the first real run: from the base, the tests task did not see
+    // the module it was testing.
+    const start = (await worktrees.tip(context.runId)) ?? (await this.base(context.runId));
+    const worktree = await worktrees.prepare(context.runId, task.id, start);
     return new Workspace(worktree.path);
   }
 

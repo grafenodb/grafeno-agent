@@ -50,9 +50,14 @@ describe("the editor", () => {
 
 describe("the commands", () => {
   it("reads a command and its aliases, and suggests by prefix", () => {
-    expect(parseCommand("/models")).toEqual({ name: "models", known: true });
-    expect(parseCommand("/model")).toEqual({ name: "models", known: true });
-    expect(parseCommand("/nope")).toEqual({ name: "nope", known: false });
+    expect(parseCommand("/models")).toEqual({ name: "models", known: true, args: "" });
+    expect(parseCommand("/model")).toEqual({ name: "models", known: true, args: "" });
+    expect(parseCommand("/orchestrate build the API")).toEqual({
+      name: "orchestrate",
+      known: true,
+      args: "build the API",
+    });
+    expect(parseCommand("/nope")).toEqual({ name: "nope", known: false, args: "" });
     expect(parseCommand("hello /models")).toBeUndefined();
     expect(suggest("/re").map((c) => c.name)).toEqual(["resume"]);
     expect(suggest("/").length).toBeGreaterThan(8);

@@ -1,0 +1,255 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
+import type { Tool } from "../agent/tools.js";
+import type { Embedder } from "../embed/types.js";
+import type { Project } from "../memory/session.js";
+import type { Vault } from "../memory/vault.js";
+import type { Model } from "../model/index.js";
+import type { ModelChoice, Provider } from "../providers/types.js";
+import { projectTools } from "../tools/index.js";
+import type { Workspace } from "../tools/workspace.js";
+import { workerMemory } from "./memory.js";
+import type { TaskKind, TaskSpec } from "./plan.js";
+import { makePlan, type Planned } from "./planner.js";
+import { TaskPipeline } from "./pipeline.js";
+import { Policy, type Autonomy, type Question } from "./policy.js";
+import type { Profile, Route } from "./router.js";
+import { Scheduler, type SchedulerChange } from "./scheduler.js";
+import type { RunState } from "./states.js";
+import { SqliteStore, type OperationalStore, type Run } from "./store.js";
+import { runReport, type RunReport } from "./telemetry.js";
+import { verifier, type CommandRunner } from "./verify.js";
+import { WorkerPool, type ActiveWorker, type ContextPolicy } from "./workers.js";
+import { runGit, WorktreeManager } from "./worktrees.js";
+
+/** Where the orchestrator keeps runs and worktrees: the agent's data folder. */
+export function dataDir(env: Record<string, string | undefined> = process.env): string {
+  if (env.GRAFENO_AGENT_DATA) return env.GRAFENO_AGENT_DATA;
+  if (process.platform === "win32" && env.LOCALAPPDATA)
+    return join(env.LOCALAPPDATA, "grafeno-agent");
+  return join(env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"), "grafeno-agent");
+}
+
+function folderOf(name: string): string {
+  return name.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 60) || "_";
+}
+
+export interface OrchestratorOptions {
+  readonly provider: Provider;
+  readonly project: Project;
+  /** The project's folder (a git repository for isolation). */
+  readonly projectRoot: string;
+  /** Memory in Grafeno; without it, workers have none. */
+  readonly vault?: Vault;
+  readonly embedder?: Embedder;
+  /** Secrets never stored or shown (the agent's key). */
+  readonly secrets?: readonly string[];
+  readonly mode?: Autonomy;
+  readonly maxWorkers?: number;
+  readonly maxAttempts?: number;
+  readonly attemptTimeoutMs?: number;
+  /** Profiles per task kind (tier and effort); for example, all light for a cheap run. */
+  readonly profiles?: Partial<Record<TaskKind, Profile>>;
+  /** The planner's model and effort; default: what the router gives an architecture task. */
+  readonly planner?: ModelChoice;
+  readonly context?: ContextPolicy;
+  /** Asks a person (the interface); without it, what needs a person is refused or waits in review. */
+  readonly ask?: (question: Question) => Promise<boolean>;
+  /** Where runs and worktrees go. Default: the agent's data folder. */
+  readonly dataDir?: string;
+  /** For tests. */
+  readonly store?: OperationalStore;
+  readonly tools?: (workspace: Workspace) => Tool[];
+  readonly makeModel?: (choice: ModelChoice) => Model;
+  readonly commandRunner?: CommandRunner;
+  readonly onChange?: (change: SchedulerChange) => void;
+  readonly onWorkers?: (active: readonly ActiveWorker[]) => void;
+}
+
+/**
+ * Runs a request as a plan of tasks done by several workers: the planner
+ * writes the plan, code checks it; the scheduler runs the tasks in their own
+ * worktrees with workers that share memory through Grafeno; each task is
+ * verified by code and merged into the run's integration branch, under the
+ * run's policy. Everything is kept in the operational store, so a run can be
+ * resumed after the process ends.
+ */
+export class Orchestrator {
+  readonly store: OperationalStore;
+  readonly worktrees: WorktreeManager;
+  readonly policy: Policy;
+  readonly pool: WorkerPool;
+  readonly pipeline: TaskPipeline;
+  #scheduler: Scheduler | undefined;
+
+  constructor(private readonly options: OrchestratorOptions) {
+    const root = options.dataDir ?? dataDir();
+    const folder = folderOf(options.project.name);
+    this.store = options.store ?? new SqliteStore(join(root, "runs", `${folder}.db`));
+    this.worktrees = new WorktreeManager({
+      repo: options.projectRoot,
+      root: join(root, "worktrees", folder),
+    });
+    this.policy = new Policy({ mode: options.mode ?? "controlled" });
+    const secrets = options.secrets ?? [];
+    this.pool = new WorkerPool({
+      provider: options.provider,
+      workspaceFor: (task, context) => this.pipeline.workspaceFor(task, context),
+      tools:
+        options.tools ??
+        ((workspace) =>
+          projectTools(workspace, { hiddenEnv: ["GRAFENO_AGENT_KEY", "GRAFENO_OWNER_TOKEN"] })),
+      redact: secrets,
+      approverFor: (task, worker, context) =>
+        this.policy.approver(
+          { worker, task: task.id },
+          options.ask,
+          (question, answer) => {
+            context.note("question", { ...question, answer });
+          },
+          task.spec.acceptance.flatMap((check) => (check.check === "command" ? [check.run] : [])),
+        ),
+      ...(options.vault
+        ? {
+            memoryFor: workerMemory({
+              vault: options.vault,
+              project: options.project,
+              knownSecrets: secrets,
+              ...(options.embedder ? { embedder: options.embedder } : {}),
+            }),
+          }
+        : {}),
+      ...(options.profiles ? { profiles: options.profiles } : {}),
+      ...(options.context ? { context: options.context } : {}),
+      ...(options.makeModel ? { makeModel: options.makeModel } : {}),
+      ...(options.onWorkers ? { onChange: options.onWorkers } : {}),
+    });
+    this.pipeline = new TaskPipeline({
+      store: this.store,
+      projectRoot: options.projectRoot,
+      worktrees: this.worktrees,
+      inner: () => this.pool,
+      verify: verifier({
+        redact: secrets,
+        ...(options.commandRunner ? { runner: options.commandRunner } : {}),
+      }),
+      policy: this.policy,
+      ...(options.ask ? { ask: options.ask } : {}),
+    });
+  }
+
+  /** Writes and checks a plan for a request; nothing runs yet. */
+  async plan(
+    request: string,
+    signal?: AbortSignal,
+  ): Promise<Planned & { routes: Map<string, Route> }> {
+    const choice = this.options.planner ?? (await this.#plannerChoice());
+    const model = this.options.makeModel?.(choice) ?? this.options.provider.create(choice);
+    const planned = await makePlan(
+      { request, context: await this.#projectContext() },
+      { model, ...(signal ? { signal } : {}) },
+    );
+    const routes = new Map<string, Route>();
+    for (const task of planned.plan.tasks) routes.set(task.id, await this.pool.routeFor(task));
+    return { ...planned, routes };
+  }
+
+  /** Stores a checked plan as a run, from the project's HEAD; says what the run will not see. */
+  async start(request: string, planned: Planned): Promise<{ run: Run; uncommitted: string[] }> {
+    const isolated = await this.pipeline.isolated();
+    const base = isolated ? await this.worktrees.head() : undefined;
+    const uncommitted = isolated ? await this.worktrees.uncommitted() : [];
+    const run = this.store.createRun(request, planned.plan, planned.order, base);
+    this.store.event(run.id, "planned", {
+      attempts: planned.attempts,
+      mode: this.policy.mode,
+      isolated,
+    });
+    if (uncommitted.length > 0)
+      this.store.event(run.id, "uncommitted", { files: uncommitted.length });
+    return { run, uncommitted };
+  }
+
+  /**
+   * Runs (or resumes) a run until nothing more can happen now. When it is
+   * completed, worktrees that are safe to remove are removed; the
+   * integration branch stays for the user.
+   */
+  async run(runId: string): Promise<RunState> {
+    const scheduler = new Scheduler({
+      store: this.store,
+      runner: this.pipeline,
+      maxWorkers: this.options.maxWorkers ?? 3,
+      ...(this.options.maxAttempts ? { maxAttempts: this.options.maxAttempts } : {}),
+      ...(this.options.attemptTimeoutMs ? { attemptTimeoutMs: this.options.attemptTimeoutMs } : {}),
+      ...(this.options.onChange ? { onChange: this.options.onChange } : {}),
+    });
+    this.#scheduler = scheduler;
+    try {
+      const state = await scheduler.run(runId);
+      if (state === "completed" || state === "cancelled") await this.pipeline.finish(runId);
+      return state;
+    } finally {
+      this.#scheduler = undefined;
+    }
+  }
+
+  pause(): void {
+    this.#scheduler?.pause();
+  }
+
+  cancel(): void {
+    this.#scheduler?.cancel();
+  }
+
+  runs(): Run[] {
+    return this.store.runs();
+  }
+
+  report(runId: string): RunReport {
+    return runReport(this.store, runId);
+  }
+
+  /** The run's integration branch, where its work landed. */
+  integrationBranch(runId: string): string {
+    return this.worktrees.integrationBranch(runId);
+  }
+
+  close(): void {
+    this.store.close();
+  }
+
+  async #plannerChoice(): Promise<ModelChoice> {
+    const probe: TaskSpec = {
+      id: "plan",
+      title: "Plan",
+      description: "",
+      kind: "architecture",
+      dependsOn: [],
+      complexity: 3,
+      capabilities: [],
+      touches: [],
+      acceptance: [{ check: "files", exist: ["."] }],
+      parallelSafe: true,
+    };
+    const route = await this.pool.routeFor(probe);
+    if (route.kind === "hold") throw new Error(`Not planning now: ${route.reason}`);
+    return {
+      ...(route.model === "default" ? {} : { model: route.model }),
+      ...(route.effort ? { effort: route.effort } : {}),
+    };
+  }
+
+  /** What the planner is told about the project: its files, as data. */
+  async #projectContext(): Promise<string> {
+    const files = await runGit(this.options.projectRoot, ["ls-files"]);
+    const list = files.code === 0 ? files.stdout.split("\n").filter(Boolean) : [];
+    const shown = list.slice(0, 150);
+    return [
+      `Project: ${this.options.project.name}`,
+      list.length > 0
+        ? `Files (${String(list.length)}${list.length > shown.length ? `, first ${String(shown.length)}` : ""}):\n${shown.join("\n")}`
+        : "The project has no files under git yet.",
+    ].join("\n\n");
+  }
+}

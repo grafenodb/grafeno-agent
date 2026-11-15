@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Orchestration (phase A)**: `/orchestrate <request>` and
+  `grafeno-agent run|runs|resume` plan a request into a DAG of tasks checked
+  by code and run it with several workers at once: each in its own git
+  worktree, routed to the model and effort its task needs, sharing memory
+  through Grafeno, verified by code, merged into an integration branch under
+  a `supervised` / `controlled` / `extended` policy, with sessions renewed
+  when their context fills up and every run kept for resuming. Design and
+  progress in `docs/orchestration.md`; first real runs in
+  `docs/measurements/orchestration-2026-11-15.md`. The project now needs
+  Node 26.13 or later.
+
 - **Include Grafeno**: on first run (or `init --include-grafeno`) the agent
   can download the official Grafeno build, checked against its checksum,
   and run it in the background on 127.0.0.1:7811, making its own key; or

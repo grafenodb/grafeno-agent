@@ -405,6 +405,37 @@ sums them per task and per model and effort, for the interface and for
 phase C. 5 tests. Not done: recognising tasks a tool could settle without a
 model (no safe rule yet; the planner is told to keep checks as acceptance).
 
+**A9 done** (`orchestrator.ts`, `app/orchestrate.ts`, `tui/run-view.tsx`):
+
+- **The orchestrator** wires the planner, the store, the scheduler, the
+  pipeline, the workers, memory and the policy.
+- **In the interface,** `/orchestrate <request>` shows the plan, runs it
+  after the user agrees, and opens a run view: the DAG's states, the
+  active workers, questions answered in place, and the report.
+- **From the command line,** `grafeno-agent run "<request>"`
+  (`--mode`, `--workers`, `--light`, `--yes`), `grafeno-agent runs [id]`
+  and `grafeno-agent resume <id>`.
+
+The first real runs, with three Claude workers (D5), are recorded in
+[`docs/measurements/orchestration-2026-11-15.md`](measurements/orchestration-2026-11-15.md).
+The first run failed, and so found two bugs that fake-model tests had not
+shown:
+
+1. A dependant's worktree started from the base commit, so it did not see
+   its dependencies' work. It now starts from the integration branch's
+   tip.
+2. In `controlled`, workers could not run their own acceptance commands.
+   They now may, exactly as written.
+
+Both have tests that fail without the fix. The second run completed: three
+tasks, one attempt each, 8 of 8 tests passing on the integration branch,
+and the user's branch untouched.
+
+**Phase A is done**, as far as the stage table below shows. Each stage's
+"done when" is shown by tests (`npm run ci`, `eval`, `eval:agents`,
+`eval:orchestration`), and one real run is recorded. The brief's own §A.10
+list was not at hand when this was checked; it should be read against it.
+
 | Stage | What                                                                                                                          | Done when (verified by tests)                                                                                                                     |
 | ----- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A1    | Plan schema, checker (cycles, references, acceptance), planner prompt and repair loop                                         | Valid plans accepted; cyclic, dangling, unchecked plans refused with reasons; planner repairs from the problems (fake model)                      |

@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { render as renderInk } from "ink-testing-library";
@@ -11,6 +12,7 @@ import { FakeModel, type FakeTurn } from "../../src/model/index.js";
 import type { ModelChoice, Provider } from "../../src/providers/types.js";
 import { SessionStore } from "../../src/sessions/store.js";
 import { App } from "../../src/tui/app.js";
+import { Orchestrator } from "../../src/orchestrator/orchestrator.js";
 import { FakeVault } from "../memory/fake-vault.js";
 
 const config: Config = {
@@ -72,6 +74,7 @@ interface Setup {
   readonly needsSetup?: boolean;
   readonly start?: () => Promise<AgentSession>;
   readonly vault?: FakeVault;
+  readonly orchestrator?: AppServices["orchestrator"];
 }
 
 function services(setup: Setup): AppServices {
@@ -108,6 +111,7 @@ function services(setup: Setup): AppServices {
     stopGrafeno: () => "stopped",
     saveChoice: () => undefined,
     upkeep: () => Promise.resolve("Memory is in order: nothing to fix."),
+    orchestrator: setup.orchestrator ?? (() => Promise.reject(new Error("no orchestrator here"))),
   };
 }
 
@@ -123,11 +127,11 @@ function render(tree: Parameters<typeof renderInk>[0]): ReturnType<typeof render
 const ENTER = "\r";
 const DOWN = "\u001B[B";
 
-async function until(check: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 5000;
+async function until(check: () => boolean, what: string, ms = 5000): Promise<void> {
+  const deadline = Date.now() + ms;
   while (!check()) {
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
   }
 }
 
@@ -338,6 +342,97 @@ describe("memory in the interface", { timeout: 20_000 }, () => {
     await until(() => seen(app).includes("Pratt it is."), "the answer");
     expect(seen(app)).toContain("1 recalled, 1 fact · Parser design");
     await until(() => now(app).includes("last message: 1 recalled"), "the panel");
+    app.unmount();
+  });
+});
+
+describe("orchestration in the interface", { timeout: 60_000 }, () => {
+  it("plans a request, runs it after the user says so, shows the run and its report", async () => {
+    const repo = join(dir, "project");
+    mkdirSync(repo);
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, windowsHide: true });
+    git("init", "-q", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.invalid");
+    writeFileSync(join(repo, "README.md"), "# p\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "start");
+    const plan = {
+      goal: "Two files",
+      risks: [],
+      tasks: ["alpha", "beta"].map((id) => ({
+        id,
+        title: `Write ${id}`,
+        description: `Create ${id}.txt.`,
+        kind: "docs",
+        dependsOn: [],
+        complexity: 1,
+        capabilities: ["code"],
+        touches: [`${id}.txt`],
+        acceptance: [{ check: "files", exist: [`${id}.txt`] }],
+        parallelSafe: true,
+      })),
+    };
+    const provider: Provider = {
+      id: "fake",
+      name: "Fake",
+      signIn: "",
+      tiers: { deep: ["m"], standard: ["m"], light: ["m"] },
+      status: () => Promise.resolve({ installed: true, signedIn: true, detail: "" }),
+      models: () => Promise.resolve([{ id: "m", name: "M" }]),
+      efforts: () => [],
+      usage: () => Promise.resolve(undefined),
+      modelName: (id) => id,
+      create: () =>
+        new FakeModel({
+          turns: [
+            (context) => {
+              if (context.system.includes("You are the planner")) {
+                return [{ say: `\`\`\`json\n${JSON.stringify(plan)}\n\`\`\`` }];
+              }
+              const file = /these files exist: (\S+)/.exec(context.message)?.[1] ?? "x.txt";
+              return [
+                { call: "write_file", input: { path: file, content: "ok\n" } },
+                { say: "done" },
+              ];
+            },
+          ],
+        }),
+    };
+    const app = render(
+      <App
+        services={services({
+          turns: [[{ say: "hi" }]],
+          orchestrator: (extra) =>
+            Promise.resolve(
+              new Orchestrator({
+                provider,
+                project: { name: "p", path: repo },
+                projectRoot: repo,
+                dataDir: join(dir, "data"),
+                ...extra,
+              }),
+            ),
+        })}
+      />,
+    );
+    await ready(app);
+    await type(app, "/orchestrate write alpha and beta");
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("Run this plan?"), "the plan");
+    expect(seen(app)).toContain("Goal: Two files");
+    expect(seen(app)).toContain("Write alpha");
+    app.stdin.write(ENTER);
+    // The last frame, not every frame: joining them all each time slows the run itself.
+    await until(() => now(app).includes("Run report"), "the report", 45_000);
+    expect(now(app)).toContain(": completed");
+    expect(now(app)).toContain("git merge grafeno/");
+    expect(
+      execFileSync("git", ["branch", "--list", "grafeno/*/integration"], {
+        cwd: repo,
+        encoding: "utf8",
+      }),
+    ).toContain("integration");
     app.unmount();
   });
 });

@@ -112,6 +112,21 @@ export class WorktreeManager {
     return join(this.root, short(runId), taskId);
   }
 
+  /**
+   * The integration branch's latest commit, once the run has one: the work
+   * of every task merged so far. A task starts from it, so it sees what its
+   * dependencies did.
+   */
+  async tip(runId: string): Promise<string | undefined> {
+    const result = await this.#git(this.repo, [
+      "rev-parse",
+      "--verify",
+      "-q",
+      `refs/heads/${this.integrationBranch(runId)}`,
+    ]);
+    return result.code === 0 ? result.stdout.trim() : undefined;
+  }
+
   /** The task's worktree, made from `base` the first time, the same one after a restart. */
   async prepare(runId: string, taskId: string, base: string): Promise<Worktree> {
     const path = this.pathFor(runId, taskId);
@@ -137,14 +152,32 @@ export class WorktreeManager {
     return (await this.#must(worktree.path, ["rev-parse", "HEAD"])).trim();
   }
 
-  /** Files changed on the task's branch since the base. */
+  /**
+   * Files the task changed on its branch since the commit the branch was
+   * made from (the base, or the integration branch's tip of that moment):
+   * what its dependencies did is not counted as its own, before or after
+   * the merge.
+   */
   async changed(runId: string, taskId: string, base: string): Promise<string[]> {
-    const out = await this.#must(this.repo, [
-      "diff",
-      "--name-only",
-      `${base}...${this.branchFor(runId, taskId)}`,
-    ]);
+    const branch = this.branchFor(runId, taskId);
+    const from = (await this.startOf(branch)) ?? base;
+    const out = await this.#must(this.repo, ["diff", "--name-only", from, branch]);
     return out.split("\n").filter(Boolean);
+  }
+
+  /**
+   * The commit a branch was made from: the oldest entry of its reflog, which
+   * git keeps for every branch it makes (and which survives a restart).
+   */
+  async startOf(branch: string): Promise<string | undefined> {
+    const log = await this.#git(this.repo, [
+      "reflog",
+      "show",
+      "--format=%H",
+      `refs/heads/${branch}`,
+    ]);
+    if (log.code !== 0) return undefined;
+    return log.stdout.trim().split("\n").filter(Boolean).at(-1);
   }
 
   /** Whether the task's branch is already in the integration branch (a merge done before a crash). */

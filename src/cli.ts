@@ -17,6 +17,11 @@ import { createModel } from "./model/index.js";
 import { StartupError, checkGrafeno, type AgentIdentity } from "./startup.js";
 import { embedderFor, prepareGrafeno, realServices } from "./app/services.js";
 import { runTui } from "./tui/run.js";
+import { createInterface } from "node:readline/promises";
+import { createOrchestrator, describePlan, type OrchestrateSettings } from "./app/orchestrate.js";
+import type { Orchestrator, OrchestratorOptions } from "./orchestrator/orchestrator.js";
+import { AUTONOMY, type Autonomy } from "./orchestrator/policy.js";
+import { describeReport } from "./orchestrator/telemetry.js";
 
 const USAGE = `Usage: grafeno-agent <command>
 
@@ -30,7 +35,13 @@ Commands:
   check    Check the settings, that Grafeno answers and that the agent's key works.
   version  Show the version.
   upkeep  Look after the project's memory: duplicates, contradictions, the palace's
-          arrangement. Add --apply to carry out the safe fixes.`;
+          arrangement. Add --apply to carry out the safe fixes.
+  run "<request>"  Plan the request and run it with several workers, each in its own
+          git worktree; the work lands on an integration branch for you to merge.
+          --mode supervised|controlled|extended (default controlled), --workers N
+          (default 3), --light (light models, low effort), --yes (no confirmation).
+  runs [id]  The project's runs, or one run's report.
+  resume <id>  Go on with a paused or waiting run.`;
 
 /** Days between upkeeps before the chat suggests one. */
 const UPKEEP_EVERY_DAYS = 7;
@@ -196,6 +207,139 @@ async function runUpkeep(apply: boolean): Promise<number> {
   return 0;
 }
 
+/** The run settings from the command line: --mode, --workers, --light. */
+function runSettings(argv: readonly string[]): OrchestrateSettings {
+  const mode = flag(argv, "--mode");
+  if (mode !== undefined && !(AUTONOMY as readonly string[]).includes(mode)) {
+    throw new Error(`--mode must be one of ${AUTONOMY.join(", ")}`);
+  }
+  const workers = Number(flag(argv, "--workers") ?? "3");
+  return {
+    ...(mode === undefined ? {} : { mode: mode as Autonomy }),
+    workers: Number.isFinite(workers) && workers >= 1 ? Math.floor(workers) : 3,
+    light: argv.includes("--light"),
+  };
+}
+
+/** Asks a yes/no question on the terminal; no when there is no terminal. */
+async function confirm(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return false;
+  const lines = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await lines.question(`${question} [y/N] `);
+    return /^(y|yes|s|si|sí)$/i.test(answer.trim());
+  } finally {
+    lines.close();
+  }
+}
+
+/** Runs a run to where it stops, printing what happens. */
+async function drive(orchestrator: Orchestrator, runId: string): Promise<number> {
+  const state = await orchestrator.run(runId);
+  console.log("");
+  for (const line of describeReport(orchestrator.report(runId))) console.log(line);
+  if (state === "completed") {
+    const branch = orchestrator.integrationBranch(runId);
+    console.log(
+      `\nThe work is on the branch ${branch}. Look at it, then merge it when you are ready:`,
+    );
+    console.log(`  git diff HEAD...${branch}`);
+    console.log(`  git merge ${branch}`);
+  } else if (state === "paused" || state === "waiting") {
+    console.log(`\nThe run is ${state}. Go on with: grafeno-agent resume ${runId}`);
+  }
+  orchestrator.close();
+  return state === "completed" ? 0 : 1;
+}
+
+function printChanges(): Pick<OrchestratorOptions, "onChange"> {
+  return {
+    onChange: (change) => {
+      if (change.type === "task") {
+        console.log(
+          `  ${change.task.padEnd(22)} ${change.state}${change.reason ? `  ${change.reason.split("\n", 1)[0] ?? ""}` : ""}`,
+        );
+      }
+    },
+  };
+}
+
+async function orchestrateCommand(argv: readonly string[]): Promise<number> {
+  const request = argv
+    .filter(
+      (arg, i) => !arg.startsWith("--") && !["--mode", "--workers"].includes(argv[i - 1] ?? ""),
+    )
+    .join(" ")
+    .trim();
+  if (request === "") {
+    console.error(
+      'Say what to do: grafeno-agent run "build the orders API with tests" [--mode controlled] [--workers 3] [--light] [--yes]',
+    );
+    return 2;
+  }
+  const settings = runSettings(argv);
+  const orchestrator = await createOrchestrator(settings, {
+    ...printChanges(),
+    ask: async (question) =>
+      confirm(
+        `\n  ? ${question.worker ?? "The run"} wants to ${question.action} (${question.reason}). Allow it?`,
+      ),
+  });
+  console.log("Planning…");
+  const planned = await orchestrator.plan(request);
+  for (const line of describePlan(planned)) console.log(line);
+  if (!argv.includes("--yes") && !(await confirm("\nRun this plan?"))) {
+    console.log("Not run.");
+    orchestrator.close();
+    return 0;
+  }
+  const { run, uncommitted } = await orchestrator.start(request, planned);
+  if (uncommitted.length > 0) {
+    console.log(
+      `\nNote: ${String(uncommitted.length)} changed files are not committed; the run starts from your last commit and does not see them.`,
+    );
+  }
+  console.log(
+    `\nRun ${run.id} (${settings.mode ?? "controlled"}, up to ${String(settings.workers ?? 3)} workers):`,
+  );
+  return drive(orchestrator, run.id);
+}
+
+async function runsCommand(argv: readonly string[]): Promise<number> {
+  const orchestrator = await createOrchestrator({});
+  const id = argv.find((arg) => !arg.startsWith("--"));
+  if (id) {
+    for (const line of describeReport(orchestrator.report(id))) console.log(line);
+  } else {
+    const runs = orchestrator.runs();
+    if (runs.length === 0) console.log("No runs in this project yet.");
+    for (const run of runs) {
+      console.log(
+        `${run.id}  ${run.state.padEnd(10)} ${run.created.slice(0, 16).replace("T", " ")}  ${run.request.slice(0, 60)}`,
+      );
+    }
+  }
+  orchestrator.close();
+  return 0;
+}
+
+async function resumeCommand(argv: readonly string[]): Promise<number> {
+  const id = argv.find((arg) => !arg.startsWith("--"));
+  if (!id) {
+    console.error("Which run? grafeno-agent runs lists them.");
+    return 2;
+  }
+  const orchestrator = await createOrchestrator(runSettings(argv), {
+    ...printChanges(),
+    ask: async (question) =>
+      confirm(
+        `\n  ? ${question.worker ?? "The run"} wants to ${question.action} (${question.reason}). Allow it?`,
+      ),
+  });
+  console.log(`Resuming ${id}:`);
+  return drive(orchestrator, id);
+}
+
 async function main(argv: readonly string[]): Promise<number> {
   // Real environment variables win over the settings file. Run from the
   // source (development), ./.env is read too; installed, never.
@@ -216,6 +360,12 @@ async function main(argv: readonly string[]): Promise<number> {
       return 0;
     case "upkeep":
       return runUpkeep(argv.includes("--apply"));
+    case "run":
+      return orchestrateCommand(argv.slice(1));
+    case "runs":
+      return runsCommand(argv.slice(1));
+    case "resume":
+      return resumeCommand(argv.slice(1));
     case "help":
     case "--help":
     case "-h":

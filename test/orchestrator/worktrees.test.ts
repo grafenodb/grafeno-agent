@@ -214,8 +214,41 @@ describe("the pipeline with the scheduler", () => {
 
   it("sends a task whose merge conflicts to review, with the files", async () => {
     const store = new SqliteStore();
-    // Both change a.txt, one after the other (the second depends on nothing, but they
-    // run one at a time because they touch the same file).
+    // They say they touch different files, so they run at once, from the same
+    // commit; but both write a.txt, and the second merge conflicts.
+    const tasks = [spec("first", ["one.txt"]), spec("second", ["two.txt"])];
+    const run = store.createRun(
+      "r",
+      { goal: "g", risks: [], tasks },
+      ["first", "second"],
+      await manager.head(),
+    );
+    const sameFile = (
+      workspaceFor: Parameters<ConstructorParameters<typeof TaskPipeline>[0]["inner"]>[0],
+    ): TaskRunner => ({
+      async run(task, context): Promise<AttemptOutcome> {
+        const workspace = await workspaceFor(task, context);
+        context.assign({ worker: `worker-${task.id}` });
+        writeFileSync(join(workspace.root, "a.txt"), `${task.id}\n`);
+        return { status: "completed", summary: "wrote a.txt" };
+      },
+    });
+    const pipeline = new TaskPipeline({
+      store,
+      projectRoot: repo,
+      worktrees: manager,
+      inner: sameFile,
+    });
+    expect(await new Scheduler({ store, runner: pipeline }).run(run.id)).toBe("waiting");
+    const states = ["first", "second"].map((id) => store.task(run.id, id));
+    expect(states.map((t) => t?.state).sort()).toEqual(["completed", "review"]);
+    expect(states.find((t) => t?.state === "review")?.reason).toContain("conflicts in a.txt");
+  });
+
+  it("starts a task from the work merged before it, so one after another builds on it", async () => {
+    const store = new SqliteStore();
+    // Both change a.txt; they run one at a time because they touch the same file,
+    // and the second starts from the first's merged work: no conflict.
     const tasks = [spec("first", ["a.txt"]), spec("second", ["a.txt"])];
     const run = store.createRun(
       "r",
@@ -223,16 +256,37 @@ describe("the pipeline with the scheduler", () => {
       ["first", "second"],
       await manager.head(),
     );
+    const seen: string[] = [];
+    const appender = (
+      workspaceFor: Parameters<ConstructorParameters<typeof TaskPipeline>[0]["inner"]>[0],
+    ): TaskRunner => ({
+      async run(task, context): Promise<AttemptOutcome> {
+        const workspace = await workspaceFor(task, context);
+        context.assign({ worker: `worker-${task.id}` });
+        const file = join(workspace.root, "a.txt");
+        // As git checks it out here (Windows may give CRLF).
+        const before = existsSync(file) ? readFileSync(file, "utf8").replace(/\r\n/g, "\n") : "";
+        seen.push(before);
+        writeFileSync(file, `${before}${task.id}\n`);
+        return { status: "completed", summary: "appended to a.txt" };
+      },
+    });
     const pipeline = new TaskPipeline({
       store,
       projectRoot: repo,
       worktrees: manager,
-      inner: writer((id) => `${id}\n`),
+      inner: appender,
     });
-    expect(await new Scheduler({ store, runner: pipeline }).run(run.id)).toBe("waiting");
-    expect(store.task(run.id, "first")?.state).toBe("completed");
-    expect(store.task(run.id, "second")).toMatchObject({ state: "review" });
-    expect(store.task(run.id, "second")?.reason).toContain("conflicts in a.txt");
+    expect(await new Scheduler({ store, runner: pipeline }).run(run.id)).toBe("completed");
+    expect(seen).toEqual(["one\ntwo\nthree\n", "one\ntwo\nthree\nfirst\n"]);
+    expect(git(repo, "show", `${manager.integrationBranch(run.id)}:a.txt`)).toBe(
+      "one\ntwo\nthree\nfirst\nsecond",
+    );
+    const merged = store
+      .events(run.id)
+      .filter((e) => e.kind === "merged")
+      .map((e) => (e.data as { files?: string[] }).files);
+    expect(merged).toEqual([["a.txt"], ["a.txt"]]);
   });
 
   it("works in the project's folder when it is not a git repository", async () => {
