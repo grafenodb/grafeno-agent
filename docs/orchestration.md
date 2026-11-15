@@ -1093,14 +1093,103 @@ router keeps the rules' choice, and it says why. It is the expected state
 at the start, not a gap. It changes as runs are recorded. **Phase C is
 closed**, with the three partial points above written down.
 
-### Phase D — long autonomous runs (design only now)
+### Phase D — long autonomous runs (building, from 2026-11-15)
 
-Replanning of the affected part of the DAG only; a supervisor process for
-runs that outlive the terminal (status, pause, resume, cancel, recovery
-after reboot, notifications); recovery from worker crash, timeout,
-provider failure, quota exhausted (wait until reset, never work around),
-git conflicts, failed checks, Grafeno unreachable; cross review as extra
-evidence; integration under the policy; global and per-worker limits.
+The brief's §D asks for long runs with little intervention:
+
+- replanning only what a failure affects (§D.1);
+- runs that go on without the terminal (§D.2);
+- recovery from every kind of failure (§D.3);
+- a worker reviewing another's work, never counted as proof (§D.4);
+- integration within the limits authorized (§D.5);
+- global and per-worker limits (§D.6).
+
+**What exists (2026-11-15):**
+
+- **§D.1:** a failed task blocks the tasks that depend on it. Nothing
+  replans.
+- **§D.2:** runs are kept in the store and resumed by `grafeno-agent
+resume <id>`. Pause and cancel work only inside the process that runs
+  them. There is no supervisor, and no notifications.
+- **§D.3:** most is there:
+  - bounded retries;
+  - waiting on a plan's limit until its reset;
+  - moving to another provider;
+  - effects never repeated;
+  - failed checks sent back to the worker;
+  - a conflict going to a person;
+  - Grafeno unreachable noted while the work goes on.
+
+  It is not all shown by tests, one failure at a time.
+
+- **§D.4:** only "review" as a kind of task.
+- **§D.5:** finished tasks merge into the run's integration branch. The
+  user merges that into their own.
+- **§D.6:** per attempt there are workers at once, time, tokens, context,
+  retries and the plan's limits. There is no limit for the whole run, and
+  no CPU or memory measure.
+
+**Decided by the user (2026-11-15):**
+
+- **A detached supervisor.** `run --background` starts a detached Grafeno
+  Agent process that owns the run. Status, pause, resume and cancel work
+  from any terminal, through the run store. After a reboot, the next start
+  of `grafeno-agent` finds the interrupted run and resumes it. Nothing is
+  installed in the system.
+- **A reviewer sends work back, and never approves.**
+  - A reviewing worker (another model, another provider when there is
+    one) can send a task back with concrete issues, for a bounded number
+    of rounds.
+  - Merging still needs the checks run by code. A review's approval is
+    never proof.
+  - A disagreement left after the rounds goes to a person.
+- **Integration into the user's branch only in `extended` mode**, and
+  only when their tree is clean. The integration branch is merged into
+  their current branch with a rollback ref kept, and the checks run on the
+  result. Anything failing undoes it. `controlled` and `supervised` keep
+  today's behaviour: the user merges. Nothing is ever pushed.
+- **Desktop notifications** when a background run ends or needs a person:
+  a Windows toast through PowerShell, or `notify-send` on Linux, plus the
+  run's log. No extra packages.
+
+**Stages:**
+
+| Stage | What                                      | Done when (verified by tests)                                                                                                                                                                                     |
+| ----- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1    | Recovery, one failure at a time (§D.3)    | Each failure of the brief's list has a test that shows the run recovering or waiting as it should, with retries bounded and effects idempotent; any gap found is fixed                                            |
+| D2    | Limits for the whole run (§D.6)           | A run's reported tokens, wall-clock time and total retries have limits; reaching one pauses the run and says why; tool results are capped; the process's memory and CPU are recorded where Node can measure them  |
+| D3    | Replanning only what failed (§D.1)        | A task that fails for good gets a replacement plan for itself and what depends on it, from the planner, checked as a DAG, never touching completed tasks; bounded per run; asked of a person except in `extended` |
+| D4    | Background runs and the supervisor (§D.2) | `run --background`; `runs`, `pause`, `resume`, `cancel` from another process through the store; a heartbeat, and resuming after the process died (a reboot); notifications on the end or a question               |
+| D5    | Cross review (§D.4)                       | After a task's checks pass, a reviewer on another model may send it back with issues (bounded rounds); merging still needs the checks; a disagreement left over goes to a person; recorded                        |
+| D6    | Integration into the user's branch (§D.5) | In `extended`, with a clean tree: merge, checks on the result, a rollback ref, undone on failure, origin recorded, never pushed; other modes unchanged                                                            |
+
+**Progress:**
+
+- **D1, recovery one failure at a time (done, 2026-11-15).** Each failure
+  of §D.3, with what shows it:
+
+  | Failure                    | What happens                                                                                                                                               | Shown by                                                                          |
+  | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+  | A worker crashes           | The attempt ends as `retry`, its failure category is recorded, and the next attempt starts fresh                                                           | `recovery.test.ts`: crash, then completed at attempt 2                            |
+  | A timeout                  | The attempt is stopped even if the worker ignores the signal, and retried                                                                                  | `scheduler.test.ts`                                                               |
+  | The process is interrupted | The run resumes from its store; a started effect is checked, never done twice                                                                              | `scheduler.test.ts`, `orchestrator.test.ts`, `store.test.ts`, `worktrees.test.ts` |
+  | The provider fails         | Down: retried within the limit, then the task fails and blocks its dependants. Signed out or at its limit with others ready: set aside, and the task moves | `recovery.test.ts`; `providers.test.ts`                                           |
+  | The quota runs out         | The run pauses without spending an attempt and waits for the reset; nothing works around it                                                                | `scheduler.test.ts`, `workers.test.ts`                                            |
+  | A git conflict             | The integration branch is left as it was and the task goes to a person, with the files                                                                     | `worktrees.test.ts`                                                               |
+  | Failed checks              | The diagnostic goes back to the worker, bounded; nothing is merged until they pass                                                                         | `verify.test.ts`                                                                  |
+  | Grafeno is lost            | The worker goes on without memory (at the start) or keeps its work (at the end), and the run says so                                                       | `recovery.test.ts`: both                                                          |
+
+  **A gap was found and fixed.** If Grafeno was unreachable when a worker
+  started, opening its memory threw outside the attempt's error handling.
+  The attempt failed, and with Grafeno down every attempt would: a task
+  failed because of memory, not its work. Now the worker goes on without
+  memory and the run records `memory_failed` at the start. The test fails
+  without the fix and passes with it.
+
+  Idempotency and bounded retries: effects are recorded once (`store`),
+  merges look before they merge (`worktrees`), and attempts are bounded
+  (`maxAttempts`). A provider that stays down never gets one model more
+  than the limit. Full CI: 442, and all evaluations pass.
 
 ## 5. Risks and limits
 

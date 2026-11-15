@@ -418,7 +418,17 @@ export class WorkerPool implements TaskRunner {
       });
     }
     const workspace = await this.options.workspaceFor(task, context);
-    const memory = await this.options.memoryFor?.(task, name, context);
+    // Grafeno unreachable at the start (phase D3): the worker goes on without
+    // memory, as it does when memory fails at the end; the run's events say so.
+    let memory: WorkerMemory | undefined;
+    try {
+      memory = await this.options.memoryFor?.(task, name, context);
+    } catch (error) {
+      context.note("memory_failed", {
+        at: "start",
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
     const choice: ModelChoice = {
       ...(chosen.model === "default" ? {} : { model: chosen.model }),
       ...(chosen.effort === undefined ? {} : { effort: chosen.effort }),
