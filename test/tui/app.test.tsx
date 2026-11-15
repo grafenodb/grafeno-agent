@@ -75,6 +75,8 @@ interface Setup {
   readonly start?: () => Promise<AgentSession>;
   readonly vault?: FakeVault;
   readonly orchestrator?: AppServices["orchestrator"];
+  /** General Auto's triage, for the test: default, answer directly. */
+  readonly triage?: AppServices["triage"];
 }
 
 function services(setup: Setup): AppServices {
@@ -112,6 +114,8 @@ function services(setup: Setup): AppServices {
     saveChoice: () => undefined,
     upkeep: () => Promise.resolve("Memory is in order: nothing to fix."),
     orchestrator: setup.orchestrator ?? (() => Promise.reject(new Error("no orchestrator here"))),
+    pool: () => Promise.resolve([{ provider }]),
+    triage: setup.triage ?? (() => Promise.resolve({ route: "direct", reason: "a test" })),
   };
 }
 
@@ -229,6 +233,86 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.stdin.write(ENTER);
     await until(() => chosen.length === 2, "a second model");
     expect(chosen).toEqual([{}, { model: "haiku", effort: "medium" }]);
+    app.unmount();
+  });
+
+  it("turns General Auto on with /connect: a light model triages each message, answered directly or planned across providers", async () => {
+    const asked: string[] = [];
+    const pooled: (boolean | undefined)[] = [];
+    const saves: Record<string, unknown>[] = [];
+    const base = services({
+      turns: [[{ say: "Direct-Answer" }]],
+      triage: (message) => {
+        asked.push(message);
+        return Promise.resolve(
+          message.startsWith("Build")
+            ? { route: "orchestrate", reason: "an API, a UI and tests", by: "codex/luna" }
+            : { route: "direct", reason: "a question", by: "codex/luna" },
+        );
+      },
+      orchestrator: (_extra, auto) => {
+        pooled.push(auto);
+        const planned = {
+          plan: {
+            goal: "Orders, end to end",
+            risks: [],
+            tasks: [
+              {
+                id: "api",
+                title: "The API",
+                kind: "backend",
+                dependsOn: [],
+              },
+            ],
+          },
+          order: ["api"],
+          attempts: 1,
+          routes: new Map([
+            [
+              "api",
+              { kind: "run", tier: "deep", model: "big", reasons: [], provider: "claude-code" },
+            ],
+          ]),
+          planner: "claude-code/mid · high",
+        };
+        return Promise.resolve({
+          plan: () => Promise.resolve(planned),
+          close: () => undefined,
+          policy: { mode: "controlled" },
+        } as unknown as Orchestrator);
+      },
+    });
+    const svc: AppServices = {
+      ...base,
+      saveChoice: (choice) => {
+        saves.push(choice);
+      },
+    };
+    const app = render(<App services={svc} />);
+    await ready(app);
+    await type(app, "/connect");
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("Auto") && !now(app).includes("checking"), "the panel");
+    app.stdin.write(DOWN);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("General Auto: each message is triaged"), "Auto on");
+    expect(saves).toEqual([{ provider: "auto" }]);
+
+    await ready(app);
+    await type(app, "what does this repo do?");
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("Direct-Answer"), "the direct answer");
+    expect(seen(app)).toContain("Auto: answering directly (a question) · codex/luna");
+
+    await ready(app);
+    await type(app, "Build the orders API with a UI and tests");
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("Run this plan?"), "the plan");
+    expect(seen(app)).toContain("Auto: a plan across providers (an API, a UI and tests)");
+    expect(seen(app)).toContain("Planned by claude-code/mid · high");
+    expect(pooled).toEqual([true]);
+    expect(asked).toEqual(["what does this repo do?", "Build the orders API with a UI and tests"]);
     app.unmount();
   });
 

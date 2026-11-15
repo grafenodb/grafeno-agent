@@ -660,12 +660,33 @@ all of them:
     answers with the conversation behind it. Full CI: 393.
   - The "Auto" provider in `/connect` comes with B7c, which gives it
     meaning: triage.
-- **B7c, left:** in General Auto, a light model triages each message:
-  answer directly, or orchestrate.
+- **B7c, General Auto in the session (done):**
+  - `/connect` offers "Auto" after the providers. Choosing it turns General
+    Auto on: saved as `AGENT_PROVIDERS=auto`, with the chat on the ready
+    provider that has the most room. Choosing a named provider turns it
+    off.
+  - **Triage** (`src/app/triage.ts`): before each message, a light model
+    is asked one line, DIRECT or ORCHESTRATE, with a reason. It is the
+    lightest model, low effort and no tools, of the ready provider with the
+    most room. It is read strictly: anything unclear, and any failure, is a
+    direct answer, the cheap way. The decision and the model that took it
+    are shown.
+  - **Direct:** the chat answers. If its provider has no room (80% or
+    more) or is not ready, the chat moves to the one with the most room.
+  - **Orchestrate:** the request is planned with General Auto (B7a). The
+    planner comes from the pool, the tasks go by affinity, and the plan is
+    shown to run, as with `/orchestrate`. `/orchestrate` itself also uses
+    the pool while Auto is on.
+  - The ready providers and their usage are read at most once a minute.
+    Read on this computer, without spending: Claude Pro at 79% of its five
+    hours (this session), Codex Plus at 1%. The pool chooses Codex.
+  - Tests: `test/app/triage.test.ts` (6) and a terminal test: Auto on from
+    `/connect`, a question answered directly, and a build request planned
+    across providers. Full CI: 400.
 
 **What is left of phase B, in order:**
 
-1. B7b and B7c.
+1. The README's "Providers" section (below).
 2. B6: one real run where Claude and Codex workers both finish their
    tasks, at the end of B7.
 3. The README: a "Providers" section (`AGENT_PROVIDERS`, setting up Codex,

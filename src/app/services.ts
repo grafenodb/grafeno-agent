@@ -15,6 +15,7 @@ import {
 } from "../grafeno/included.js";
 import { describeUpkeep, upkeep } from "../memory/upkeep.js";
 import { allProviders } from "../providers/index.js";
+import { lightModel, mostRoom, triage, type PoolMember, type TriageDecision } from "./triage.js";
 import type { ModelChoice, Provider } from "../providers/types.js";
 import { settingsPath, updateSettings } from "../settings-file.js";
 import { checkGrafeno } from "../startup.js";
@@ -62,8 +63,15 @@ export interface AppServices {
   saveChoice(choice: { model?: string; effort?: string; provider?: string }): void;
   /** The memory upkeep report for the session's project. */
   upkeep(session: AgentSession): Promise<string>;
-  /** An orchestrator for the project, on the settings, wired to the interface. */
-  orchestrator(extra: Partial<OrchestratorOptions>): Promise<Orchestrator>;
+  /**
+   * An orchestrator for the project, on the settings, wired to the
+   * interface; `auto`: General Auto, every ready provider as one pool.
+   */
+  orchestrator(extra: Partial<OrchestratorOptions>, auto?: boolean): Promise<Orchestrator>;
+  /** The providers that are ready now (installed, signed in), each with its usage. */
+  pool(): Promise<PoolMember[]>;
+  /** General Auto's triage of a message: answer directly, or orchestrate. */
+  triage(message: string, signal?: AbortSignal): Promise<TriageDecision>;
 }
 
 /** The embedder the settings name, when it can run here; `say` tells the user what happens. */
@@ -101,6 +109,25 @@ export function realServices(version: string): AppServices {
   const env = process.env;
   // Every known provider, the chosen ones (AGENT_PROVIDERS) first: the chat uses the first.
   const providers: Provider[] = allProviders(env);
+
+  /** The ready providers, read at most once a minute: statuses and usage are slow to ask. */
+  let pooled: { at: number; members: Promise<PoolMember[]> } | undefined;
+  const readyPool = (all: readonly Provider[]): Promise<PoolMember[]> => {
+    if (pooled && Date.now() - pooled.at < 60_000) return pooled.members;
+    const members = (async () => {
+      const found = await Promise.all(
+        all.map(async (provider) => {
+          const status = await provider.status().catch(() => undefined);
+          if (!status?.installed || !status.signedIn) return undefined;
+          const usage = await provider.usage().catch(() => undefined);
+          return { provider, ...(usage ? { usage } : {}) };
+        }),
+      );
+      return found.filter((m): m is PoolMember => m !== undefined);
+    })();
+    pooled = { at: Date.now(), members };
+    return members;
+  };
 
   /** Saves settings to the file and to this run. */
   const save = (values: Record<string, string>) => {
@@ -184,6 +211,10 @@ export function realServices(version: string): AppServices {
     saveChoice(choice: ModelChoice & { provider?: string }) {
       if (choice.provider !== undefined) {
         // The chosen provider first; the model and effort are its own again.
+        if (choice.provider === "auto") {
+          save({ AGENT_PROVIDERS: "auto" });
+          return;
+        }
         const order = providers.map((p) => p.id);
         const rest = order.filter((id) => id !== choice.provider);
         save({
@@ -202,10 +233,22 @@ export function realServices(version: string): AppServices {
           : { AGENT_EFFORT: choice.effort === "default" ? "" : choice.effort }),
       });
     },
-    async orchestrator(extra) {
+    async orchestrator(extra, auto) {
       // Loaded when used: the orchestrator is not needed to chat.
       const { createOrchestrator } = await import("./orchestrate.js");
-      return createOrchestrator({}, extra);
+      return createOrchestrator(auto === true ? { auto: true, providers } : {}, extra);
+    },
+    pool: () => readyPool(providers),
+    async triage(message, signal) {
+      const chosen = mostRoom(await readyPool(providers));
+      if (!chosen) return { route: "direct", reason: "no provider has room to triage" };
+      const model = lightModel(chosen.provider);
+      return triage(
+        message,
+        chosen.provider.create({ ...(model ? { model } : {}), effort: "low" }),
+        `${chosen.provider.id}/${model ?? "default"}`,
+        signal,
+      );
     },
     async upkeep(session: AgentSession) {
       const report = await upkeep({

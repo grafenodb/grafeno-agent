@@ -122,6 +122,8 @@ const services: AppServices = {
   saveChoice: () => undefined,
   upkeep: () => Promise.resolve(""),
   orchestrator: () => Promise.reject(new Error("not in the preview")),
+  pool: () => Promise.resolve([]),
+  triage: () => Promise.resolve({ route: "direct", reason: "the preview" }),
 };
 
 const app = render(<App services={services} />);

@@ -5,7 +5,8 @@ import type { AppServices } from "../app/services.js";
 import { describeCall, type AgentSession } from "../app/session.js";
 import { describeError } from "../chat.js";
 import type { ToolCall } from "../model/index.js";
-import { providerIds } from "../providers/index.js";
+import { isAuto, providerIds } from "../providers/index.js";
+import { mostRoom } from "../app/triage.js";
 import type { ModelOption, ProviderStatus, ProviderUsage } from "../providers/types.js";
 import type { Recall } from "../memory/session.js";
 import type { Entry } from "../sessions/store.js";
@@ -101,6 +102,8 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
   const [session, setSession] = useState<AgentSession | undefined>(undefined);
   // The provider the chat reasons with: the session's, which /connect may change.
   const provider = session?.provider ?? services.providers[0];
+  // General Auto (B7c): each message is triaged, and may be orchestrated across providers.
+  const [auto, setAuto] = useState(() => isAuto(process.env.AGENT_PROVIDERS));
   const [items, setItems] = useState<Item[]>([]);
   const [mode, setMode] = useState<Mode>("chat");
   const [busy, setBusy] = useState<string | undefined>(undefined);
@@ -299,35 +302,45 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
   }, [session, runTurn, notice, exit]);
 
   /** An orchestrator wired to this screen: its questions in the permission box, its changes in the run view. */
-  const openOrchestrator = useCallback(async (): Promise<Orchestrator> => {
-    return services.orchestrator({
-      ask: (question) =>
-        new Promise<boolean>((resolve) => {
-          setApproval({
-            what: `${question.action}${question.worker ? ` (${question.worker})` : ""}`,
-            reason: question.reason,
-            resolve,
-          });
-        }),
-      onChange: (change) => {
-        setWatched((current) => {
-          if (!current) return current;
-          if (change.type === "run") return { ...current, state: change.state };
-          return {
-            ...current,
-            tasks: current.tasks.map((t) =>
-              t.id === change.task
-                ? { ...t, state: change.state, ...(change.reason ? { reason: change.reason } : {}) }
-                : t,
-            ),
-          };
-        });
-      },
-      onWorkers: (active) => {
-        setWatched((current) => (current ? { ...current, workers: active } : current));
-      },
-    });
-  }, [services]);
+  const openOrchestrator = useCallback(
+    async (pool = false): Promise<Orchestrator> => {
+      return services.orchestrator(
+        {
+          ask: (question) =>
+            new Promise<boolean>((resolve) => {
+              setApproval({
+                what: `${question.action}${question.worker ? ` (${question.worker})` : ""}`,
+                reason: question.reason,
+                resolve,
+              });
+            }),
+          onChange: (change) => {
+            setWatched((current) => {
+              if (!current) return current;
+              if (change.type === "run") return { ...current, state: change.state };
+              return {
+                ...current,
+                tasks: current.tasks.map((t) =>
+                  t.id === change.task
+                    ? {
+                        ...t,
+                        state: change.state,
+                        ...(change.reason ? { reason: change.reason } : {}),
+                      }
+                    : t,
+                ),
+              };
+            });
+          },
+          onWorkers: (active) => {
+            setWatched((current) => (current ? { ...current, workers: active } : current));
+          },
+        },
+        pool,
+      );
+    },
+    [services],
+  );
 
   /** Runs (or resumes) a run, watching it, and reports how it ended. */
   const driveRun = useCallback(
@@ -374,6 +387,23 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
       if (text === "") return;
       setSent((current) => [...current.filter((s) => s !== text), text].slice(-100));
       const command = parseCommand(text);
+
+      /** Plans a request and shows the plan to run; `pool`: across every ready provider. */
+      const plan = async (request: string, pool: boolean) => {
+        setBusy("Planning");
+        try {
+          const orchestrator = await openOrchestrator(pool);
+          const planned = await orchestrator.plan(request);
+          orchestration.current = { orchestrator, request, planned, running: false };
+          push({ kind: "block", title: "Plan", lines: describePlan(planned) });
+          setMode("plan");
+        } catch (error) {
+          notice(`No plan: ${error instanceof Error ? error.message : String(error)}`, "error");
+        } finally {
+          setBusy(undefined);
+        }
+      };
+
       if (!command) {
         if (!session) {
           notice(
@@ -381,6 +411,34 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
             "warning",
           );
           return;
+        }
+        if (auto) {
+          // A light model decides: answer directly, or orchestrate.
+          setBusy("Deciding how to answer");
+          const decision = await services.triage(text).finally(() => {
+            setBusy(undefined);
+          });
+          const by = decision.by ? ` · ${decision.by}` : "";
+          if (decision.route === "orchestrate") {
+            notice(`Auto: a plan across providers (${decision.reason})${by}`, "info");
+            await plan(text, true);
+            return;
+          }
+          notice(`Auto: answering directly (${decision.reason})${by}`, "info");
+          // Directly, on the provider with the most room when the current one has little.
+          const members = await services.pool();
+          const current = members.find((m) => m.provider.id === session.provider.id);
+          const used = Math.max(0, ...(current?.usage?.limits.map((l) => l.used) ?? [0]));
+          const best = mostRoom(members);
+          if (best && best.provider.id !== session.provider.id && (!current || used >= 0.8)) {
+            await session.setProvider(best.provider);
+            setModels([]);
+            setUsage(undefined);
+            notice(
+              `Auto: the chat goes on with ${best.provider.name}, which has more room.`,
+              "info",
+            );
+          }
         }
         await runTurn(session, text, text);
         return;
@@ -504,23 +562,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
             notice("Say what to build: /orchestrate build the orders API with tests", "warning");
             break;
           }
-          setBusy("Planning");
-          try {
-            const orchestrator = await openOrchestrator();
-            const planned = await orchestrator.plan(command.args);
-            orchestration.current = {
-              orchestrator,
-              request: command.args,
-              planned,
-              running: false,
-            };
-            push({ kind: "block", title: "Plan", lines: describePlan(planned) });
-            setMode("plan");
-          } catch (error) {
-            notice(`No plan: ${error instanceof Error ? error.message : String(error)}`, "error");
-          } finally {
-            setBusy(undefined);
-          }
+          await plan(command.args, auto);
           break;
         }
         case "runs": {
@@ -569,6 +611,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
       notice,
       leave,
       openOrchestrator,
+      auto,
     ],
   );
 
@@ -860,11 +903,40 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
             {mode === "connect" && (
               <ProviderPanel
                 providers={services.providers}
-                {...(provider ? { current: provider.id } : {})}
+                {...(provider && !auto ? { current: provider.id } : {})}
+                auto={auto}
+                onAuto={() => {
+                  setMode("chat");
+                  if (!session) return;
+                  setAuto(true);
+                  services.saveChoice({ provider: "auto" });
+                  void services.pool().then(async (members) => {
+                    const best = mostRoom(members);
+                    if (best && best.provider.id !== session.provider.id) {
+                      await session.setProvider(best.provider);
+                      setModels([]);
+                      setUsage(undefined);
+                    }
+                    notice(
+                      `General Auto: each message is triaged by a light model, answered directly or planned across ${String(members.length)} ready provider${members.length === 1 ? "" : "s"}.`,
+                      "success",
+                    );
+                    setTick((t) => t + 1);
+                  });
+                }}
                 onDone={(found, chosen) => {
                   setMode("chat");
                   if (!found || !chosen) return;
                   const ready = found.installed && found.signedIn;
+                  if (ready && auto) {
+                    // A named provider: General Auto ends.
+                    setAuto(false);
+                    if (session && chosen.id === session.provider.id) {
+                      services.saveChoice({ provider: chosen.id });
+                      notice(`Provider: ${chosen.name}. General Auto is off.`, "success");
+                      return;
+                    }
+                  }
                   if (!ready || !session || chosen.id === session.provider.id) {
                     if (chosen.id === provider?.id) setStatus(found);
                     notice(`${chosen.name}: ${found.detail}`, ready ? "success" : "warning");

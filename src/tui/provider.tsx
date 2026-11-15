@@ -10,6 +10,10 @@ export interface ProviderPanelProps {
   readonly firstRun?: boolean;
   /** The provider the chat uses now. */
   readonly current?: string;
+  /** General Auto is on: offered as the last row, after the providers. */
+  readonly auto?: boolean;
+  /** Chosen General Auto; without it, the row is not offered (the first run). */
+  readonly onAuto?: () => void;
   /** With the status of the provider chosen (Enter), and the provider; nothing on Esc. */
   readonly onDone: (status: ProviderStatus | undefined, provider?: Provider) => void;
 }
@@ -19,6 +23,7 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
   const [statuses, setStatuses] = useState<(ProviderStatus | undefined)[]>([]);
   const [checking, setChecking] = useState(0);
   const [selected, setSelected] = useState(0);
+  const rows = props.providers.length + (props.onAuto ? 1 : 0);
 
   useEffect(() => {
     let live = true;
@@ -33,11 +38,14 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
   useInput((input, key) => {
     if (key.escape) props.onDone(undefined);
     else if (key.upArrow) setSelected((s) => Math.max(0, s - 1));
-    else if (key.downArrow) setSelected((s) => Math.min(props.providers.length - 1, s + 1));
+    else if (key.downArrow) setSelected((s) => Math.min(rows - 1, s + 1));
     else if (input === "r") {
       setStatuses([]);
       setChecking((c) => c + 1);
-    } else if (key.return) props.onDone(statuses[selected], props.providers[selected]);
+    } else if (key.return) {
+      if (selected === props.providers.length && props.onAuto) props.onAuto();
+      else props.onDone(statuses[selected], props.providers[selected]);
+    }
   });
 
   return (
@@ -83,6 +91,23 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
           </Box>
         );
       })}
+      {props.onAuto && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text
+            {...(selected === props.providers.length ? { color: theme.accent } : {})}
+            bold={selected === props.providers.length}
+          >
+            {selected === props.providers.length ? "▸ " : "  "}
+            Auto{props.auto ? " · in use" : ""}
+          </Text>
+          <Box paddingLeft={4}>
+            <Text dimColor>
+              Every ready provider: a light model triages each message, answered directly or planned
+              across them.
+            </Text>
+          </Box>
+        </Box>
+      )}
       <Box marginTop={1}>
         <Text dimColor>
           The chat uses the one chosen here; a run may give tasks to every ready one.
