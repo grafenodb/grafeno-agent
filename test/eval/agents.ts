@@ -277,12 +277,16 @@ async function main(): Promise<void> {
       project: PROJECT,
       agent: dev.identity,
     });
+    // The compact resume: this agent's own checkpoint as the state to go on
+    // from, and another agent's newer one in a line, as that agent's work.
     check(
-      /Your latest checkpoint[\s\S]*DEV-SUMMARY/.test(devBack.brief),
+      /Saved: checkpoint \S+, by grafeno-agent-dev[\s\S]*Summary: DEV-SUMMARY/.test(devBack.brief),
       "dev comes back to its own checkpoint",
     );
     check(
-      /saved by another agent \(grafeno-agent-review\)[\s\S]*REVIEW-SUMMARY/.test(devBack.brief),
+      /Newer checkpoint by another agent \(grafeno-agent-review[^)]*\), its work, not yours to redo: REVIEW-SUMMARY/.test(
+        devBack.brief,
+      ),
       "and is told of review's newer one, as review's",
     );
     const reviewBack = await MemorySession.start({
@@ -291,8 +295,9 @@ async function main(): Promise<void> {
       agent: review.identity,
     });
     check(
-      /Your latest checkpoint[\s\S]*REVIEW-SUMMARY/.test(reviewBack.brief) &&
-        !reviewBack.brief.includes("saved by another agent"),
+      /Saved: checkpoint \S+, by grafeno-agent-review[\s\S]*Summary: REVIEW-SUMMARY/.test(
+        reviewBack.brief,
+      ) && !reviewBack.brief.includes("by another agent"),
       "review's own checkpoint is the latest: nothing else to tell it",
     );
     const context = await devBack.beforeTurn("Which design does the parser use for expressions?");
