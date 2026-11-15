@@ -142,6 +142,8 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
   const [resumable, setResumable] = useState<PickerItem[]>([]);
   const [status, setStatus] = useState<ProviderStatus | undefined>(undefined);
   const [usage, setUsage] = useState<ProviderUsage | undefined>(undefined);
+  /** The latest reading of the plan's usage failed: the one shown is older. */
+  const [usageStale, setUsageStale] = useState(false);
   const [models, setModels] = useState<readonly ModelOption[]>([]);
   const [environment, setEnvironment] = useState<Environment>({});
   const [recall, setRecall] = useState<Recall | undefined>(undefined);
@@ -190,13 +192,23 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
     [push],
   );
 
-  /** The provider's real usage, at most once a minute unless asked. */
+  /**
+   * The provider's real usage. Every minute on a timer (through the
+   * providers' one-minute cache, so it is the provider's latest answer,
+   * spent elsewhere too: another app, another terminal); asked anew after
+   * each turn, since the turn just spent some; asked anew when forced. A
+   * reading that fails keeps the last one, marked as old.
+   */
   const refreshUsage = useCallback(
-    async (force = false) => {
-      if (!provider || (!force && Date.now() - usageAt.current < 60_000)) return;
+    async (why: "timer" | "turn" | "force" = "timer") => {
+      const gap = why === "timer" ? 55_000 : 0;
+      if (!provider || Date.now() - usageAt.current < gap) return;
       usageAt.current = Date.now();
-      const found = await provider.usage();
+      const found = await provider
+        .usage(why === "timer" ? {} : { fresh: true })
+        .catch(() => undefined);
       if (found) setUsage(found);
+      setUsageStale(found === undefined);
     },
     [provider],
   );
@@ -206,26 +218,40 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
    * one-minute cache, and only with calls that spend nothing (a plan's
    * windows, an API key's own record).
    */
-  const refreshAutoUsage = useCallback(async () => {
-    if (!auto || autoIds.length === 0) {
-      setAutoUsage([]);
-      return;
-    }
-    const members = services.providers.filter((p) => autoIds.includes(p.id));
-    const found = await Promise.all(
-      members.map(async (p) => {
-        const usage = await p.usage().catch(() => undefined);
-        return {
-          id: p.id,
-          name: p.name,
-          apiKey: API_KEY_PROVIDERS.includes(p.id),
-          current: p.id === session?.provider.id,
-          ...(usage ? { usage } : {}),
-        };
-      }),
-    );
-    setAutoUsage(found);
-  }, [auto, autoIds, services, session]);
+  const lastAutoUsage = useRef<ReadonlyMap<string, ProviderUsage>>(new Map());
+  const refreshAutoUsage = useCallback(
+    async (afterTurn = false) => {
+      if (!auto || autoIds.length === 0) {
+        setAutoUsage([]);
+        return;
+      }
+      const members = services.providers.filter((p) => autoIds.includes(p.id));
+      const found = await Promise.all(
+        members.map(async (p) => {
+          const current = p.id === session?.provider.id;
+          // The provider that just answered is asked anew; the others through the cache.
+          const read = await p
+            .usage(afterTurn && current ? { fresh: true } : {})
+            .catch(() => undefined);
+          // A reading that fails keeps the last one, marked as old.
+          const usage = read ?? lastAutoUsage.current.get(p.id);
+          return {
+            id: p.id,
+            name: p.name,
+            apiKey: API_KEY_PROVIDERS.includes(p.id),
+            current,
+            ...(usage ? { usage } : {}),
+            ...(read === undefined && usage ? { stale: true } : {}),
+          };
+        }),
+      );
+      lastAutoUsage.current = new Map(
+        found.flatMap((m) => (m.usage ? [[m.id, m.usage] as const] : [])),
+      );
+      setAutoUsage(found);
+    },
+    [auto, autoIds, services, session],
+  );
 
   useEffect(() => {
     void refreshAutoUsage();
@@ -282,8 +308,22 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
     if (!provider) return;
     void provider.status().then(setStatus);
     void provider.models().then(setModels);
-    void refreshUsage(true);
+    void refreshUsage("force");
   }, [provider, refreshUsage]);
+
+  // Usage spent elsewhere (another app, another terminal) shows within a
+  // minute, and "n min ago" stays true while nothing else happens.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      void refreshUsage("timer");
+      void refreshAutoUsage();
+      setTick((t) => t + 1);
+    }, 60_000);
+    timer.unref();
+    return () => {
+      clearInterval(timer);
+    };
+  }, [refreshUsage, refreshAutoUsage]);
 
   /** Runs a turn and shows it as it comes. */
   const runTurn = useCallback(
@@ -363,8 +403,8 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         setBusy(undefined);
         setTick((t) => t + 1);
         void readEnvironment(active.workspace.root).then(setEnvironment);
-        void refreshUsage();
-        void refreshAutoUsage();
+        void refreshUsage("turn");
+        void refreshAutoUsage(true);
       }
     },
     [push, notice, refreshUsage, refreshAutoUsage],
@@ -702,6 +742,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
               usageAt.current = Date.now();
               fresh = mine ?? usage;
               if (fresh) setUsage(fresh);
+              setUsageStale(mine === undefined);
             }
             others = theirs;
           } finally {
@@ -1365,6 +1406,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
             grafeno={grafeno}
             status={status}
             usage={usage}
+            usageStale={usageStale}
             models={models}
             environment={environment}
             recall={recall}

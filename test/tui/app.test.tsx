@@ -403,6 +403,27 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.unmount();
   });
 
+  it("asks the provider anew for its usage after each turn, since the turn spent some", async () => {
+    const base = services({ turns: [[{ say: "Answered" }]] });
+    const asked: ({ fresh?: boolean } | undefined)[] = [];
+    // The session uses this very provider: its usage is counted in place.
+    const provider = base.providers[0] as Provider;
+    const original = provider.usage.bind(provider);
+    (provider as { usage: Provider["usage"] }).usage = (options) => {
+      asked.push(options);
+      return original(options);
+    };
+    const app = render(<App services={base} />);
+    await ready(app);
+    asked.length = 0;
+    await type(app, "hello");
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("Answered"), "the answer");
+    await until(() => asked.length > 0, "a reading after the turn");
+    expect(asked).toContainEqual({ fresh: true });
+    app.unmount();
+  });
+
   it("shows the provider's real usage with /usage", async () => {
     const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
     await ready(app);

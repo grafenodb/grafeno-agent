@@ -118,7 +118,10 @@ for the commands), and a side panel with:
 - **Context**: how full the model's context is;
 - **Plan usage**: your provider's real usage (for Claude: the session and
   weekly limits, with when they reset), read from Claude Code itself
-  without spending any of it;
+  without spending any of it. It is read again every minute, so what you
+  spend elsewhere (Claude Code Desktop, another terminal) shows within a
+  minute, and asked anew after each answer. When a reading fails, the last
+  one stays, said to be old;
 - **This session**, **Environment** (project, git branch, changed files)
   and **Memory** (Grafeno, palace, agent).
 

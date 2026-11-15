@@ -53,3 +53,51 @@ describe("the side panel in Auto", () => {
     app.unmount();
   });
 });
+
+describe("the side panel's plan usage", () => {
+  it("says when the latest reading failed and the one shown is older", () => {
+    const at = new Date(Date.now() - 23 * 60_000);
+    const app = render(
+      <Sidebar
+        width={38}
+        session={undefined}
+        grafeno={grafeno}
+        status={undefined}
+        usage={{ limits: [{ label: "Session", used: 0.4 }], at }}
+        usageStale
+        models={[]}
+        environment={{}}
+      />,
+    );
+    const screen = app.lastFrame() ?? "";
+    expect(screen).toContain("23 min ago");
+    expect(screen).toContain("The latest reading failed");
+    app.unmount();
+  });
+
+  it("marks one of Auto's providers whose latest reading failed", () => {
+    const app = render(
+      <Sidebar
+        width={44}
+        session={undefined}
+        grafeno={grafeno}
+        status={undefined}
+        usage={undefined}
+        models={[]}
+        environment={{}}
+        autoUsage={[
+          {
+            id: "codex",
+            name: "Codex",
+            apiKey: false,
+            current: false,
+            stale: true,
+            usage: { limits: [{ label: "5 h", used: 0.2 }], at: new Date(Date.now() - 5 * 60_000) },
+          },
+        ]}
+      />,
+    );
+    expect(app.lastFrame()).toMatch(/Codex · 5 min ago · old/);
+    app.unmount();
+  });
+});

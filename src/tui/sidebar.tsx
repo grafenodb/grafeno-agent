@@ -15,6 +15,8 @@ export interface SidebarProps {
   readonly grafeno: GrafenoInfo;
   readonly status: ProviderStatus | undefined;
   readonly usage: ProviderUsage | undefined;
+  /** The latest reading failed: `usage` is an older one. */
+  readonly usageStale?: boolean;
   readonly models: readonly ModelOption[];
   readonly environment: Environment;
   /** What memory brought to the last message. */
@@ -36,6 +38,8 @@ export interface AutoUsage {
   readonly apiKey: boolean;
   /** The provider the chat uses now. */
   readonly current: boolean;
+  /** The latest reading failed: `usage` is an older one. */
+  readonly stale?: boolean;
 }
 
 /** The side panel: the model, how full its context is, the plan's real usage, where the agent works and its memory. */
@@ -102,6 +106,7 @@ export function Sidebar(props: SidebarProps): ReactNode {
                   {member.name}
                 </Text>
                 <Text dimColor>{member.usage ? ` · ${ago(member.usage.at)}` : ""}</Text>
+                {member.stale ? <Text color={theme.warning}> · old</Text> : null}
               </Text>
               {member.usage ? (
                 member.usage.limits
@@ -144,6 +149,11 @@ export function Sidebar(props: SidebarProps): ReactNode {
           ) : (
             <Text dimColor>checking…</Text>
           )}
+          {props.usage && props.usageStale ? (
+            <Text color={theme.warning} wrap="wrap">
+              The latest reading failed: trying again each minute.
+            </Text>
+          ) : null}
         </Section>
       )}
 

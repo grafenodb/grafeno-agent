@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **The panel's usage stays current**: read again every minute (what is
+  spent in another app or terminal shows within a minute), asked anew
+  after each answer instead of through the one-minute cache, and "n min
+  ago" kept true while idle. A failed reading keeps the last one, marked as
+  old, instead of silently showing it as current. In Auto, the same for
+  each included provider (an API key's credits too).
+
 - **More tools for the environment**: `environment_info` (the system, the
   shell, the branch and the development programs installed), `file_info`,
   `multi_edit` (several edits to one file, all or none), `move_file`,
