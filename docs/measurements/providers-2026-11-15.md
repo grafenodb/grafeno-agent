@@ -82,9 +82,55 @@ Checked afterwards:
 - **The tests:** `node --test` on that branch gives 4 tests, 4 passed.
 - **The user's branch:** `main` is untouched and clean.
 
-## Not shown yet
+## Run 3 (B6), `run-2026-11-15-6abb642a`: both providers finish their tasks, in General Auto
 
-A run where Claude and Codex workers both finish their tasks: in run 1 the
-Codex workers failed (before the fixes), and in run 2 Claude was near its
-limit. To repeat when Claude's window has room. It is a small run, about
-one Claude task and a planner call.
+The run used `--providers auto --light --yes --workers 3`, with
+`AGENT_AFFINITY="backend=claude-code:standard"` to spare the deep tier,
+and the other default affinities (tests and docs to Codex). Claude's
+second account was at 0% of its session and 72% of its week; Codex was at
+1% of its five hours. The project was `strkit`, a fresh repository like
+`mathkit`, and the request asked for `src/slugify.js`, its tests
+(accepted when `node --test` passes) and a Usage section in the README.
+
+The planner came from the pool, by the architecture affinity:
+`claude-code/sonnet · low` (low because of `--light`).
+
+| Task                  | Provider and model      | Attempts | Result |
+| --------------------- | ----------------------- | -------- | ------ |
+| `create-slugify`      | claude-code / haiku, low | 1        | merged |
+| `write-slugify-tests` | codex / gpt-6-luna, low  | 1        | merged |
+| `document-slugify`    | codex / gpt-6-luna, low  | 1        | merged |
+
+The routing reasons, as the store recorded them:
+
+- `create-slugify`: "backend tasks go to claude-code (affinity, standard)",
+  then "the planner recommends light", so the model was haiku. The
+  planner's recommendation comes before the affinity's tier, by design.
+- `write-slugify-tests`: "tests tasks go to codex (affinity, standard)",
+  then the planner recommended light: gpt-6-luna.
+- `document-slugify`: "docs tasks go to codex (affinity, light)":
+  gpt-6-luna.
+
+Totals: 3 attempts; 31.6k input, 2.6k output and 202.5k cache tokens; 54 s
+of work. The two Codex tasks ran at the same time once the module was
+merged.
+
+Checked afterwards:
+
+- **The integration branch:** `grafeno/6abb642a/integration` holds three
+  commits, each authored by its worker, and their merges: 3 files, 39
+  lines.
+- **The tests:** `node --test` on that branch gives 5 tests, 5 passed.
+  `slugify` handles letters and digits beyond ASCII (`\p{L}\p{N}`), one
+  of the risks the planner named.
+- **The user's branch:** `main` is untouched and clean.
+
+One thing to note: the Claude worker said an earlier checkpoint claimed
+`src/slugify.js` existed. It checked the disk, found the file was not
+there, and created it. Memory was taken as a lead, not as evidence, as the
+policy asks. Where that checkpoint came from was not traced. It is
+probably an earlier test in the same namespace, under the same project
+name.
+
+This is phase B's last criterion: one run where Claude and Codex workers
+both finish their tasks, recorded here.

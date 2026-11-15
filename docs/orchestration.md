@@ -691,10 +691,13 @@ all of them:
 
 **What is left of phase B, in order:**
 
-1. B6: one real run where Claude and Codex workers both finish their
-   tasks, in General Auto, with the user's OK, once Claude's five-hour
-   window has room (79% when B7 was finished).
-2. Then phase B is checked against the brief's §B.1–B.4 and closed.
+1. Phase B is checked against the brief's §B.1–B.4 and closed.
+
+**B6 done (2026-11-15):** `run-2026-11-15-6abb642a` ran in General Auto.
+Claude planned and wrote the module, and Codex wrote the tests and the
+docs. All three were merged at the first attempt, `node --test` passed 5/5,
+and `main` was untouched. The run is recorded in
+[`docs/measurements/providers-2026-11-15.md`](measurements/providers-2026-11-15.md).
 
 **Still open from phase A:** a container `CommandRunner` for real
 isolation of untrusted commands (§A.9).
