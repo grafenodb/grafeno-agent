@@ -389,6 +389,22 @@ a person to ask, the call is refused (or the task waits in review) and the
 question is recorded. 11 tests, including the fix loop and supervised
 merging on a real repository.
 
+**A8 done** (`workers.ts` rounds, `memory.ts` progress, `telemetry.ts`): a
+worker works in rounds of steps (`ContextPolicy.roundSteps`, default 40, at
+most `maxRounds`, default 3). Between rounds, never in the middle of a tool
+call, its context (as the provider reports it, or against an assumed
+window, flagged as an estimate) decides: under 60 % it goes on in the same
+session; from 60 % a warning is recorded; from 80 % it writes its progress,
+which is saved as a checkpoint in Grafeno, and a fresh session continues
+from the task, that progress and the list of files changed (from git, to
+be read rather than trusted from a summary), not the old conversation. A
+per-attempt token budget can be set (`attemptTokens`). Every attempt
+records its metrics (model, effort, tier, time, rounds, renewals, reported
+tokens, context peak and window), with no text of the work; `runReport`
+sums them per task and per model and effort, for the interface and for
+phase C. 5 tests. Not done: recognising tasks a tool could settle without a
+model (no safe rule yet; the planner is told to keep checks as acceptance).
+
 | Stage | What                                                                                                                          | Done when (verified by tests)                                                                                                                     |
 | ----- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A1    | Plan schema, checker (cycles, references, acceptance), planner prompt and repair loop                                         | Valid plans accepted; cyclic, dangling, unchecked plans refused with reasons; planner repairs from the problems (fake model)                      |

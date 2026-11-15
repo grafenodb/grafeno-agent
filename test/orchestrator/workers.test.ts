@@ -274,7 +274,7 @@ describe("the worker pool", () => {
     expect(created).toEqual([]);
   });
 
-  it("retries a worker that ran out of steps, telling it why", async () => {
+  it("goes on in another round when a round ends at its step limit", async () => {
     const { store, run } = setup([spec("long")]);
     const messages: string[] = [];
     let calls = 0;
@@ -287,9 +287,36 @@ describe("the worker pool", () => {
     ]);
     const pool = new WorkerPool({ provider, workspaceFor: ownFolder, tools: () => [] });
     await new Scheduler({ store, runner: pool }).run(run.id);
-    expect(store.task(run.id, "long")).toMatchObject({ state: "completed", attempts: 2 });
-    expect(messages[1]).toContain("Your last attempt did not finish");
-    expect(messages[1]).toContain("step limit");
+    expect(store.task(run.id, "long")).toMatchObject({ state: "completed", attempts: 1 });
+    expect(messages[1]).toContain("Continue with the task where you left off");
+  });
+
+  it("retries a worker that used all its rounds, telling the next attempt why", async () => {
+    const { store, run } = setup([spec("endless")]);
+    const messages: string[] = [];
+    let attempt = 0;
+    const { provider } = fakeProvider(() => {
+      attempt++;
+      const mine = attempt;
+      return [
+        (context) => {
+          messages.push(context.message);
+          return mine === 1
+            ? [{ say: "still going" }, { stop: "max_steps" }]
+            : [{ say: "finished" }];
+        },
+      ];
+    });
+    const pool = new WorkerPool({
+      provider,
+      workspaceFor: ownFolder,
+      tools: () => [],
+      context: { maxRounds: 2 },
+    });
+    await new Scheduler({ store, runner: pool }).run(run.id);
+    expect(store.task(run.id, "endless")).toMatchObject({ state: "completed", attempts: 2 });
+    expect(messages.at(-1)).toContain("Your last attempt did not finish");
+    expect(messages.at(-1)).toContain("2 rounds");
   });
 });
 

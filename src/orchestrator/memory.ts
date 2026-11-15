@@ -56,6 +56,16 @@ export function workerMemory(
       tools: await session.tools(),
       ...(brief ? { brief } : {}),
       stored: () => session.stored,
+      progress: async (summary) => {
+        const answer = await options.vault.call("checkpoint", {
+          task: `${context.runId}: ${task.id}`,
+          about: session.projectId,
+          agent: worker,
+          summary: `In progress (the session was renewed): ${summary.slice(0, 1400)}`,
+          files: [...task.spec.touches],
+        });
+        if (answer.isError) throw new Error(answer.text);
+      },
       finish: async (summary) => {
         const answer = await options.vault.call("checkpoint", {
           task: `${context.runId}: ${task.id}`,

@@ -38,7 +38,9 @@ export type FakeStep =
   /** Wait, as a slow model does; honours cancellation. */
   | { readonly wait: number }
   /** End the turn with this stop reason instead of `end_turn`. */
-  | { readonly stop: StopReason };
+  | { readonly stop: StopReason }
+  /** Say how full the context is, as a model that reports it does. */
+  | { readonly context: number; readonly window?: number };
 
 /** The steps of one turn, fixed or chosen from what was asked. */
 export type FakeTurn = readonly FakeStep[] | ((context: FakeContext) => readonly FakeStep[]);
@@ -127,6 +129,12 @@ export class FakeModel implements Model {
             }
           } else if ("wait" in step) {
             await sleep(step.wait, signal);
+          } else if ("context" in step) {
+            yield {
+              type: "context",
+              used: step.context,
+              ...(step.window === undefined ? {} : { window: step.window }),
+            };
           } else {
             stopReason = step.stop;
           }
