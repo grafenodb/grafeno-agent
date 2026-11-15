@@ -3,10 +3,13 @@ import { tmpdir } from "node:os";
 import { createInterface } from "node:readline";
 import { CodexModel, codexCommand } from "../model/codex.js";
 import { resilient } from "../model/index.js";
+import { ComposedProvider } from "./compose.js";
 import type {
+  ModelCatalog,
   ModelChoice,
   ModelOption,
-  Provider,
+  ProviderAuth,
+  ProviderRuntime,
   ProviderStatus,
   ProviderUsage,
   UsageLimit,
@@ -98,35 +101,21 @@ interface CodexModelInfo {
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
 /**
- * Codex through the user's own Codex CLI and their ChatGPT plan. Everything
- * here asks the official `codex` program: `--version`, `login status`,
- * `debug models`, and its app-server's `account/read` and
- * `account/rateLimits/read`, which answer without spending any of the plan.
- * Credentials are never read, and a rate-limit reset credit is never used.
+ * Codex's authentication: the official `codex` program holds the sign-in
+ * (its native "Sign in with ChatGPT"). Its `--version`, `login status`,
+ * and its app-server's `account/read` and `account/rateLimits/read` answer
+ * without spending any of the plan. Credentials are never read or reused,
+ * and a rate-limit reset credit is never used. A sign-in with an API key
+ * bills by consumption: reported as metered, so it is not used without the
+ * user's say.
  */
-export class CodexProvider implements Provider {
-  readonly id = "codex";
-  readonly name = "Codex (ChatGPT)";
+export class CodexAuth implements ProviderAuth {
+  readonly method = "provider-cli";
   readonly signIn = "Run `codex login` in a terminal and sign in with ChatGPT (your subscription).";
-  readonly tiers = {
-    deep: ["gpt-6-astra", "gpt-6.1-sol"],
-    standard: ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol"],
-    light: ["gpt-6-luna", "gpt-5.6-luna", "gpt-6.1-terra"],
-  } as const;
-  readonly features = {
-    agentTools: true,
-    streaming: true,
-    // Each turn resumes the thread: a cancelled one leaves it as it was.
-    keepsConversation: true,
-    usageReport: true,
-    nonInteractive: true,
-  } as const;
-  #catalog: Promise<CodexModelInfo[]> | undefined;
-  #efforts = new Map<string, readonly string[]>();
 
   constructor(
-    private readonly run: RunCodex = runCodex(),
-    private readonly ask: AskAppServer = askAppServer(),
+    private readonly run: RunCodex,
+    private readonly ask: AskAppServer,
   ) {}
 
   async status(): Promise<ProviderStatus> {
@@ -151,13 +140,13 @@ export class CodexProvider implements Provider {
       return { installed: true, signedIn: false, version, detail: this.signIn };
     }
     if (/api key/i.test(login)) {
-      // Signed in with an API key: that bills per token, which the agent does not use.
       return {
         installed: true,
-        signedIn: false,
+        signedIn: true,
         version,
+        billing: { kind: "metered", detail: "Codex is signed in with an API key" },
         detail:
-          "Codex is signed in with an API key, which bills per token. Sign in with ChatGPT instead (codex login).",
+          "Signed in with an API key, which bills by consumption. Sign in with ChatGPT instead (codex login).",
       };
     }
     const plan = await this.#plan();
@@ -166,9 +155,53 @@ export class CodexProvider implements Provider {
       signedIn: true,
       version,
       ...(plan === undefined ? {} : { plan }),
+      billing: { kind: "subscription", detail: `Your ${plan ?? "ChatGPT"} plan` },
       detail: `Signed in with ${plan ?? "ChatGPT"}: answers spend your ChatGPT plan.`,
     };
   }
+
+  async usage(): Promise<ProviderUsage | undefined> {
+    let answer: unknown;
+    try {
+      answer = await this.ask("account/rateLimits/read", null, 20_000);
+    } catch {
+      return undefined;
+    }
+    const limits = parseRateLimits(answer);
+    if (limits.length === 0) return undefined;
+    const plan = (answer as { rateLimits?: { planType?: string } } | undefined)?.rateLimits
+      ?.planType;
+    return {
+      limits,
+      at: new Date(),
+      ...(plan ? { note: `Your ${planName(plan)} plan` } : {}),
+    };
+  }
+
+  async #plan(): Promise<string | undefined> {
+    try {
+      const answer = (await this.ask("account/read", {}, 20_000)) as {
+        account?: { type?: string; planType?: string };
+      };
+      const plan = answer.account?.planType;
+      return plan ? `ChatGPT ${planName(plan)}` : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+}
+
+/** Codex's model selection: what `codex debug models` lists, with each model's efforts. */
+export class CodexCatalog implements ModelCatalog {
+  readonly tiers = {
+    deep: ["gpt-6-astra", "gpt-6.1-sol"],
+    standard: ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol"],
+    light: ["gpt-6-luna", "gpt-5.6-luna", "gpt-6.1-terra"],
+  } as const;
+  #catalog: Promise<CodexModelInfo[]> | undefined;
+  #efforts = new Map<string, readonly string[]>();
+
+  constructor(private readonly run: RunCodex) {}
 
   async models(): Promise<readonly ModelOption[]> {
     const catalog = await this.#models();
@@ -191,37 +224,8 @@ export class CodexProvider implements Provider {
     return EFFORTS;
   }
 
-  async usage(): Promise<ProviderUsage | undefined> {
-    let answer: unknown;
-    try {
-      answer = await this.ask("account/rateLimits/read", null, 20_000);
-    } catch {
-      return undefined;
-    }
-    const limits = parseRateLimits(answer);
-    if (limits.length === 0) return undefined;
-    const plan = (answer as { rateLimits?: { planType?: string } } | undefined)?.rateLimits
-      ?.planType;
-    return {
-      limits,
-      at: new Date(),
-      ...(plan ? { note: `Your ${planName(plan)} plan` } : {}),
-    };
-  }
-
   modelName(id: string): string {
     return codexModelName(id);
-  }
-
-  create(choice: ModelChoice) {
-    return resilient(
-      new CodexModel({
-        ...(choice.model === undefined || choice.model === "default"
-          ? {}
-          : { model: choice.model }),
-        ...(choice.effort === undefined ? {} : { effort: choice.effort }),
-      }),
-    );
   }
 
   /** The models Codex lists (hidden ones left out), read once. */
@@ -237,17 +241,39 @@ export class CodexProvider implements Provider {
       .catch(() => []);
     return this.#catalog;
   }
+}
 
-  async #plan(): Promise<string | undefined> {
-    try {
-      const answer = (await this.ask("account/read", {}, 20_000)) as {
-        account?: { type?: string; planType?: string };
-      };
-      const plan = answer.account?.planType;
-      return plan ? `ChatGPT ${planName(plan)}` : undefined;
-    } catch {
-      return undefined;
-    }
+/** Codex's execution: `codex exec`, with only the agent's tools, over MCP. */
+export class CodexRuntime implements ProviderRuntime {
+  readonly features = {
+    agentTools: true,
+    streaming: true,
+    // Each turn resumes the thread: a cancelled one leaves it as it was.
+    keepsConversation: true,
+    usageReport: true,
+    nonInteractive: true,
+  } as const;
+
+  create(choice: ModelChoice) {
+    return resilient(
+      new CodexModel({
+        ...(choice.model === undefined || choice.model === "default"
+          ? {}
+          : { model: choice.model }),
+        ...(choice.effort === undefined ? {} : { effort: choice.effort }),
+      }),
+    );
+  }
+}
+
+/** Codex through the user's own Codex CLI and their ChatGPT plan: its three parts, as one provider. */
+export class CodexProvider extends ComposedProvider {
+  constructor(run: RunCodex = runCodex(), ask: AskAppServer = askAppServer()) {
+    super("codex", "Codex (ChatGPT)", {
+      auth: new CodexAuth(run, ask),
+      catalog: new CodexCatalog(run),
+      runtime: new CodexRuntime(),
+    });
   }
 }
 

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { billingRefusal } from "../../src/providers/billing.js";
 import {
+  CodexAuth,
+  CodexCatalog,
   CodexProvider,
+  CodexRuntime,
   codexModelName,
   parseModels,
   parseRateLimits,
@@ -55,6 +59,7 @@ describe("CodexProvider", () => {
       signedIn: true,
       version: "0.169.0",
       plan: "ChatGPT Plus",
+      billing: { kind: "subscription", detail: "Your ChatGPT Plus plan" },
       detail: "Signed in with ChatGPT Plus: answers spend your ChatGPT plan.",
     });
   });
@@ -71,13 +76,29 @@ describe("CodexProvider", () => {
     expect(signedOut.detail).toMatch(/codex login/);
   });
 
-  it("does not take a sign-in with an API key: it bills per token", async () => {
+  it("reports a sign-in with an API key as metered: not used without the user's say", async () => {
     const status = await provider({
       "--version": "codex-cli 0.169.0",
       "login status": "Logged in using an API key - sk-***\n",
     }).codex.status();
-    expect(status.signedIn).toBe(false);
-    expect(status.detail).toMatch(/bills per token/);
+    expect(status.billing).toEqual({
+      kind: "metered",
+      detail: "Codex is signed in with an API key",
+    });
+    expect(status.detail).toMatch(/bills by consumption/);
+    expect(JSON.stringify(status)).not.toContain("sk-");
+    expect(billingRefusal("codex", status, {})).toContain("AGENT_ALLOW_BILLING=codex");
+  });
+
+  it("keeps authentication, model selection and execution apart", () => {
+    const { codex, ran, asked } = provider({});
+    expect(codex.parts.auth).toBeInstanceOf(CodexAuth);
+    expect(codex.parts.catalog).toBeInstanceOf(CodexCatalog);
+    expect(codex.parts.runtime).toBeInstanceOf(CodexRuntime);
+    expect(codex.tiers).toBe(codex.parts.catalog.tiers);
+    // Making a model asks nothing of the sign-in.
+    codex.create({ model: "gpt-6-luna", effort: "low" });
+    expect([ran.length, asked.length]).toEqual([0, 0]);
   });
 
   it("lists the models people see, with their exact names and efforts", async () => {
