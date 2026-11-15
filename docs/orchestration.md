@@ -789,13 +789,118 @@ and `main` was untouched. The run is recorded in
 **Still open from phase A:** a container `CommandRunner` for real
 isolation of untrusted commands (§A.9).
 
-### Phase C — the router learns (design only now)
+### Phase C — the router learns (building, from 2026-11-15)
 
-Per attempt, already in telemetry: kind, complexity, tier, model id,
-effort, duration, tokens, retries, fixes, checks, review, failure reason.
-First a rule table; then simple statistics (success rate and cost per kind
-and tier, with a minimum sample and comparable tasks only). A learned rule
-replaces a fixed one only when it beats it on recorded runs.
+The brief's §C asks for a router that learns from real runs. It should
+start with explicit rules and simple statistics, add nothing complex
+without beating a base policy, and never conclude from small samples or
+tasks that cannot be compared. §C.4 limited it to Claude Code until phase B
+existed. Phase B is closed, so the router compares models and efforts
+across the ready providers.
+
+**Where it starts (measured 2026-11-15):** 35 real attempts are recorded
+across the runs so far, all completed, nearly all on light models at low
+effort. That is too few, and too alike, to conclude anything. The router
+has to say so, and keep to the rules until the evidence is there.
+
+**What telemetry already records per attempt:** kind, complexity, tier,
+model, effort, duration, model rounds, context renewals, context peak,
+tokens and the outcome.
+
+**What §C.1 asks for and is missing:**
+
+- the plan's usage when the attempt started;
+- the attempt's number;
+- why it failed, as a category, never text;
+- the checks: whether they passed the first time, and how many fixes it
+  took;
+- whether it was merged or conflicted;
+- the review's outcome.
+
+The model label also differs with one provider and with several ("haiku"
+against "claude-code/haiku"). It is recorded as a provider and a model
+apart.
+
+**Decided by the user (2026-11-15):**
+
+- **Shadow, then automatic.** The router always records what it would
+  choose. A learned rule is used on its own once it meets the criterion on
+  recorded runs, and the run's report says so. `AGENT_ROUTER=rules` turns
+  learning off; `AGENT_ROUTER=shadow` records suggestions without using
+  them.
+- **Exploration exists, off by default.** With `AGENT_ROUTER_EXPLORE=true`,
+  a small share of low-risk tasks (docs and tests of complexity 1–2) try a
+  less-sampled model of the same or a cheaper tier, on the same provider,
+  and it is recorded as exploration. It stays off for now
+  (`AGENT_ROUTER_EXPLORE=false`), so the router learns only from what runs
+  anyway, and never spends quota to learn.
+- **Learning across all projects.** One metrics store in the agent's data
+  folder, holding only numbers, ids and categories: no text, no paths
+  beyond the project's name, no secrets.
+
+**Comparable tasks.** A task belongs to a cell: its kind, and its
+complexity band (1–2 low, 3 medium, 4–5 high). Within a cell, an **arm** is
+a provider, a model and an effort. Only arms of the same cell are compared.
+
+**The measures of an arm:**
+
+- **clean success:** completed, merged, with no failed check sent back;
+- **success:** completed in the end;
+- **cost:** input + output tokens per task;
+- **time:** milliseconds per task.
+
+Success rates come with a Wilson 95% interval, so a small sample shows as
+a wide interval and is never read as a finding.
+
+**When a learned rule replaces the fixed one, for a cell.** The fixed rule
+is the router of phases A, B and B7. A learned arm replaces its choice
+only when all of these hold:
+
+1. both arms have at least 10 tasks in the cell;
+2. the learned arm is on the provider the rules chose, so the user's
+   affinities and `--provider-for` still decide the provider; the
+   learning picks the model and effort within it;
+3. it is available now, and the plan's limits still apply;
+4. either it is **as good and cheaper**: its clean-success lower bound is
+   at least the rule's rate minus 5 points, and it costs at most 70% of
+   the rule's arm; or it is **better**: the rule's arm succeeds cleanly
+   less than 60% of the time, and the learned arm's lower bound is above
+   the rule's upper bound.
+
+The planner's explicit recommendation for a task still comes first.
+
+**Stages:**
+
+| Stage | What                                                                                                                                 | Done when (verified by tests)                                                                                                                        |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| C1    | The complete metrics: each attempt and its task's outcome, in one store across projects                                              | Attempts and outcomes are written with every field of §C.1, with no text; old runs can be imported; the model label is split into provider and model |
+| C2    | The statistics: arms per cell, with clean success, success, cost and time, and Wilson intervals; `grafeno-agent router` reports them | Computed from recorded tasks; a small sample is shown as such; cells are never mixed                                                                 |
+| C3    | The learned router, in shadow and then automatic: a suggestion recorded for every task, and used only under the rule above           | It replaces the fixed rule only when the criterion holds, never against an affinity, a limit or the planner's recommendation; `AGENT_ROUTER` modes   |
+| C4    | Exploration, opt-in and off by default                                                                                               | With it off nothing changes; with it on, only low-risk tasks, the same provider, the same or a cheaper tier, recorded as such                        |
+| C5    | Learned against fixed, on recorded runs                                                                                              | A report of where the learned policy would differ and what it would have saved or risked, with its samples                                           |
+
+**Progress:**
+
+- **C1, the complete metrics (done, 2026-11-15):**
+  - Each attempt now records its provider and model apart, its number, the
+    plan's fullest limit when it started (`quotaUsed`, when the provider
+    says it) and why it failed, as a category (`usage_limit`, `setup`,
+    `timeout`, `agent`, `error`; never the message).
+  - `MetricsStore` (`src/orchestrator/metrics.ts`) keeps one
+    `metrics.db` in the data folder, across all projects, with two tables:
+    - `attempts`: every field of §C.1 that an attempt has;
+    - `outcomes`: each task that ended, with its state, its attempts, the
+      checks that failed and were sent back, whether it was merged or
+      conflicted, and its review (approved, rejected or waiting).
+  - The orchestrator records each run there when it stops, from the run's
+    own events. Recording again replaces rows rather than adding them. A
+    failure there never fails the run.
+  - `importRuns` reads the runs already kept in `runs/*.db`. On this
+    computer: 7 runs, 35 attempts and 24 task outcomes (19 completed, 5
+    failed), with the model labels split. Importing twice changes nothing.
+  - Tests: `test/orchestrator/metrics.test.ts` (6) covers every field, old
+    attempts, no double counting, no text, the import and failure
+    categories. A whole General Auto run fills the metrics. Full CI: 406.
 
 ### Phase D — long autonomous runs (design only now)
 

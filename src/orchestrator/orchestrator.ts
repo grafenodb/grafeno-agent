@@ -9,6 +9,7 @@ import type { Model } from "../model/index.js";
 import type { ModelChoice, Provider } from "../providers/types.js";
 import { projectTools } from "../tools/index.js";
 import type { Workspace } from "../tools/workspace.js";
+import { MetricsStore } from "./metrics.js";
 import { workerMemory } from "./memory.js";
 import type { TaskKind, TaskSpec } from "./plan.js";
 import { makePlan, type Planned } from "./planner.js";
@@ -75,6 +76,11 @@ export interface OrchestratorOptions {
   readonly ask?: (question: Question) => Promise<boolean>;
   /** Where runs and worktrees go. Default: the agent's data folder. */
   readonly dataDir?: string;
+  /**
+   * Phase C's metrics, across all projects; default: `metrics.db` in the
+   * data folder. `false`: none are kept.
+   */
+  readonly metrics?: MetricsStore | false;
   /** For tests. */
   readonly store?: OperationalStore;
   readonly tools?: (workspace: Workspace) => Tool[];
@@ -100,12 +106,18 @@ export class Orchestrator {
   /** What each provider can do, when there are several. */
   readonly registry: CapabilityRegistry | undefined;
   readonly pipeline: TaskPipeline;
+  /** Where every run's attempts and outcomes go, for the router to learn from. */
+  readonly metrics: MetricsStore | undefined;
   #scheduler: Scheduler | undefined;
 
   constructor(private readonly options: OrchestratorOptions) {
     const root = options.dataDir ?? dataDir();
     const folder = folderOf(options.project.name);
     this.store = options.store ?? new SqliteStore(join(root, "runs", `${folder}.db`));
+    this.metrics =
+      options.metrics === false
+        ? undefined
+        : (options.metrics ?? new MetricsStore(join(root, "metrics.db")));
     this.worktrees = new WorktreeManager({
       repo: options.projectRoot,
       root: join(root, "worktrees", folder),
@@ -236,6 +248,12 @@ export class Orchestrator {
       return state;
     } finally {
       this.#scheduler = undefined;
+      // What the run taught, for phase C; a failure here never fails the run.
+      try {
+        this.metrics?.recordRun(this.store, runId, this.options.project.name);
+      } catch {
+        // The run's own store still holds everything; it can be imported later.
+      }
     }
   }
 
@@ -262,6 +280,7 @@ export class Orchestrator {
 
   close(): void {
     this.store.close();
+    if (this.options.metrics === undefined) this.metrics?.close();
   }
 
   async #plannerChoice(): Promise<{ choice: ModelChoice; provider: Provider; model: string }> {

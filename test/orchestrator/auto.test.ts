@@ -257,6 +257,21 @@ describe("an orchestrator in General Auto", { timeout: 60_000 }, () => {
     const branch = orchestrator.integrationBranch(run.id);
     expect(git("show", `${branch}:api.txt`)).toBe("api by claude");
     expect(git("show", `${branch}:guide.txt`)).toBe("guide by codex");
+    // Phase C: the run's attempts and outcomes reach the metrics, provider and model apart.
+    const attempts = orchestrator.metrics?.attempts() ?? [];
+    expect(attempts.map((a) => [a.task, a.provider, a.model, a.attempt]).sort()).toEqual([
+      ["api", "claude-code", "claude-code-big", 1],
+      ["guide", "codex", "codex-small", 1],
+    ]);
+    expect(
+      orchestrator.metrics
+        ?.outcomes()
+        .map((o) => [o.task, o.state, o.merged])
+        .sort(),
+    ).toEqual([
+      ["api", "completed", true],
+      ["guide", "completed", true],
+    ]);
     orchestrator.close();
   });
 });

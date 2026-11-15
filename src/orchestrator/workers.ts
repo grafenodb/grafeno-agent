@@ -82,6 +82,14 @@ export interface AttemptMetrics {
   readonly window: number;
   readonly windowEstimated: boolean;
   readonly outcome: AttemptOutcome["status"];
+  /** Phase C: the provider and the model apart, the attempt's number, the plan when it started. */
+  readonly provider: string;
+  readonly modelId: string;
+  readonly attempt: number;
+  /** The plan's fullest limit when the attempt started, from 0 to 1, when the provider said. */
+  readonly quotaUsed?: number;
+  /** Why it did not complete, as a category, never text. */
+  readonly failure?: string;
 }
 
 export interface WorkerPoolOptions {
@@ -357,6 +365,10 @@ export class WorkerPool implements TaskRunner {
     let rounds = 0;
     let renewals = 0;
     let outcome: AttemptOutcome;
+    let failure: string | undefined;
+    const quota = await this.usage(provider.id);
+    const quotaUsed =
+      quota && quota.limits.length > 0 ? Math.max(...quota.limits.map((l) => l.used)) : undefined;
     let agent = makeAgent();
     const track = (event: ModelEvent) => {
       if (event.type === "context") {
@@ -436,6 +448,7 @@ export class WorkerPool implements TaskRunner {
         }
       }
     } catch (error) {
+      failure = failureOf(error);
       outcome = await this.#fallback(error, outcomeOf(error), provider, task, context);
     } finally {
       this.#active.delete(name);
@@ -461,6 +474,11 @@ export class WorkerPool implements TaskRunner {
       windowEstimated: seen.window === undefined,
       outcome: outcome.status,
       ...(chosen.effort ? { effort: chosen.effort } : {}),
+      provider: provider.id,
+      modelId: chosen.model,
+      attempt: context.attempt,
+      ...(quotaUsed === undefined ? {} : { quotaUsed }),
+      ...(failure === undefined ? {} : { failure }),
     };
     context.note("attempt_metrics", { ...metrics });
     return outcome;
@@ -542,6 +560,14 @@ export function workerName(runId: string, taskId: string, attempt: number): stri
 }
 
 /** What a failed attempt means for the scheduler. */
+/** Why an attempt failed, as a category for the metrics: never the message itself. */
+export function failureOf(error: unknown): string {
+  if (error instanceof ModelError) return error.kind;
+  if (error instanceof AgentError) return "agent";
+  if (error instanceof Error && /time(d)? ?out/i.test(error.message)) return "timeout";
+  return "error";
+}
+
 export function outcomeOf(error: unknown): AttemptOutcome {
   if (error instanceof ModelError) {
     switch (error.kind) {
