@@ -1,4 +1,5 @@
 import type { ModelOption, ProviderUsage } from "../providers/types.js";
+import type { Suggestion } from "./learned.js";
 import type { TaskKind, TaskSpec, Tier } from "./plan.js";
 
 /** What a task kind gets by default: a tier and an effort. Configuration, not code. */
@@ -200,9 +201,12 @@ export const DEFAULT_AFFINITY: Readonly<Partial<Record<TaskKind, Affinity>>> = {
   refactor: { provider: "codex", tier: "standard" },
 };
 
-/** A route that also names its provider. */
+/** A route that also names its provider, and what the learned router said of it (phase C). */
 export type ProviderRoute =
-  | (Extract<Route, { kind: "run" }> & { readonly provider: string })
+  | (Extract<Route, { kind: "run" }> & {
+      readonly provider: string;
+      readonly suggestion?: Suggestion;
+    })
   | Extract<Route, { kind: "hold" }>;
 
 /**

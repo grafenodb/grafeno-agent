@@ -9,7 +9,9 @@ import type { Model } from "../model/index.js";
 import type { ModelChoice, Provider } from "../providers/types.js";
 import { projectTools } from "../tools/index.js";
 import type { Workspace } from "../tools/workspace.js";
+import type { RouterMode } from "./learned.js";
 import { MetricsStore } from "./metrics.js";
+import { computeStats } from "./stats.js";
 import { workerMemory } from "./memory.js";
 import type { TaskKind, TaskSpec } from "./plan.js";
 import { makePlan, type Planned } from "./planner.js";
@@ -81,6 +83,12 @@ export interface OrchestratorOptions {
    * data folder. `false`: none are kept.
    */
   readonly metrics?: MetricsStore | false;
+  /**
+   * Phase C's router: `learned` (the default) records a suggestion for each
+   * task and uses it under the rule decided with the user; `shadow` only
+   * records it; `rules` leaves learning out.
+   */
+  readonly router?: RouterMode;
   /** For tests. */
   readonly store?: OperationalStore;
   readonly tools?: (workspace: Workspace) => Tool[];
@@ -136,6 +144,17 @@ export class Orchestrator {
       ...(options.providerFor ? { providerFor: options.providerFor } : {}),
       ...(options.auto === true ? { auto: true } : {}),
       ...(options.affinity ? { affinity: options.affinity } : {}),
+      ...(this.metrics && (options.router ?? "learned") !== "rules"
+        ? {
+            learning: {
+              mode: options.router === "shadow" ? ("shadow" as const) : ("learned" as const),
+              stats: () => {
+                const metrics = this.metrics;
+                return metrics ? computeStats(metrics.attempts(), metrics.outcomes()) : [];
+              },
+            },
+          }
+        : {}),
       effectInFlight: (runId, taskId) =>
         this.store.effectsInFlight(runId).some((key) => key.endsWith(`:${taskId}`)),
       workspaceFor: (task, context) => this.pipeline.workspaceFor(task, context),

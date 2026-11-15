@@ -14,6 +14,8 @@ import {
   type ProviderEntry,
   type ProviderRoute,
 } from "./router.js";
+import { suggest } from "./learned.js";
+import type { CellStats } from "./stats.js";
 import type { AttemptContext, AttemptOutcome, TaskRunner } from "./scheduler.js";
 import type { TaskRecord } from "./store.js";
 import { runGit } from "./worktrees.js";
@@ -108,6 +110,15 @@ export interface WorkerPoolOptions {
   readonly auto?: boolean;
   /** For each task kind, its preferred provider and tier, in General Auto. */
   readonly affinity?: Partial<Record<TaskSpec["kind"], Affinity>>;
+  /**
+   * Phase C: what the recorded runs taught. `shadow` records a suggestion
+   * for each task; `learned` also uses it under the rule (learned.ts).
+   * Without it, the rules alone.
+   */
+  readonly learning?: {
+    readonly mode: "shadow" | "learned";
+    readonly stats: () => readonly CellStats[];
+  };
   /**
    * Whether a task has an irreversible effect started and not finished (a
    * merge): such a task is never given to another provider.
@@ -219,6 +230,45 @@ export class WorkerPool implements TaskRunner {
    * attempts this pool started), for General Auto's spreading.
    */
   async routeFor(task: TaskSpec, assigned?: ReadonlyMap<string, number>): Promise<ProviderRoute> {
+    const route = await this.#routeByRules(task, assigned);
+    const learning = this.options.learning;
+    if (!learning || route.kind !== "run") return route;
+    const suggestion = suggest(
+      task,
+      {
+        provider: route.provider,
+        model: route.model,
+        tier: route.tier,
+        ...(route.effort ? { effort: route.effort } : {}),
+      },
+      this.#stats(learning.stats),
+      await this.catalog(route.provider),
+    );
+    if (learning.mode !== "learned" || !suggestion.replace || suggestion.model === undefined) {
+      return { ...route, suggestion };
+    }
+    return {
+      ...route,
+      model: suggestion.model,
+      tier: suggestion.tier ?? route.tier,
+      ...(suggestion.effort ? { effort: suggestion.effort } : {}),
+      reasons: [...route.reasons, `learned: ${suggestion.reason}`],
+      suggestion,
+    };
+  }
+
+  /** The recorded runs' statistics, computed once for this pool: they change only when a run ends. */
+  #statsCache: readonly CellStats[] | undefined;
+  #stats(compute: () => readonly CellStats[]): readonly CellStats[] {
+    this.#statsCache ??= compute();
+    return this.#statsCache;
+  }
+
+  /** The fixed rules' route (phases A, B and B7). */
+  async #routeByRules(
+    task: TaskSpec,
+    assigned?: ReadonlyMap<string, number>,
+  ): Promise<ProviderRoute> {
     const profiles = this.options.profiles ? { profiles: this.options.profiles } : {};
     if (!this.#registry) {
       const provider = this.#first();
@@ -311,6 +361,14 @@ export class WorkerPool implements TaskRunner {
     }
     const provider = this.#provider(chosen.provider);
     this.#assigned.set(provider.id, (this.#assigned.get(provider.id) ?? 0) + 1);
+    if (chosen.suggestion) {
+      // Phase C, in shadow or used: what the learned router said, and whether it was used.
+      context.note("router_suggestion", {
+        ...chosen.suggestion,
+        mode: this.options.learning?.mode ?? "rules",
+        applied: chosen.suggestion.replace && this.options.learning?.mode === "learned",
+      });
+    }
     const name = workerName(context.runId, task.id, context.attempt);
     // With several providers, the model is named with its provider: for the
     // reports, and for phase C to learn which does what best.

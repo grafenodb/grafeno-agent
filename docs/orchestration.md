@@ -931,6 +931,36 @@ The planner's explicit recommendation for a task still comes first.
     cells never mixed, the measures of an arm, the final attempt's arm
     (limits and moves left out, a retry not clean), "enough", and the
     report. Full CI: 413.
+- **C3, the learned router (done, 2026-11-15):**
+  - `suggest` (`src/orchestrator/learned.ts`) applies the rule above to the
+    rules' choice. For every task it gives the cell, the rules' arm, the
+    arm it would choose and why: the evidence, or what is missing.
+  - The worker pool attaches that suggestion to every route and records it
+    as a `router_suggestion` event, with the mode and whether it was used.
+    In `learned` mode, a replacing suggestion changes the model, effort
+    and tier, and its reason joins the route's reasons ("learned: …").
+  - `AGENT_ROUTER`: `learned` (the default) or `shadow`. `rules` leaves
+    learning out. The statistics are computed once per run, from
+    `metrics.db`.
+  - The run's report says when the learned router chose differently, used
+    or only recorded.
+  - **What the rule means in practice.** Against a strong rule it asks for
+    many samples. When the rules' arm succeeds cleanly 92% of the time, a
+    cheaper arm at 12 of 12 is not enough: Wilson's lower bound is 76%,
+    below 92% minus 5 points. At 40 of 40 it is enough (91%). Against a
+    weaker rule (75%), 12 of 12 is enough. This is the caution §C.3 asks
+    for. With today's data, every task keeps the rules' choice.
+  - Tests: `test/orchestrator/learned.test.ts` (14). They cover the modes;
+    as good and cheaper; clearly better; cheaper but worse; small samples
+    on either side; cells never mixed; the same provider and what is
+    offered; the planner first; nothing recorded; the strong rule; shadow
+    against learned against rules in the pool; and the report. Full CI:
+    427, and all evaluations pass.
+  - **Seen while testing, not caused by it:** on this Windows machine, a
+    full local run sometimes times out in the git-heavy tests (worktrees,
+    verification, the interface's run test). They pass alone, three files
+    together pass three times in a row, the run test takes 3.8 s with or
+    without C3, and it happened before C3 too. GitHub's CI passes.
 
 ### Phase D — long autonomous runs (design only now)
 

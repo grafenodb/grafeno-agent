@@ -44,6 +44,11 @@ export interface RunReport {
   };
   /** Whether any context share came from an assumed window rather than the provider's. */
   readonly estimated: boolean;
+  /**
+   * Phase C: tasks where the learned router chose differently from the rules,
+   * and whether its choice was used (learned mode) or only recorded (shadow).
+   */
+  readonly learned: { readonly differed: number; readonly applied: number };
 }
 
 /**
@@ -116,6 +121,12 @@ export function runReport(store: OperationalStore, runId: string): RunReport {
     },
     estimated:
       metrics.some((m) => m.windowEstimated && m.contextPeak > 0) || renewedOnEstimate(events),
+    learned: {
+      differed: events.filter((e) => e.kind === "router_suggestion" && e.data.replace === true)
+        .length,
+      applied: events.filter((e) => e.kind === "router_suggestion" && e.data.applied === true)
+        .length,
+    },
   };
 }
 
@@ -135,6 +146,14 @@ export function describeReport(report: RunReport): string[] {
     lines.push(`${String(report.totals.questions)} questions for a person`);
   if (report.estimated)
     lines.push("Some context shares are estimates (the provider did not say its window).");
+  const { differed, applied } = report.learned;
+  if (differed > 0) {
+    lines.push(
+      applied === differed
+        ? `The learned router chose ${String(applied)} attempt${applied === 1 ? "" : "s"}' model from recorded runs (grafeno-agent router shows the evidence).`
+        : `The learned router would have chosen differently for ${String(differed)} attempt${differed === 1 ? "" : "s"}${applied > 0 ? `, and did for ${String(applied)}` : ", in shadow"} (grafeno-agent router shows the evidence).`,
+    );
+  }
   return lines;
 }
 
