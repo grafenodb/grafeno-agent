@@ -206,6 +206,8 @@ export type ProviderRoute =
   | (Extract<Route, { kind: "run" }> & {
       readonly provider: string;
       readonly suggestion?: Suggestion;
+      /** Tried on purpose to learn (phase C4 exploration). */
+      readonly explored?: boolean;
     })
   | Extract<Route, { kind: "hold" }>;
 

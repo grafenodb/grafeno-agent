@@ -303,6 +303,33 @@ AGENT_AFFINITY="review=codex:deep,docs=none" grafeno-agent run "..." --providers
 `--provider-for kind=provider` sends a kind of task to one of them.
 `AGENT_AFFINITY` takes `kind=provider[:tier]` pairs, or `kind=none`.
 
+### The router learns
+
+Every run leaves its attempts and outcomes in `metrics.db`, in the agent's
+data folder, for all your projects. Only numbers, ids and categories are
+kept: no text. `grafeno-agent router` shows what has been learned. For
+each kind of task and complexity, and each provider, model and effort, it
+gives how often the task succeeded cleanly (with its 95% interval), its
+cost and its time, and whether the sample is big enough to count.
+`--import` first reads the runs kept so far.
+
+The router always says what it would choose. It uses a learned choice
+only when the evidence is there:
+
+- at least 10 tasks on each side;
+- the same provider as your affinities chose;
+- as good and cheaper, or clearly better.
+
+The run's report says when that happened.
+
+| Setting                | Default   | What                                                                                                                                                         |
+| ---------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AGENT_ROUTER`         | `learned` | `learned`, `shadow` (records what it would choose, never uses it) or `rules` (no learning)                                                                   |
+| `AGENT_ROUTER_EXPLORE` | `false`   | `true`: 1 in 10 docs and tests tasks of low complexity try a less-sampled model of the same or a cheaper tier, on the same provider, recorded as exploration |
+
+Exploration is off by default: the router learns only from what runs
+anyway and spends nothing extra to learn.
+
 ### Several agents
 
 Several agents can work on one project at the same time, sharing its

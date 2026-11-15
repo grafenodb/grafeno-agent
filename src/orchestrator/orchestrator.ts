@@ -89,6 +89,11 @@ export interface OrchestratorOptions {
    * records it; `rules` leaves learning out.
    */
   readonly router?: RouterMode;
+  /**
+   * Phase C4: a small share of low-risk tasks try a less-sampled model to
+   * learn from. Off unless set (`AGENT_ROUTER_EXPLORE=true`), as decided.
+   */
+  readonly explore?: boolean | { readonly share?: number; readonly random?: () => number };
   /** For tests. */
   readonly store?: OperationalStore;
   readonly tools?: (workspace: Workspace) => Tool[];
@@ -148,6 +153,9 @@ export class Orchestrator {
         ? {
             learning: {
               mode: options.router === "shadow" ? ("shadow" as const) : ("learned" as const),
+              ...(options.explore
+                ? { explore: options.explore === true ? {} : options.explore }
+                : {}),
               stats: () => {
                 const metrics = this.metrics;
                 return metrics ? computeStats(metrics.attempts(), metrics.outcomes()) : [];

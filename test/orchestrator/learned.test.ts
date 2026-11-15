@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { FakeModel } from "../../src/model/index.js";
-import { routerMode, suggest, type RuleChoice } from "../../src/orchestrator/learned.js";
+import {
+  explore,
+  exploreOn,
+  routerMode,
+  suggest,
+  type RuleChoice,
+} from "../../src/orchestrator/learned.js";
 import type { AttemptRecord, TaskOutcome } from "../../src/orchestrator/metrics.js";
 import type { TaskSpec } from "../../src/orchestrator/plan.js";
 import type { Catalog } from "../../src/orchestrator/router.js";
@@ -284,5 +290,82 @@ describe("the run report", () => {
     expect(describeReport({ ...base, learned: { differed: 1, applied: 0 } }).at(-1)).toMatch(
       /would have chosen differently for 1 attempt, in shadow/,
     );
+  });
+});
+
+describe("exploration (C4): built, off by default", () => {
+  const low = (over: Partial<TaskSpec> = {}) => spec({ kind: "docs", complexity: 1, ...over });
+  const standard: RuleChoice = { provider: "p", model: "mid", effort: "low", tier: "standard" };
+  const always = () => 0;
+
+  it("is off unless AGENT_ROUTER_EXPLORE says true", () => {
+    expect(exploreOn(undefined)).toBe(false);
+    expect(exploreOn("false")).toBe(false);
+    expect(exploreOn(" TRUE ")).toBe(true);
+  });
+
+  it("only touches low-risk tasks: docs and tests of complexity 1–2, with no tier recommended", () => {
+    expect(
+      explore(spec({ kind: "backend", complexity: 1 }), standard, [], catalog, always),
+    ).toBeUndefined();
+    expect(explore(low({ complexity: 3 }), standard, [], catalog, always)).toBeUndefined();
+    expect(
+      explore(low({ recommended: { tier: "light" } }), standard, [], catalog, always),
+    ).toBeUndefined();
+    expect(explore(low({ kind: "tests" }), standard, [], catalog, always)).toBeDefined();
+  });
+
+  it("explores only a share of them", () => {
+    expect(explore(low(), standard, [], catalog, () => 0.5)).toBeUndefined();
+    expect(explore(low(), standard, [], catalog, () => 0.05)).toBeDefined();
+  });
+
+  it("tries a model of the same or a cheaper tier, the least sampled, never a dearer one", () => {
+    const chosen = explore(low(), standard, [], catalog, always);
+    expect(chosen).toMatchObject({ model: "small", tier: "light" });
+    expect(chosen?.reason).toMatch(
+      /exploring p\/small on a low-risk docs · low task \(0 tasks so far/,
+    );
+    // The lightest tier has nothing cheaper to try.
+    const light: RuleChoice = { provider: "p", model: "small", effort: "low", tier: "light" };
+    expect(explore(low(), light, [], catalog, always)).toBeUndefined();
+  });
+
+  it("stops exploring an arm once it has the minimum sample", () => {
+    const sampled = cells(arm(10, 10, 100, "small", "low", "p", "docs", 1));
+    expect(explore(low(), standard, sampled, catalog, always)).toBeUndefined();
+  });
+
+  it("in a pool, explores only when it is given, and marks the route", async () => {
+    const provider: Provider = {
+      id: "p",
+      name: "P",
+      signIn: "",
+      tiers: catalog.tiers,
+      status: () => Promise.resolve({ installed: true, signedIn: true, detail: "ok" }),
+      models: () => Promise.resolve(catalog.models),
+      efforts: () => catalog.efforts,
+      usage: () => Promise.resolve(undefined),
+      modelName: (m) => m,
+      create: () => new FakeModel({ turns: [] }),
+    };
+    const make = (explored: boolean) =>
+      new WorkerPool({
+        provider,
+        workspaceFor: () => Promise.resolve(new Workspace(".")),
+        tools: () => [],
+        profiles: { docs: { tier: "standard", effort: "low" } },
+        learning: {
+          mode: "learned",
+          stats: () => [],
+          ...(explored ? { explore: { random: always } } : {}),
+        },
+      });
+    const off = await make(false).routeFor(low());
+    expect(off).toMatchObject({ model: "mid" });
+    expect(off.kind === "run" && off.explored).toBeFalsy();
+    const on = await make(true).routeFor(low());
+    expect(on).toMatchObject({ model: "small", tier: "light", explored: true });
+    expect(on.kind === "run" && on.reasons.at(-1)).toMatch(/^explored: exploring p\/small/);
   });
 });

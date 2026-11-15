@@ -961,6 +961,42 @@ The planner's explicit recommendation for a task still comes first.
     verification, the interface's run test). They pass alone, three files
     together pass three times in a row, the run test takes 3.8 s with or
     without C3, and it happened before C3 too. GitHub's CI passes.
+- **C4, exploration (done, 2026-11-15; off by default):**
+  - **What it is for.** The learned router only knows arms that ran. With
+    affinities and planner recommendations, some models of a provider may
+    never run in a cell, so they can never be compared. Exploration gives
+    them a few low-risk tasks.
+  - **What it touches** (`explore` in `src/orchestrator/learned.ts`):
+    - only docs and tests tasks of complexity 1–2, with no tier
+      recommended by the planner;
+    - only 10% of them;
+    - only on the provider the rules chose, so affinities still decide
+      it;
+    - only a model offered now, of the same tier as the rules' choice or a
+      cheaper one (never dearer), at the rules' effort;
+    - the arm with the fewest tasks in the cell, while it has fewer than 10.
+
+    It never applies where the learned router replaced the rules' choice.
+
+  - **How it shows.**
+    - The route's reasons end with "explored: …".
+    - The attempt is recorded with `explored: true` in `metrics.db`, so it
+      can be told apart.
+    - Its checks, verification and merge are the same as for any task: an
+      explored attempt that fails is retried like any other.
+  - **How to turn it on:** `AGENT_ROUTER_EXPLORE=true`. It needs
+    `AGENT_ROUTER` to be `learned` or `shadow`, since `rules` leaves all
+    learning out. It is **off for now, as the user decided**, so the
+    router learns only from what runs anyway, and never spends quota to
+    learn.
+  - Tests: 6 in `test/orchestrator/learned.test.ts` cover the setting, low
+    risk only, the share, the same or a cheaper tier and the least sampled,
+    the minimum sample, and the pool with it on and off. One in
+    `test/orchestrator/metrics.test.ts` covers the explored flag.
+  - **Also:** `.claude/` is now ignored by Prettier and ESLint. Claude
+    Code's own worktrees live there, git already ignores them, and a
+    worktree of a parallel session was failing the local format check.
+    Full CI: 434, and all evaluations pass.
 
 ### Phase D — long autonomous runs (design only now)
 

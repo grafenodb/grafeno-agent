@@ -253,3 +253,29 @@ describe("failureOf", () => {
     expect(failureOf(new Error("something private"))).toBe("error");
   });
 });
+
+describe("explored attempts", () => {
+  it("are recorded as such, so the router can tell them apart", () => {
+    const store = new SqliteStore(join(dir, "shop.db"));
+    const run = store.createRun("Build it", plan, ["api", "docs", "ui"]);
+    store.event(
+      run.id,
+      "attempt_metrics",
+      {
+        task: "docs",
+        kind: "docs",
+        complexity: 1,
+        model: "p/small",
+        attempt: 1,
+        outcome: "completed",
+        explored: true,
+      },
+      "docs",
+    );
+    const metrics = new MetricsStore(join(dir, "metrics.db"));
+    metrics.recordRun(store, run.id, "shop");
+    expect(metrics.attempts()[0]).toMatchObject({ provider: "p", model: "small", explored: true });
+    metrics.close();
+    store.close();
+  });
+});

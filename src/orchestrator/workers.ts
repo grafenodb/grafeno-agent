@@ -14,7 +14,7 @@ import {
   type ProviderEntry,
   type ProviderRoute,
 } from "./router.js";
-import { suggest } from "./learned.js";
+import { explore, suggest } from "./learned.js";
 import type { CellStats } from "./stats.js";
 import type { AttemptContext, AttemptOutcome, TaskRunner } from "./scheduler.js";
 import type { TaskRecord } from "./store.js";
@@ -92,6 +92,8 @@ export interface AttemptMetrics {
   readonly quotaUsed?: number;
   /** Why it did not complete, as a category, never text. */
   readonly failure?: string;
+  /** Tried on purpose to learn (phase C4 exploration). */
+  readonly explored: boolean;
 }
 
 export interface WorkerPoolOptions {
@@ -118,6 +120,8 @@ export interface WorkerPoolOptions {
   readonly learning?: {
     readonly mode: "shadow" | "learned";
     readonly stats: () => readonly CellStats[];
+    /** Exploration (phase C4), off unless given: a share of low-risk tasks try a less-sampled arm. */
+    readonly explore?: { readonly share?: number; readonly random?: () => number };
   };
   /**
    * Whether a task has an irreversible effect started and not finished (a
@@ -245,6 +249,32 @@ export class WorkerPool implements TaskRunner {
       await this.catalog(route.provider),
     );
     if (learning.mode !== "learned" || !suggestion.replace || suggestion.model === undefined) {
+      // Exploration only where the learned router keeps the rules' choice.
+      const explored = learning.explore
+        ? explore(
+            task,
+            {
+              provider: route.provider,
+              model: route.model,
+              tier: route.tier,
+              ...(route.effort ? { effort: route.effort } : {}),
+            },
+            this.#stats(learning.stats),
+            await this.catalog(route.provider),
+            learning.explore.random ?? Math.random,
+            learning.explore.share,
+          )
+        : undefined;
+      if (explored) {
+        return {
+          ...route,
+          model: explored.model,
+          tier: explored.tier,
+          reasons: [...route.reasons, `explored: ${explored.reason}`],
+          suggestion,
+          explored: true,
+        };
+      }
       return { ...route, suggestion };
     }
     return {
@@ -537,6 +567,7 @@ export class WorkerPool implements TaskRunner {
       attempt: context.attempt,
       ...(quotaUsed === undefined ? {} : { quotaUsed }),
       ...(failure === undefined ? {} : { failure }),
+      explored: chosen.explored === true,
     };
     context.note("attempt_metrics", { ...metrics });
     return outcome;

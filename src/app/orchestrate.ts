@@ -2,7 +2,7 @@ import { loadConfig } from "../config.js";
 import { detectProject } from "../memory/project.js";
 import { grafenoVault } from "../memory/vault.js";
 import { Orchestrator, type OrchestratorOptions } from "../orchestrator/orchestrator.js";
-import { routerMode } from "../orchestrator/learned.js";
+import { exploreOn, routerMode } from "../orchestrator/learned.js";
 import { TASK_KINDS, type TaskKind } from "../orchestrator/plan.js";
 import type { Planned } from "../orchestrator/planner.js";
 import type { Autonomy } from "../orchestrator/policy.js";
@@ -49,6 +49,7 @@ export async function createOrchestrator(
     ...providerOptions(settings),
     ...(settings.providerFor ? { providerFor: settings.providerFor } : {}),
     router: routerMode(process.env.AGENT_ROUTER),
+    explore: exploreOn(process.env.AGENT_ROUTER_EXPLORE),
     ...((settings.auto ?? isAuto(process.env.AGENT_PROVIDERS))
       ? { auto: true, affinity: affinityFor(process.env.AGENT_AFFINITY, TASK_KINDS) }
       : {}),

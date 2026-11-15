@@ -137,3 +137,76 @@ function tierOf(model: string, catalog: Catalog): Tier | undefined {
   }
   return undefined;
 }
+
+/**
+ * Exploration (phase C4, decided with the user: built, off by default).
+ * With it on, a small share of low-risk tasks try a less-sampled arm, so
+ * the router can compare models it would otherwise never try. Only:
+ *
+ * - docs and tests tasks of complexity 1–2, with no tier recommended by
+ *   the planner;
+ * - on the provider the rules chose (affinities still decide it);
+ * - a model offered now, of the same tier as the rules' choice or a
+ *   cheaper one, at the rules' effort;
+ * - the arm with the fewest tasks in the cell, while it has fewer than the
+ *   minimum sample.
+ *
+ * Every explored attempt is recorded as such.
+ */
+export const EXPLORE_KINDS: readonly string[] = ["docs", "tests"];
+
+/** The share of eligible tasks that explore, when exploration is on. */
+export const EXPLORE_SHARE = 0.1;
+
+/** Whether `AGENT_ROUTER_EXPLORE` turns exploration on; off unless it says `true`. */
+export function exploreOn(setting: string | undefined): boolean {
+  return (setting ?? "").trim().toLowerCase() === "true";
+}
+
+export interface Exploration {
+  readonly model: string;
+  readonly tier: Tier;
+  readonly reason: string;
+}
+
+const TIER_ORDER: readonly Tier[] = ["light", "standard", "deep"];
+
+/** The arm a low-risk task would explore, when it should; undefined to keep the rules' choice. */
+export function explore(
+  task: TaskSpec,
+  rule: RuleChoice,
+  cells: readonly CellStats[],
+  catalog: Catalog,
+  random: () => number,
+  share = EXPLORE_SHARE,
+  minSample = 10,
+): Exploration | undefined {
+  if (!EXPLORE_KINDS.includes(task.kind) || task.complexity > 2 || task.recommended)
+    return undefined;
+  if (random() >= share) return undefined;
+  const cellKey = `${task.kind} · ${bandOf(task.complexity)}`;
+  const cell = cells.find((c) => c.key === cellKey);
+  const offered = new Set(catalog.models.map((m) => m.id));
+  const ceiling = TIER_ORDER.indexOf(rule.tier);
+  const options: { model: string; tier: Tier; tasks: number }[] = [];
+  for (const tier of TIER_ORDER.slice(0, ceiling + 1)) {
+    for (const model of catalog.tiers[tier]) {
+      if (!offered.has(model) || model === rule.model) continue;
+      if (options.some((o) => o.model === model)) continue;
+      const key = armKey({
+        provider: rule.provider,
+        model,
+        ...(rule.effort ? { effort: rule.effort } : {}),
+      });
+      const tasks = cell?.arms.find((a) => a.key === key)?.tasks ?? 0;
+      if (tasks < minSample) options.push({ model, tier, tasks });
+    }
+  }
+  const pick = options.sort((a, b) => a.tasks - b.tasks)[0];
+  if (!pick) return undefined;
+  return {
+    model: pick.model,
+    tier: pick.tier,
+    reason: `exploring ${rule.provider}/${pick.model} on a low-risk ${cellKey} task (${String(pick.tasks)} tasks so far; AGENT_ROUTER_EXPLORE is on)`,
+  };
+}
