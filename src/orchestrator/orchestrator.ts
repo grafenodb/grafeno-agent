@@ -27,7 +27,7 @@ import { Scheduler, type SchedulerChange } from "./scheduler.js";
 import type { RunState } from "./states.js";
 import { SqliteStore, type OperationalStore, type Run } from "./store.js";
 import { runReport, type RunReport } from "./telemetry.js";
-import { verifier, verify, type CommandRunner } from "./verify.js";
+import { shellRunner, verifier, verify, type CommandRunner } from "./verify.js";
 import { deliver, type Delivery } from "./deliver.js";
 import { Workspace } from "../tools/workspace.js";
 import { WorkerPool, type ActiveWorker, type ContextPolicy } from "./workers.js";
@@ -235,7 +235,7 @@ export class Orchestrator {
       inner: () => this.pool,
       verify: verifier({
         redact: secrets,
-        ...(options.commandRunner ? { runner: options.commandRunner } : {}),
+        runner: options.commandRunner ?? checksRunner(),
       }),
       policy: this.policy,
       ...(options.ask ? { ask: options.ask } : {}),
@@ -495,7 +495,7 @@ export class Orchestrator {
       checks: (root) =>
         verify(unique, new Workspace(root), {
           redact: this.options.secrets ?? [],
-          ...(this.options.commandRunner ? { runner: this.options.commandRunner } : {}),
+          runner: this.options.commandRunner ?? checksRunner(),
         }),
     });
   }
@@ -564,6 +564,16 @@ export class Orchestrator {
         : "The project has no files under git yet.",
     ].join("\n\n");
   }
+}
+
+/**
+ * The shell that runs acceptance checks: like the workers' commands, it
+ * never sees the agent's or the providers' keys.
+ */
+export function checksRunner(): CommandRunner {
+  return shellRunner({
+    hiddenEnv: ["GRAFENO_AGENT_KEY", "GRAFENO_OWNER_TOKEN", ...PROVIDER_SECRET_ENV],
+  });
 }
 
 /** Who planned, for the plan view: `provider/model · effort`. */

@@ -386,3 +386,25 @@ describe("verification in a run", { timeout: 30_000 }, () => {
     expect(existsSync(join(plain, "out.txt"))).toBe(true);
   });
 });
+
+describe("the shell of acceptance checks", { timeout: 30_000 }, () => {
+  it("never shows a check the agent's or the providers' keys", async () => {
+    const { checksRunner } = await import("../../src/orchestrator/orchestrator.js");
+    const names = ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GRAFENO_AGENT_KEY", "GRAFENO_OWNER_TOKEN"];
+    const before = names.map((name) => process.env[name]);
+    for (const name of names) process.env[name] = "secret-value";
+    try {
+      const result = await checksRunner().run(
+        `node -e "process.stdout.write(['GEMINI_API_KEY','GOOGLE_API_KEY','GRAFENO_AGENT_KEY','GRAFENO_OWNER_TOKEN'].filter(n => process.env[n]).join(',') || 'none')"`,
+        { cwd: process.cwd(), timeoutMs: 20_000 },
+      );
+      expect(result.output.trim()).toBe("none");
+    } finally {
+      names.forEach((name, i) => {
+        const value = before[i];
+        if (value === undefined) Reflect.deleteProperty(process.env, name);
+        else process.env[name] = value;
+      });
+    }
+  });
+});
