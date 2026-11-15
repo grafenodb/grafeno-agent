@@ -1,5 +1,7 @@
 import { ClaudeCodeProvider } from "./claude-code.js";
 import { CodexProvider } from "./codex.js";
+import { TIERS, type TaskKind, type Tier } from "../orchestrator/plan.js";
+import { DEFAULT_AFFINITY, type Affinity } from "../orchestrator/router.js";
 import type { Provider } from "./types.js";
 
 /** The providers the agent knows, by the id `AGENT_PROVIDERS` names them with. */
@@ -8,8 +10,21 @@ export const KNOWN_PROVIDERS: Readonly<Record<string, () => Provider>> = {
   codex: () => new CodexProvider(),
 };
 
-/** The ids in a setting such as "claude-code,codex"; throws on one it does not know. */
+/** The setting's word for General Auto: every known provider, as one pool. */
+export const AUTO = "auto";
+
+/** Whether a setting asks for General Auto (`AGENT_PROVIDERS=auto`). */
+export function isAuto(setting: string | undefined): boolean {
+  return (setting ?? "").trim().toLowerCase() === AUTO;
+}
+
+/**
+ * The ids in a setting such as "claude-code,codex"; throws on one it does
+ * not know. "auto" is every known provider (General Auto): the registry
+ * then keeps only the ready ones.
+ */
 export function providerIds(setting: string | undefined): string[] {
+  if (isAuto(setting)) return Object.keys(KNOWN_PROVIDERS);
   const ids = (setting ?? "")
     .split(",")
     .map((id) => id.trim())
@@ -62,4 +77,38 @@ export function allProviders(env: Record<string, string | undefined> = process.e
   const chosen = providerIds(env.AGENT_PROVIDERS);
   const rest = Object.keys(KNOWN_PROVIDERS).filter((id) => !chosen.includes(id));
   return [...chosen, ...rest].map((id) => (KNOWN_PROVIDERS[id] as () => Provider)());
+}
+
+/**
+ * The affinities of General Auto: the user's defaults (`DEFAULT_AFFINITY`),
+ * changed by a setting such as "review=claude-code:deep,docs=codex:light,
+ * frontend=none" (`AGENT_AFFINITY`); "none" removes a kind's affinity.
+ */
+export function affinityFor(
+  setting: string | undefined,
+  kinds: readonly string[],
+): Partial<Record<TaskKind, Affinity>> {
+  const out: Partial<Record<TaskKind, Affinity>> = { ...DEFAULT_AFFINITY };
+  for (const pair of (setting ?? "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean)) {
+    const [kind, target] = pair.split("=").map((p) => p.trim());
+    const [provider, tier] = (target ?? "").split(":").map((p) => p.trim());
+    const tierOk = tier === undefined || (TIERS as readonly string[]).includes(tier);
+    if (!kind || !kinds.includes(kind) || !provider || !tierOk) {
+      throw new Error(
+        `AGENT_AFFINITY takes kind=provider[:tier] pairs, or kind=none (kinds: ${kinds.join(", ")}; tiers: ${TIERS.join(", ")}): ${pair}`,
+      );
+    }
+    if (provider === "none") {
+      Reflect.deleteProperty(out, kind);
+      continue;
+    }
+    if (!(provider in KNOWN_PROVIDERS)) {
+      throw new Error(`AGENT_AFFINITY names an unknown provider: ${provider}`);
+    }
+    out[kind as TaskKind] = { provider, ...(tier ? { tier: tier as Tier } : {}) };
+  }
+  return out;
 }

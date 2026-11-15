@@ -2,11 +2,11 @@ import { loadConfig } from "../config.js";
 import { detectProject } from "../memory/project.js";
 import { grafenoVault } from "../memory/vault.js";
 import { Orchestrator, type OrchestratorOptions } from "../orchestrator/orchestrator.js";
-import type { TaskKind } from "../orchestrator/plan.js";
+import { TASK_KINDS, type TaskKind } from "../orchestrator/plan.js";
 import type { Planned } from "../orchestrator/planner.js";
 import type { Autonomy } from "../orchestrator/policy.js";
 import type { Route } from "../orchestrator/router.js";
-import { chosenProviders } from "../providers/index.js";
+import { affinityFor, chosenProviders, isAuto } from "../providers/index.js";
 import type { Provider } from "../providers/types.js";
 import { checkGrafeno } from "../startup.js";
 import { embedderFor, prepareGrafeno } from "./services.js";
@@ -21,6 +21,11 @@ export interface OrchestrateSettings {
   readonly providerFor?: Partial<Record<TaskKind, string>>;
   /** The providers, in order of preference; default: AGENT_PROVIDERS. */
   readonly providers?: readonly Provider[];
+  /**
+   * General Auto: every ready provider as one pool, with affinities by task
+   * kind; default: AGENT_PROVIDERS=auto.
+   */
+  readonly auto?: boolean;
   readonly cwd?: string;
 }
 
@@ -42,6 +47,9 @@ export async function createOrchestrator(
   return new Orchestrator({
     ...providerOptions(settings),
     ...(settings.providerFor ? { providerFor: settings.providerFor } : {}),
+    ...((settings.auto ?? isAuto(process.env.AGENT_PROVIDERS))
+      ? { auto: true, affinity: affinityFor(process.env.AGENT_AFFINITY, TASK_KINDS) }
+      : {}),
     project,
     projectRoot: project.path ?? cwd,
     vault: grafenoVault(config),
@@ -82,8 +90,14 @@ function providerOptions(settings: OrchestrateSettings): {
 }
 
 /** A plan, as lines for a person: each task, what it waits for, and the model it will get. */
-export function describePlan(planned: Planned & { routes: Map<string, Route> }): string[] {
-  const lines = [`Goal: ${planned.plan.goal}`, ""];
+export function describePlan(
+  planned: Planned & { routes: Map<string, Route>; planner?: string },
+): string[] {
+  const lines = [
+    `Goal: ${planned.plan.goal}`,
+    ...(planned.planner ? [`Planned by ${planned.planner}`] : []),
+    "",
+  ];
   // With tasks on more than one provider, each model is named with its provider.
   const providerOf = (route: Route | undefined) =>
     route?.kind === "run" && "provider" in route && typeof route.provider === "string"

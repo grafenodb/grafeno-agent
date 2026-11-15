@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { TASK_KINDS } from "./orchestrator/plan.js";
-import { KNOWN_PROVIDERS, providerForKinds, providerIds } from "./providers/index.js";
+import { isAuto, KNOWN_PROVIDERS, providerForKinds, providerIds } from "./providers/index.js";
 import type { Provider } from "./providers/types.js";
 import { existsSync, readFileSync } from "node:fs";
 import { Agent } from "./agent/agent.js";
@@ -44,8 +44,10 @@ Commands:
           git worktree; the work lands on an integration branch for you to merge.
           --mode supervised|controlled|extended (default controlled), --workers N
           (default 3), --light (light models, low effort), --yes (no confirmation),
-          --providers claude-code,codex (default AGENT_PROVIDERS), --provider-for
-          tests=codex,docs=codex (which provider takes a kind of task).
+          --providers claude-code,codex (default AGENT_PROVIDERS), or --providers auto
+          (General Auto: every ready provider as one pool, each task kind to its
+          affinity, AGENT_AFFINITY), --provider-for tests=codex,docs=codex (which
+          provider takes a kind of task).
   runs [id]  The project's runs, or one run's report.
   resume <id>  Go on with a paused or waiting run.
   resume --compact  Print where the project's work stands, compact, for a new session:
@@ -241,6 +243,7 @@ function runSettings(argv: readonly string[]): OrchestrateSettings {
           providers: providerIds(flag(argv, "--providers")).map((id) =>
             (KNOWN_PROVIDERS[id] as () => Provider)(),
           ),
+          ...(isAuto(flag(argv, "--providers")) ? { auto: true } : {}),
         }),
   };
 }

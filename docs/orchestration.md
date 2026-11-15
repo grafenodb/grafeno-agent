@@ -601,11 +601,56 @@ all of them:
   (user-configurable); spreading across plans is only the tie-break, and
   each plan's quota is always a hard limit.
 
+**Decided by the user (2026-11-15, later):**
+
+- **Default affinities, as in the user's example:**
+  - planning and architecture → Claude, standard;
+  - review → Claude, deep;
+  - backend and debug → Claude, deep;
+  - docs → Codex, light;
+  - tests and refactor → Codex, standard;
+  - frontend → whichever has more room.
+
+  A setting changes them.
+
+- **The B6 run comes at the end of B7:** one small run that also checks
+  General Auto, with the user's OK just before it, once both windows have
+  room.
+
+**B7 progress (2026-11-15):**
+
+- **B7a, the pool (done):**
+  - `routeAcross` with `auto`: the rule above, each step logged. First the
+    tier (the planner's recommendation, else the affinity's tier, else the
+    profile; a hard task never below standard). Then the affinity, with an
+    explicit `--provider-for` before it. Then headroom: a plan at its limit
+    is never used, and one near it only when no plan has room. Spreading is
+    the tie-break: the most room, then the fewest tasks given so far in the
+    run, then the order.
+  - `DEFAULT_AFFINITY` holds the user's example. `AGENT_AFFINITY` changes it
+    (`kind=provider[:tier]`, or `kind=none`).
+  - `AGENT_PROVIDERS=auto` and `--providers auto` mean every known
+    provider; the registry keeps the ready ones.
+  - **The planner from the same pool, on its own provider.** This fixes a
+    bug: the planner's route was taken from the pool, but its model was
+    always made with the first provider. The plan view says who planned and
+    routes the tasks in order, counting what each provider was given, as
+    the run will.
+  - Tests: `test/orchestrator/auto.test.ts`, 11 tests. They cover the
+    user's example, most room, spreading, an affinity with no room or not
+    ready, the hard limit, the order of `--provider-for` and the
+    recommendation, mode off, the settings, and a whole run where Claude
+    plans and both providers finish their tasks. Full CI: 392.
+- **B7b, left:** "Auto" as a model of each provider in `/models` (Codex
+  included), and "Auto" as a provider in `/connect` for the session.
+- **B7c, left:** in General Auto, a light model triages each message:
+  answer directly, or orchestrate.
+
 **What is left of phase B, in order:**
 
-1. B6: one real run where Claude and Codex workers both finish their
-   tasks, when Claude's five-hour window has room.
-2. B7, as above, with the two decisions taken.
+1. B7b and B7c.
+2. B6: one real run where Claude and Codex workers both finish their
+   tasks, at the end of B7.
 3. The README: a "Providers" section (`AGENT_PROVIDERS`, setting up Codex,
    `--providers`, `--provider-for`), and Codex "Auto" in `/models`.
 4. Then phase B is checked against the brief's §B.1–B.4 and closed.

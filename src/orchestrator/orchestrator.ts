@@ -14,7 +14,7 @@ import type { TaskKind, TaskSpec } from "./plan.js";
 import { makePlan, type Planned } from "./planner.js";
 import { TaskPipeline } from "./pipeline.js";
 import { Policy, type Autonomy, type Question } from "./policy.js";
-import type { Profile, Route } from "./router.js";
+import type { Affinity, Profile, Route } from "./router.js";
 import { Scheduler, type SchedulerChange } from "./scheduler.js";
 import type { RunState } from "./states.js";
 import { SqliteStore, type OperationalStore, type Run } from "./store.js";
@@ -58,6 +58,14 @@ export interface OrchestratorOptions {
   readonly providers?: readonly Provider[];
   /** A provider for some task kinds, when it is ready. */
   readonly providerFor?: Partial<Record<TaskKind, string>>;
+  /**
+   * General Auto (B7): every ready provider is one pool; each task kind goes
+   * first to its affinity, ties are spread, and the planner comes from the
+   * same pool (with the provider it was routed to).
+   */
+  readonly auto?: boolean;
+  /** For each task kind, its preferred provider and tier, in General Auto. */
+  readonly affinity?: Partial<Record<TaskKind, Affinity>>;
   /** Profiles per task kind (tier and effort); for example, all light for a cheap run. */
   readonly profiles?: Partial<Record<TaskKind, Profile>>;
   /** The planner's model and effort; default: what the router gives an architecture task. */
@@ -114,6 +122,8 @@ export class Orchestrator {
       ...(providers.length > 1 ? { providers } : {}),
       ...(this.registry ? { registry: this.registry } : {}),
       ...(options.providerFor ? { providerFor: options.providerFor } : {}),
+      ...(options.auto === true ? { auto: true } : {}),
+      ...(options.affinity ? { affinity: options.affinity } : {}),
       effectInFlight: (runId, taskId) =>
         this.store.effectsInFlight(runId).some((key) => key.endsWith(`:${taskId}`)),
       workspaceFor: (task, context) => this.pipeline.workspaceFor(task, context),
@@ -164,16 +174,29 @@ export class Orchestrator {
   async plan(
     request: string,
     signal?: AbortSignal,
-  ): Promise<Planned & { routes: Map<string, Route> }> {
-    const choice = this.options.planner ?? (await this.#plannerChoice());
-    const model = this.options.makeModel?.(choice) ?? this.options.provider.create(choice);
+  ): Promise<Planned & { routes: Map<string, Route>; planner: string }> {
+    // The planner's model, made with the provider it was routed to.
+    const planner = this.options.planner
+      ? { choice: this.options.planner, provider: this.options.provider }
+      : await this.#plannerChoice();
+    const model =
+      this.options.makeModel?.(planner.choice) ?? planner.provider.create(planner.choice);
     const planned = await makePlan(
       { request, context: await this.#projectContext() },
       { model, ...(signal ? { signal } : {}) },
     );
+    // Routed in order, counting what each provider was given, as the run will.
     const routes = new Map<string, Route>();
-    for (const task of planned.plan.tasks) routes.set(task.id, await this.pool.routeFor(task));
-    return { ...planned, routes };
+    const assigned = new Map<string, number>();
+    for (const id of planned.order) {
+      const task = planned.plan.tasks.find((t) => t.id === id);
+      if (!task) continue;
+      const route = await this.pool.routeFor(task, assigned);
+      if (route.kind === "run")
+        assigned.set(route.provider, (assigned.get(route.provider) ?? 0) + 1);
+      routes.set(task.id, route);
+    }
+    return { ...planned, routes, planner: plannerLabel(planner) };
   }
 
   /** Stores a checked plan as a run, from the project's HEAD; says what the run will not see. */
@@ -241,7 +264,7 @@ export class Orchestrator {
     this.store.close();
   }
 
-  async #plannerChoice(): Promise<ModelChoice> {
+  async #plannerChoice(): Promise<{ choice: ModelChoice; provider: Provider; model: string }> {
     const probe: TaskSpec = {
       id: "plan",
       title: "Plan",
@@ -257,8 +280,12 @@ export class Orchestrator {
     const route = await this.pool.routeFor(probe);
     if (route.kind === "hold") throw new Error(`Not planning now: ${route.reason}`);
     return {
-      ...(route.model === "default" ? {} : { model: route.model }),
-      ...(route.effort ? { effort: route.effort } : {}),
+      choice: {
+        ...(route.model === "default" ? {} : { model: route.model }),
+        ...(route.effort ? { effort: route.effort } : {}),
+      },
+      provider: this.pool.providerById(route.provider),
+      model: route.model,
     };
   }
 
@@ -274,4 +301,14 @@ export class Orchestrator {
         : "The project has no files under git yet.",
     ].join("\n\n");
   }
+}
+
+/** Who planned, for the plan view: `provider/model · effort`. */
+function plannerLabel(planner: {
+  choice: ModelChoice;
+  provider: Provider;
+  model?: string;
+}): string {
+  const model = planner.model ?? planner.choice.model ?? "default";
+  return `${planner.provider.id}/${model}${planner.choice.effort ? ` · ${planner.choice.effort}` : ""}`;
 }

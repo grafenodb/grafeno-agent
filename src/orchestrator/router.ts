@@ -163,7 +163,42 @@ export interface ProviderEntry {
 export interface AcrossOptions extends RouterOptions {
   /** A provider for some task kinds (when it is ready), before the order of preference. */
   readonly providerFor?: Partial<Record<TaskKind, string>>;
+  /**
+   * General Auto (B7): every ready provider is one pool. Each task kind goes
+   * first to its affinity (a provider, and a tier its role needs); without
+   * one, or when that provider has no room, to the provider with the most
+   * room, then the one given fewest tasks so far (spreading). Without
+   * `auto`, the providers are an order of preference (phase B4).
+   */
+  readonly auto?: boolean;
+  /** For each task kind, its preferred provider and tier (General Auto). */
+  readonly affinity?: Partial<Record<TaskKind, Affinity>>;
+  /** Tasks given to each provider so far in this run: the spreading tie-break. */
+  readonly assigned?: ReadonlyMap<string, number>;
 }
+
+/** Where a task kind goes first in General Auto: a provider, and the tier its role needs. */
+export interface Affinity {
+  readonly provider: string;
+  readonly tier?: Tier;
+}
+
+/**
+ * The user's default affinities (decided 2026-11-15, after their example):
+ * planning and architecture on Claude, standard; review, backend and debug
+ * on Claude, deep; docs on Codex, light; tests and refactor on Codex,
+ * standard; frontend wherever there is most room. A setting changes them
+ * (`AGENT_AFFINITY`).
+ */
+export const DEFAULT_AFFINITY: Readonly<Partial<Record<TaskKind, Affinity>>> = {
+  architecture: { provider: "claude-code", tier: "standard" },
+  review: { provider: "claude-code", tier: "deep" },
+  backend: { provider: "claude-code", tier: "deep" },
+  debug: { provider: "claude-code", tier: "deep" },
+  docs: { provider: "codex", tier: "light" },
+  tests: { provider: "codex", tier: "standard" },
+  refactor: { provider: "codex", tier: "standard" },
+};
 
 /** A route that also names its provider. */
 export type ProviderRoute =
@@ -187,11 +222,12 @@ export function routeAcross(
   if (providers.length === 0) return { kind: "hold", reason: "no provider is ready" };
   const lighter = options.lighterAbove ?? 0.8;
   const hold = options.holdAbove ?? 0.95;
+  const used = (p: ProviderEntry) => mostUsed(p.usage)?.used ?? 0;
+  if (options.auto === true) return routePool(task, providers, options, used, lighter, hold);
   const wanted = options.providerFor?.[task.kind];
   const ordered = wanted
     ? [...providers.filter((p) => p.id === wanted), ...providers.filter((p) => p.id !== wanted)]
     : [...providers];
-  const used = (p: ProviderEntry) => mostUsed(p.usage)?.used ?? 0;
   const why = (p: ProviderEntry, first: string) =>
     p.id === wanted ? `${task.kind} tasks go to ${p.id}` : first;
 
@@ -227,6 +263,99 @@ export function routeAcross(
   }
   // Every one at its limit: wait for the first to reset.
   const limits = ordered.map((p) => ({ p, limit: mostUsed(p.usage) }));
+  const first = limits.find((l) => l.limit?.resets !== undefined);
+  return {
+    kind: "hold",
+    reason: `every provider has reached its limit (${limits
+      .map((l) => `${l.p.id} ${String(Math.round((l.limit?.used ?? 0) * 100))}%`)
+      .join(", ")})`,
+    ...(first?.limit?.resets === undefined ? {} : { resets: first.limit.resets }),
+  };
+}
+
+/**
+ * General Auto: one pool of every ready provider's models. The rule, in
+ * order, each step logged:
+ *
+ * 1. the tier: the planner's recommendation, else the kind's affinity tier,
+ *    else its profile; a hard task never below standard;
+ * 2. the affinity: an explicit `providerFor`, else the kind's affinity, when
+ *    that provider has room;
+ * 3. headroom: a provider at its limit (`holdAbove`) is never used, and one
+ *    near it (`lighterAbove`) only when none has room;
+ * 4. spreading, as the tie-break: the most room, then the fewest tasks given
+ *    so far in the run, then the order the providers came in.
+ */
+function routePool(
+  task: TaskSpec,
+  providers: readonly ProviderEntry[],
+  options: AcrossOptions,
+  used: (p: ProviderEntry) => number,
+  lighter: number,
+  hold: number,
+): ProviderRoute {
+  const explicit = options.providerFor?.[task.kind];
+  const affinity = options.affinity?.[task.kind];
+  const wanted = explicit ?? affinity?.provider;
+  // The role's tier, for whichever provider takes the task.
+  const base = options.profiles?.[task.kind] ?? DEFAULT_PROFILES[task.kind];
+  const profiles =
+    affinity?.tier === undefined
+      ? options.profiles
+      : { ...options.profiles, [task.kind]: { ...base, tier: affinity.tier } };
+  const assigned = (p: ProviderEntry) => options.assigned?.get(p.id) ?? 0;
+  const order = new Map(providers.map((p, index) => [p.id, index]));
+  const spread = (a: ProviderEntry, b: ProviderEntry) =>
+    used(a) - used(b) ||
+    assigned(a) - assigned(b) ||
+    (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0);
+
+  const withRoom = providers.filter((p) => used(p) < lighter);
+  const preferred = withRoom.find((p) => p.id === wanted);
+  const rest = withRoom.filter((p) => p !== preferred).sort(spread);
+  const tryEntries = (entries: readonly ProviderEntry[], first: (p: ProviderEntry) => string) => {
+    for (const entry of entries) {
+      const chosen = route(task, entry.catalog, {
+        ...options,
+        ...(profiles ? { profiles } : {}),
+        ...withUsage(entry),
+      });
+      if (chosen.kind === "hold") continue;
+      return { ...chosen, provider: entry.id, reasons: [first(entry), ...chosen.reasons] };
+    }
+    return undefined;
+  };
+
+  const notes: string[] = [];
+  if (wanted !== undefined && preferred === undefined) {
+    notes.push(
+      providers.some((p) => p.id === wanted)
+        ? `${wanted} has no room for ${task.kind} tasks now`
+        : `${wanted} is not ready`,
+    );
+  }
+  const chosen =
+    (preferred &&
+      tryEntries([preferred], (p) =>
+        explicit
+          ? `${task.kind} tasks go to ${p.id}`
+          : `${task.kind} tasks go to ${p.id} (affinity${affinity?.tier ? `, ${affinity.tier}` : ""})`,
+      )) ??
+    tryEntries(
+      rest,
+      (p) =>
+        `${p.id} has the most room${options.assigned ? ` (${String(assigned(p))} tasks so far)` : ""}`,
+    );
+  if (chosen) return { ...chosen, reasons: [...notes, ...chosen.reasons] };
+
+  // None has room: the one with the most room under the hard limit, a tier lighter (route does it).
+  const open = providers.filter((p) => used(p) < hold).sort(spread);
+  const near = tryEntries(
+    open,
+    (p) => `every provider is near its limit: ${p.id} has the most room`,
+  );
+  if (near) return near;
+  const limits = providers.map((p) => ({ p, limit: mostUsed(p.usage) }));
   const first = limits.find((l) => l.limit?.resets !== undefined);
   return {
     kind: "hold",

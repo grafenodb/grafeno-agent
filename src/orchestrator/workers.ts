@@ -8,6 +8,7 @@ import { CapabilityRegistry, type Unavailable } from "../providers/registry.js";
 import {
   route,
   routeAcross,
+  type Affinity,
   type Catalog,
   type Profile,
   type ProviderEntry,
@@ -93,6 +94,13 @@ export interface WorkerPoolOptions {
   /** A provider for some task kinds, when it is ready. */
   readonly providerFor?: Partial<Record<TaskSpec["kind"], string>>;
   /**
+   * General Auto (B7): the providers are one pool, each task kind goes first
+   * to its affinity, and ties are spread (see `routeAcross`).
+   */
+  readonly auto?: boolean;
+  /** For each task kind, its preferred provider and tier, in General Auto. */
+  readonly affinity?: Partial<Record<TaskSpec["kind"], Affinity>>;
+  /**
    * Whether a task has an irreversible effect started and not finished (a
    * merge): such a task is never given to another provider.
    */
@@ -140,6 +148,8 @@ export class WorkerPool implements TaskRunner {
   readonly #usages = new Map<string, { value: ProviderUsage | undefined; at: number }>();
   readonly #providers: readonly Provider[];
   readonly #registry: CapabilityRegistry | undefined;
+  /** Attempts started on each provider: General Auto's spreading tie-break. */
+  readonly #assigned = new Map<string, number>();
 
   constructor(private readonly options: WorkerPoolOptions) {
     this.#providers = options.providers ?? [options.provider];
@@ -190,8 +200,17 @@ export class WorkerPool implements TaskRunner {
     return value;
   }
 
-  /** The route a task would take now: for the plan view, and for tests. */
-  async routeFor(task: TaskSpec): Promise<ProviderRoute> {
+  /** A provider of the pool, by id: the planner's model is made with the provider it was routed to. */
+  providerById(id: string): Provider {
+    return this.#provider(id);
+  }
+
+  /**
+   * The route a task would take now: for the plan view, and for tests.
+   * `assigned` counts tasks already given per provider (default: the
+   * attempts this pool started), for General Auto's spreading.
+   */
+  async routeFor(task: TaskSpec, assigned?: ReadonlyMap<string, number>): Promise<ProviderRoute> {
     const profiles = this.options.profiles ? { profiles: this.options.profiles } : {};
     if (!this.#registry) {
       const provider = this.#first();
@@ -214,6 +233,13 @@ export class WorkerPool implements TaskRunner {
     return routeAcross(task, entries, {
       ...profiles,
       ...(this.options.providerFor ? { providerFor: this.options.providerFor } : {}),
+      ...(this.options.auto === true
+        ? {
+            auto: true,
+            ...(this.options.affinity ? { affinity: this.options.affinity } : {}),
+            assigned: assigned ?? this.#assigned,
+          }
+        : {}),
     });
   }
 
@@ -276,6 +302,7 @@ export class WorkerPool implements TaskRunner {
       };
     }
     const provider = this.#provider(chosen.provider);
+    this.#assigned.set(provider.id, (this.#assigned.get(provider.id) ?? 0) + 1);
     const name = workerName(context.runId, task.id, context.attempt);
     // With several providers, the model is named with its provider: for the
     // reports, and for phase C to learn which does what best.
