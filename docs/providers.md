@@ -115,10 +115,11 @@ the subscriptions (the official CLIs on this computer) and never an API
 that bills per token; add OpenRouter with an API key; check every key when
 it is added, not only when it is first used.
 
-- **`AGENT_AUTO_PROVIDERS`** lists what Auto includes. Empty means the
-  providers used through their official CLI (`claude-code`, `codex`).
-  Providers reached with an API key (`API_KEY_PROVIDERS`: `gemini`,
-  `openrouter`) are only in it when the user names them.
+- **`AGENT_AUTO_PROVIDERS`** lists what Auto includes. Empty means none:
+  the user chooses, and Auto warns until then. Asked again the same day,
+  Auto never picks providers on its own. Providers reached with an API key
+  (`API_KEY_PROVIDERS`: `gemini`, `openrouter`) carry a warning that they
+  may bill per token.
   - In `/connect`, **space** toggles one.
   - Login asks whether to include the provider, with no as the default.
   - Auto's pool, its triage and its runs use only these providers, and

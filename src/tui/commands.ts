@@ -27,6 +27,10 @@ export const COMMANDS: readonly Command[] = [
     name: "agents",
     description: "The main agent and its sub-agents: view one (read only; ctrl+n / ctrl+p)",
   },
+  {
+    name: "skills",
+    description: "The skills the agent can use (install: grafeno-agent skills add)",
+  },
   { name: "upkeep", description: "Report on the memory: duplicates, contradictions" },
   { name: "sidebar", description: "Show or hide the side panel (ctrl+b)" },
   { name: "clear", description: "Clear the conversation from the screen" },

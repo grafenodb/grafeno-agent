@@ -1,4 +1,11 @@
 import { Agent, type AgentTurn } from "../agent/agent.js";
+import {
+  findSkills,
+  skillCatalog,
+  skillRoots,
+  skillTool,
+  type SkillRoot,
+} from "../skills/skills.js";
 import { PROVIDER_SECRET_ENV } from "../providers/index.js";
 import { SYSTEM_PROMPT } from "../agent/builtin-tools.js";
 import { ToolRegistry, type Approver, type Tool } from "../agent/tools.js";
@@ -51,6 +58,8 @@ export interface AgentSessionOptions {
   readonly tools?: (workspace: Workspace) => Tool[];
   /** Tools the interface adds (such as `delegate`, to start sub-agents). */
   readonly extraTools?: readonly Tool[];
+  /** Where skills are read from; default: the project's and the user's (skillRoots). */
+  readonly skillRoots?: readonly SkillRoot[];
   /**
    * When to renew the conversation (see lifecycle.ts); `false`: never.
    * Default: after a pause that leaves the cache cold with a large context,
@@ -371,11 +380,19 @@ export class AgentSession {
       projectTools(this.workspace, {
         hiddenEnv: ["GRAFENO_AGENT_KEY", ...PROVIDER_SECRET_ENV],
       });
+    // Skills: what each is for goes in the instructions; the `skill` tool loads one.
+    const skills = findSkills(this.options.skillRoots ?? skillRoots(this.workspace.root)).skills;
+    const catalog = skillCatalog(skills);
     this.#agent = new Agent({
       model,
-      system: `${this.memory.systemPrompt(SYSTEM_PROMPT)}\n\n${toolsPrompt(this.workspace)}`,
+      system: `${this.memory.systemPrompt(SYSTEM_PROMPT)}\n\n${toolsPrompt(this.workspace)}${catalog ? `\n\n${catalog}` : ""}`,
       tools: new ToolRegistry(
-        [...own, ...this.memoryTools, ...(this.options.extraTools ?? [])],
+        [
+          ...own,
+          ...this.memoryTools,
+          ...(skills.length > 0 ? [skillTool(() => skills)] : []),
+          ...(this.options.extraTools ?? []),
+        ],
         (call, tool, decision) => this.approve(call, tool, decision),
         { redact: [config.agentKey] },
       ),

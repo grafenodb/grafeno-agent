@@ -28,6 +28,8 @@ import type { Orchestrator } from "../orchestrator/orchestrator.js";
 import type { ActiveWorker } from "../orchestrator/workers.js";
 import { describeReport } from "../orchestrator/telemetry.js";
 import { delegateTool } from "../app/delegate.js";
+import { describeSkills } from "../app/skills-command.js";
+import { findSkills, skillRoots } from "../skills/skills.js";
 import type { Provider } from "../providers/types.js";
 import { withActivity, withState, withTasks, withWorkers, type SubAgent } from "./agents.js";
 import { AgentsPanel, AgentView, agentKey } from "./agents-panel.js";
@@ -616,7 +618,17 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         notice(`Unknown command /${command.name}. /help lists them.`, "error");
         return;
       }
-      const free = ["help", "connect", "palace", "clear", "exit", "status", "sidebar", "agents"];
+      const free = [
+        "help",
+        "connect",
+        "palace",
+        "clear",
+        "exit",
+        "status",
+        "sidebar",
+        "agents",
+        "skills",
+      ];
       if (!free.includes(command.name) && !session) {
         notice("Not connected yet: /palace sets up the memory.", "warning");
         return;
@@ -699,6 +711,21 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
             lines: [
               ...usageLines(active, fresh, provider?.name),
               ...others.flatMap((o) => ["", ...limitLines(o.usage, o.name)]),
+            ],
+          });
+          break;
+        }
+        case "skills": {
+          const root = session?.workspace.root ?? process.cwd();
+          push({
+            kind: "block",
+            title: "Skills",
+            lines: [
+              ...describeSkills(findSkills(skillRoots(root))),
+              "",
+              "The agent uses a skill when a task matches its description.",
+              "Install: grafeno-agent skills add <owner/repo> (the Skills CLI) · yours: grafeno-agent skills new <name>",
+              "New skills reach the agent from its next conversation (/new).",
             ],
           });
           break;

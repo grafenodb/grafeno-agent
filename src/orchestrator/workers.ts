@@ -1,4 +1,5 @@
 import { Agent, AgentError } from "../agent/agent.js";
+import { findSkills, skillCatalog, skillRoots, skillTool } from "../skills/skills.js";
 import { ToolRegistry, type Approver, type Tool } from "../agent/tools.js";
 import { ModelError, type Model, type ModelEvent, type Usage } from "../model/index.js";
 import type { ModelChoice, Provider, ProviderUsage } from "../providers/types.js";
@@ -449,12 +450,19 @@ export class WorkerPool implements TaskRunner {
     const budget = this.options.attemptTokens?.(task.spec);
     const approver =
       this.options.approverFor?.(task, name, context) ?? this.options.approve ?? (() => false);
+    // The project's and the user's skills reach sub-agents too.
+    const skills = findSkills(skillRoots(workspace.root)).skills;
+    const catalog = skillCatalog(skills);
     const makeAgent = () =>
       new Agent({
         model: this.options.makeModel?.(choice) ?? provider.create(choice),
-        system: workerSystem(task.spec, workspace, memory?.brief),
+        system: `${workerSystem(task.spec, workspace, memory?.brief)}${catalog ? `\n\n${catalog}` : ""}`,
         tools: new ToolRegistry(
-          [...this.options.tools(workspace), ...(memory?.tools ?? [])],
+          [
+            ...this.options.tools(workspace),
+            ...(memory?.tools ?? []),
+            ...(skills.length > 0 ? [skillTool(() => skills)] : []),
+          ],
           approver,
           { redact: this.options.redact ?? [] },
         ),

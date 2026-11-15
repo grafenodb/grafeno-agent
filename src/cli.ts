@@ -45,6 +45,10 @@ Commands:
   init     Set up: --include-grafeno (Grafeno runs on this computer), or
            --grafeno-url <url> --key <key> (a Grafeno server you have).
   check    Check the settings, that Grafeno answers and that the agent's key works.
+  skills [add|find|remove|update|new|check]
+                 The skills the agent uses (.agents/skills, ~/.agents/skills,
+                 ~/.config/agents/skills): install with the Skills CLI (npx skills),
+                 or write your own. grafeno-agent skills help says more.
   login gemini | login openrouter
                  A provider reached with your own API key: the key is checked with the
                  provider before it is kept, in the system's secure store (never in
@@ -813,6 +817,15 @@ async function main(argv: readonly string[]): Promise<number> {
       return controlCommand("pause", argv.slice(1));
     case "cancel":
       return controlCommand("cancel", argv.slice(1));
+    case "skills": {
+      const { skillsCommand } = await import("./app/skills-command.js");
+      return skillsCommand(argv.slice(1), {
+        cwd: process.cwd(),
+        say: (line) => {
+          console.log(line);
+        },
+      });
+    }
     case "login":
     case "logout":
       return loginCommand(command, argv.slice(1));
