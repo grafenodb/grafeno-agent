@@ -789,7 +789,7 @@ and `main` was untouched. The run is recorded in
 **Still open from phase A:** a container `CommandRunner` for real
 isolation of untrusted commands (§A.9).
 
-### Phase C — the router learns (building, from 2026-11-15)
+### Phase C — the router learns (closed 2026-11-15)
 
 The brief's §C asks for a router that learns from real runs. It should
 start with explicit rules and simple statistics, add nothing complex
@@ -1027,6 +1027,71 @@ The planner's explicit recommendation for a task still comes first.
     and all evaluations pass. During this stage the flaky worktree test
     failed three full runs in a row, then passed twice. Without C5 it
     passed too, so it is the known flakiness. A separate session is on it.
+
+#### Phase C checked against the brief (2026-11-15)
+
+**§C.1, metrics per task.**
+
+| Asked for                       | Recorded as                                                         |
+| ------------------------------- | ------------------------------------------------------------------- |
+| Kind of work                    | `kind`                                                              |
+| Estimated complexity            | `complexity`, and its band                                          |
+| Model and effort                | `provider`, `model`, `effort` (and the tier)                        |
+| Duration                        | `ms` per attempt and per task                                       |
+| Tokens                          | input, output and cache, as the provider reported them              |
+| Quota used, when available      | `quotaUsed`: the plan's fullest limit when the attempt started      |
+| Retries                         | the attempt's number, and the attempts per task                     |
+| Fixes                           | `checksFailed`: checks that failed and were sent back               |
+| Test results                    | the verification events (`checksFailed`, merged)                    |
+| Review result                   | `review`: approved, rejected or waiting                             |
+| Observed quality                | clean success: completed, merged, at the first attempt, with no fix |
+| Failure reason                  | `failure`, as a category, never text                                |
+| No secrets or sensitive content | numbers, ids and categories only (tested)                           |
+
+**§C.2, automatic selection.** The router weighs these:
+
+- capabilities: what the provider offers, and its tiers;
+- complexity: the cells, and "never below standard" for hard tasks;
+- availability: the registry and the plan's limits;
+- the history of success: clean success with its interval;
+- consumption: tokens per task;
+- the user's preferences: affinities, `--provider-for` and
+  `AGENT_ROUTER`.
+
+It uses explicit rules and simple statistics, and nothing more complex:
+C5 shows whether learning would beat the base policy before any of it
+counts.
+
+- **Partial: estimated time.** It is recorded and shown, but not used to
+  choose.
+- **Partial: risk.** It is taken into account as caution: a Wilson lower
+  bound, exploration only on low-risk tasks, the planner's
+  recommendation first. The planner's named risks are not scored.
+
+**§C.3, progressive learning.** It learns per kind: architecture,
+backend, frontend, tests, docs, refactor, debug and review.
+
+- **Partial: security review.** It is part of "review", since there is no
+  separate kind for it. A kind can be added if it is needed.
+
+Small samples and tasks that cannot be compared never decide anything:
+
+- an arm needs 10 tasks in a cell;
+- intervals are Wilson's;
+- cells are never mixed;
+- against a strong rule it needs far more (about 40 of 40 against 92%).
+
+**§C.4, the restriction.** It asked for Claude Code alone until phase B
+existed. Phase B is closed, so the router compares the models and efforts
+the providers really offer. It compares only within the provider the rules
+chose: a token of one plan is not a token of another, and Codex resends
+its context on every message.
+
+**The criterion:** every stage's "done when" is shown by tests (C1–C5). On
+the real runs (24 tasks), nothing counts as evidence yet: the learned
+router keeps the rules' choice, and it says why. It is the expected state
+at the start, not a gap. It changes as runs are recorded. **Phase C is
+closed**, with the three partial points above written down.
 
 ### Phase D — long autonomous runs (design only now)
 

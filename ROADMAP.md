@@ -519,3 +519,22 @@ Two limits are written down:
   the real CLIs, not probed at run time (that would spend quota).
 
 Gemini CLI and Grok are later adapters on the same interface.
+
+### Phase C
+
+**Closed (2026-11-15).** The router learns from real runs, checked point
+by point against the brief's §C.1–C.4 in `docs/orchestration.md`:
+
+- C1: every attempt and task outcome, across projects, in `metrics.db`;
+- C2: statistics per kind and complexity and per provider, model and
+  effort, with Wilson intervals, in `grafeno-agent router`;
+- C3: the learned router in shadow, then automatic, under the user's rule;
+- C4: exploration, built and off by default;
+- C5: learned against fixed, on recorded runs (`router --compare`).
+
+On the real runs so far nothing counts as evidence, so the rules decide,
+and the reports say so. Written down as partial:
+
+- estimated time is shown but does not choose;
+- risk is handled as caution, not as a score;
+- security review is part of "review".
