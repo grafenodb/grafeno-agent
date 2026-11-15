@@ -370,6 +370,25 @@ which store facts at the same time; the docs worker gets both; attribution,
 checkpoints, the palace, and no operational state in memory, checked in
 Grafeno.
 
+**A7 done** (`verify.ts`, `policy.ts`): the verifier checks a task's
+acceptance by code in its worktree (each command must exit 0 and be
+allowed; each file must exist inside the worktree; a review is never the
+only evidence), with a `CommandRunner` interface (the default `shellRunner`
+runs with the user's rights: not a sandbox) and a trimmed, redacted
+diagnostic. A failed check makes the attempt a retry whose diagnostic
+reaches the same worker as `previous`, in the same worktree, so it fixes
+rather than restarts; `maxAttempts` bounds the loop. The policy engine
+decides in code: `supervised` asks for every change and command,
+`controlled` (default) allows writing in the task's worktree and a list of
+checks and builds (tests, typecheck, lint, build, alone), `extended` allows
+commands in the worktree; pushing, publishing, deploying, infrastructure,
+other computers, deleting folders and throwing work away ask in every
+mode; what a tool forbids stays forbidden. It is each worker's approver
+(`WorkerPool.approverFor`) and the pipeline asks it before merging; without
+a person to ask, the call is refused (or the task waits in review) and the
+question is recorded. 11 tests, including the fix loop and supervised
+merging on a real repository.
+
 | Stage | What                                                                                                                          | Done when (verified by tests)                                                                                                                     |
 | ----- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A1    | Plan schema, checker (cycles, references, acceptance), planner prompt and repair loop                                         | Valid plans accepted; cyclic, dangling, unchecked plans refused with reasons; planner repairs from the problems (fake model)                      |

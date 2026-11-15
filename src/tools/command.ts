@@ -185,7 +185,7 @@ export function runCommandTool(workspace: Workspace, options: CommandToolOptions
 }
 
 /** Stops a process and every process it started. */
-function killTree(child: ChildProcess): void {
+export function killTree(child: ChildProcess): void {
   const pid = child.pid;
   if (pid === undefined) return;
   if (process.platform === "win32") {

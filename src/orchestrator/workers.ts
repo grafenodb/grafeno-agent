@@ -46,6 +46,8 @@ export interface WorkerPoolOptions {
   ) => Promise<WorkerMemory | undefined>;
   /** Decides a tool call that needs permission (the policy engine, phase A7). Default: never. */
   readonly approve?: Approver;
+  /** An approver for each worker (the run's policy, knowing who asks); wins over `approve`. */
+  readonly approverFor?: (task: TaskRecord, worker: string, context: AttemptContext) => Approver;
   /** Secrets never shown to a model. */
   readonly redact?: readonly string[];
   readonly profiles?: Partial<Record<TaskSpec["kind"], Profile>>;
@@ -133,7 +135,7 @@ export class WorkerPool implements TaskRunner {
       system: workerSystem(task.spec, workspace, memory?.brief),
       tools: new ToolRegistry(
         [...this.options.tools(workspace), ...(memory?.tools ?? [])],
-        this.options.approve ?? (() => false),
+        this.options.approverFor?.(task, name, context) ?? this.options.approve ?? (() => false),
         { redact: this.options.redact ?? [] },
       ),
       limits: { maxSteps: this.options.maxSteps ?? 40 },

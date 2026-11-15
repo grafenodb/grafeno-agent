@@ -1,6 +1,7 @@
 import { Workspace } from "../tools/workspace.js";
 import type { AttemptContext, AttemptOutcome, TaskRunner } from "./scheduler.js";
 import type { OperationalStore, TaskRecord } from "./store.js";
+import type { Policy, Question } from "./policy.js";
 import type { WorktreeManager } from "./worktrees.js";
 
 /** Where a task's worker works. */
@@ -25,6 +26,10 @@ export interface PipelineOptions {
   /** The workers, given where each task works (usually a `WorkerPool`). */
   readonly inner: (workspaceFor: WorkspaceFor) => TaskRunner;
   readonly verify?: Verify;
+  /** The run's policy: whether merging into the integration branch needs a person. */
+  readonly policy?: Policy;
+  /** Asks a person (through the interface); without it, what needs a person goes to review. */
+  readonly ask?: (question: Question) => Promise<boolean>;
 }
 
 /**
@@ -72,7 +77,13 @@ export class TaskPipeline implements TaskRunner {
 
   async run(task: TaskRecord, context: AttemptContext): Promise<AttemptOutcome> {
     const outcome = await this.#inner.run(task, context);
-    if (outcome.status !== "completed" || !(await this.isolated())) return outcome;
+    if (outcome.status !== "completed") return outcome;
+    if (!(await this.isolated())) {
+      // No worktrees: the checks run in the project's folder, and nothing is merged.
+      if (!this.options.verify) return outcome;
+      const verdict = await this.options.verify(task, new Workspace(this.options.projectRoot));
+      return verdict.ok ? outcome : { status: "retry", reason: verdict.diagnostic };
+    }
 
     const { store } = this.options;
     const worktrees = this.#worktrees();
@@ -89,7 +100,30 @@ export class TaskPipeline implements TaskRunner {
 
     if (this.options.verify) {
       const verdict = await this.options.verify(task, new Workspace(worktree.path));
+      store.event(runId, "verified", { ok: verdict.ok }, task.id);
       if (!verdict.ok) return { status: "retry", reason: verdict.diagnostic };
+    }
+
+    const allowed = this.options.policy?.action("merge-integration") ?? {
+      decision: "allow" as const,
+      reason: "no policy",
+    };
+    if (allowed.decision !== "allow") {
+      const question: Question = {
+        task: task.id,
+        worker,
+        action: `merge ${worktree.branch} into ${worktrees.integrationBranch(runId)}`,
+        reason: allowed.reason,
+      };
+      const yes =
+        allowed.decision === "ask" && this.options.ask ? await this.options.ask(question) : false;
+      store.event(
+        runId,
+        "question",
+        { ...question, answer: this.options.ask ? yes : "nobody" },
+        task.id,
+      );
+      if (!yes) return { status: "review", reason: `waiting for approval to ${question.action}` };
     }
 
     const key = `merge:${runId}:${task.id}`;
