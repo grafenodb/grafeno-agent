@@ -535,6 +535,84 @@ mixed run is recorded.
   - **Left:** a run where Claude and Codex workers both finish their
     tasks, once Claude's window has room.
 
+#### B7 — "Auto" across providers (asked by the user, 2026-11-15; to build)
+
+**What the user wants.** A session can work with one provider, or with
+all of them:
+
+- **One provider, model Auto:** the provider's own automatic choice of its
+  models, with no orchestration. Claude Code has it ("Default"); Codex
+  does when no model is given, but `/models` does not offer it yet.
+- **General Auto:** every task of the session is orchestrated across all
+  connected providers (installed, signed in with their subscription, with
+  quota left), in the same session. One model plans; then workers are
+  created and tasks are shared among the models of every provider, by
+  their role. The user's example:
+  - Sonnet 5.5, medium, plans;
+  - GPT-5.6 Luna, low, writes a ROADMAP .md;
+  - GPT-5.6 Sol, medium, makes an analysis;
+  - Opus 5.5, medium, reviews the code;
+  - Gemini Flash-Lite helps Luna document, once a Gemini CLI adapter
+    exists.
+
+**How it works today.**
+
+- **The chat:** one provider, the first of `AGENT_PROVIDERS`.
+- **Orchestration:** a separate command (`/orchestrate`, `run`). The
+  planner is always the first provider.
+- **Sharing tasks:** a task goes to the provider set for its kind, else to
+  the first with room. With room everywhere, every task goes to the first
+  provider. Providers mix only near a limit.
+- **Not built:** help between workers, and Gemini.
+
+**Proposed design (B7):**
+
+1. **Two choices in a session:** a provider (Claude, Codex… or **Auto**)
+   and a model (a named one, or **Auto**). A named provider with model
+   Auto uses that provider's own choice. Provider Auto orchestrates across
+   all of them.
+2. **A cheap triage in General Auto:** a light model decides, for each
+   message, between a direct answer (one worker) and orchestration. A
+   question then never starts five agents.
+3. **A pool of models:** for each task, the candidates are every ready
+   provider's models of the task's tier, chosen by an explicit, logged
+   rule:
+   1. the tier the complexity needs;
+   2. an affinity per task kind, which the user can set (for example
+      review → a deep model, docs → a light one);
+   3. each plan's headroom;
+   4. spreading, so one plan is not always the one spent.
+
+   This is the rule-based form of phase C's learning router.
+
+4. **The planner from the same pool,** as an architecture task: the best
+   deep model with room.
+5. **Help between workers** ("Gemini helps Luna") is phase D.4 (cross
+   review). In B7, only review tasks with checks by code.
+6. **Gemini CLI** is a later adapter like Codex's: its official CLI and
+   the user's own Google sign-in, once installed.
+
+**Decided by the user (2026-11-15):**
+
+- **Triage, not always orchestrate:** in General Auto a light model
+  decides, for each message, between a direct answer and orchestration;
+  orchestrating every message would spend quota on trivial ones.
+- **Affinity by role first:** each task kind goes to its preferred model
+  (user-configurable); spreading across plans is only the tie-break, and
+  each plan's quota is always a hard limit.
+
+**What is left of phase B, in order:**
+
+1. B6: one real run where Claude and Codex workers both finish their
+   tasks, when Claude's five-hour window has room.
+2. B7, as above, with the two decisions taken.
+3. The README: a "Providers" section (`AGENT_PROVIDERS`, setting up Codex,
+   `--providers`, `--provider-for`), and Codex "Auto" in `/models`.
+4. Then phase B is checked against the brief's §B.1–B.4 and closed.
+
+**Still open from phase A:** a container `CommandRunner` for real
+isolation of untrusted commands (§A.9).
+
 ### Phase C — the router learns (design only now)
 
 Per attempt, already in telemetry: kind, complexity, tier, model id,
