@@ -66,7 +66,8 @@ function author(worker: string): Record<string, string> {
  * (`grafeno/<run>/<task>`) from the run's base commit; finished work merged
  * into the run's integration branch (`grafeno/<run>/integration`) in a
  * worktree of its own too. The user's working tree and branches are never
- * written; worktrees are removed only when that loses nothing.
+ * written, except by `mergeIntoCurrent` (phase D6, extended mode only);
+ * worktrees are removed only when that loses nothing.
  */
 export class WorktreeManager {
   readonly #git: Git;
@@ -261,6 +262,77 @@ export class WorktreeManager {
       commit: (await this.#must(target.path, ["rev-parse", "HEAD"])).trim(),
       files,
     };
+  }
+
+  /** The branch the user's working tree is on; nothing when HEAD is detached. */
+  async currentBranch(): Promise<string | undefined> {
+    const result = await this.#git(this.repo, ["symbolic-ref", "-q", "--short", "HEAD"]);
+    return result.code === 0 ? result.stdout.trim() || undefined : undefined;
+  }
+
+  /** Whether `commit` is already in `ref` (default: the user's HEAD). */
+  async contains(commit: string, ref = "HEAD"): Promise<boolean> {
+    return (await this.#git(this.repo, ["merge-base", "--is-ancestor", commit, ref])).code === 0;
+  }
+
+  /** Where the user's branch was before a run's work was merged into it (phase D6). */
+  rollbackRef(runId: string): string {
+    return `refs/grafeno/${short(runId)}/rollback`;
+  }
+
+  /**
+   * Merges the run's integration branch into the branch the user is on, in
+   * their own working tree (phase D6), after keeping where it was under the
+   * run's rollback ref. The caller has checked the tree is clean. The
+   * user's hooks run. A conflict, or a merge refused, is undone at once.
+   */
+  async mergeIntoCurrent(
+    runId: string,
+    message: string,
+  ): Promise<
+    | { readonly status: "merged"; readonly commit: string; readonly before: string }
+    | { readonly status: "conflict"; readonly files: readonly string[] }
+    | { readonly status: "refused"; readonly reason: string }
+  > {
+    return this.#serial("repo", async () => {
+      const before = (await this.#must(this.repo, ["rev-parse", "HEAD"])).trim();
+      await this.#must(this.repo, ["update-ref", this.rollbackRef(runId), before]);
+      const merge = await this.#git(
+        this.repo,
+        ["merge", "--no-ff", "--no-edit", "-m", message, this.integrationBranch(runId)],
+        author("orchestrator"),
+      );
+      if (merge.code === 0) {
+        return {
+          status: "merged" as const,
+          commit: (await this.#must(this.repo, ["rev-parse", "HEAD"])).trim(),
+          before,
+        };
+      }
+      const conflicted = await this.#git(this.repo, ["diff", "--name-only", "--diff-filter=U"]);
+      if ((await this.#git(this.repo, ["rev-parse", "-q", "--verify", "MERGE_HEAD"])).code === 0) {
+        await this.#git(this.repo, ["merge", "--abort"]);
+      }
+      const files = conflicted.stdout.split("\n").filter(Boolean);
+      return files.length > 0
+        ? { status: "conflict" as const, files }
+        : { status: "refused" as const, reason: (merge.stderr || merge.stdout).trim() };
+    });
+  }
+
+  /**
+   * Undoes a merge made by `mergeIntoCurrent`: the user's branch goes back
+   * to the rollback ref, only while HEAD is still that merge, and with
+   * `reset --keep`, which refuses rather than lose a change the user made
+   * meanwhile. Says why not otherwise.
+   */
+  async undoMerge(runId: string, merge: string): Promise<string | undefined> {
+    return this.#serial("repo", async () => {
+      const head = (await this.#must(this.repo, ["rev-parse", "HEAD"])).trim();
+      if (head !== merge) return `the branch moved on since the merge (now at ${head.slice(0, 8)})`;
+      const reset = await this.#git(this.repo, ["reset", "-q", "--keep", this.rollbackRef(runId)]);
+      return reset.code === 0 ? undefined : (reset.stderr || reset.stdout).trim();
+    });
   }
 
   /**

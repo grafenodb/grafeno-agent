@@ -27,6 +27,7 @@ import { AUTONOMY, type Autonomy, type Question } from "./orchestrator/policy.js
 import { describeReport } from "./orchestrator/telemetry.js";
 import { describeResumeStats, resumeCompact } from "./app/resume.js";
 import { describeReplan } from "./orchestrator/replan.js";
+import { describeDelivery } from "./orchestrator/deliver.js";
 
 const USAGE = `Usage: grafeno-agent <command>
 
@@ -323,7 +324,13 @@ async function drive(
   );
   console.log("");
   for (const line of describeReport(orchestrator.report(runId))) console.log(line);
-  if (state === "completed") {
+  const delivery = state === "completed" ? orchestrator.delivery(runId) : undefined;
+  if (delivery) {
+    // Phase D6 (extended): the work went, or tried to go, into the user's branch.
+    for (const line of describeDelivery(delivery, orchestrator.integrationBranch(runId)))
+      console.log(line);
+  }
+  if (state === "completed" && (!delivery || !["merged", "already"].includes(delivery.status))) {
     const branch = orchestrator.integrationBranch(runId);
     console.log(
       `\nThe work is on the branch ${branch}. Look at it, then merge it when you are ready:`,

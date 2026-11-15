@@ -8,7 +8,6 @@ import type { Vault } from "../memory/vault.js";
 import type { Model } from "../model/index.js";
 import type { ModelChoice, Provider } from "../providers/types.js";
 import { projectTools } from "../tools/index.js";
-import type { Workspace } from "../tools/workspace.js";
 import type { RouterMode } from "./learned.js";
 import { limitReached, type RunLimits } from "./limits.js";
 import { applyReplan, proposeReplan, type ReplanProposal } from "./replan.js";
@@ -27,7 +26,9 @@ import { Scheduler, type SchedulerChange } from "./scheduler.js";
 import type { RunState } from "./states.js";
 import { SqliteStore, type OperationalStore, type Run } from "./store.js";
 import { runReport, type RunReport } from "./telemetry.js";
-import { verifier, type CommandRunner } from "./verify.js";
+import { verifier, verify, type CommandRunner } from "./verify.js";
+import { deliver, type Delivery } from "./deliver.js";
+import { Workspace } from "../tools/workspace.js";
 import { WorkerPool, type ActiveWorker, type ContextPolicy } from "./workers.js";
 import { runGit, WorktreeManager } from "./worktrees.js";
 
@@ -370,6 +371,10 @@ export class Orchestrator {
     }, owner.heartbeatMs ?? 3000);
     try {
       const state = await scheduler.run(runId);
+      if (state === "completed" && this.policy.action("merge-user").decision === "allow") {
+        // Phase D6: only in the extended mode, the work goes into the user's branch.
+        await this.deliver(runId);
+      }
       if (state === "completed" || state === "cancelled") await this.pipeline.finish(runId);
       return state;
     } finally {
@@ -456,6 +461,41 @@ export class Orchestrator {
 
   report(runId: string): RunReport {
     return runReport(this.store, runId);
+  }
+
+  /**
+   * Merges a completed run's work into the user's current branch, checks it
+   * there and undoes it when a check fails (phase D6). `run` does this on
+   * its own only in the extended mode; nothing is ever pushed.
+   */
+  async deliver(runId: string): Promise<Delivery> {
+    if (!(await this.pipeline.isolated())) {
+      return { status: "skipped", reason: "the project is not a git repository" };
+    }
+    const acceptance = this.store
+      .tasks(runId)
+      .filter((t) => t.state === "completed")
+      .flatMap((t) => t.spec.acceptance);
+    const unique = [...new Map(acceptance.map((a) => [JSON.stringify(a), a])).values()];
+    return deliver({
+      store: this.store,
+      worktrees: this.worktrees,
+      runId,
+      checks: (root) =>
+        verify(unique, new Workspace(root), {
+          redact: this.options.secrets ?? [],
+          ...(this.options.commandRunner ? { runner: this.options.commandRunner } : {}),
+        }),
+    });
+  }
+
+  /** What became of the user's branch at the end of the run, when anything was tried (phase D6). */
+  delivery(runId: string): Delivery | undefined {
+    const event = this.store
+      .events(runId)
+      .filter((e) => e.kind === "delivery")
+      .at(-1);
+    return event ? (event.data as unknown as Delivery) : undefined;
   }
 
   /** The run's integration branch, where its work landed. */

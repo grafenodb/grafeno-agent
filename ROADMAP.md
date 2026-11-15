@@ -459,12 +459,12 @@ The user's brief is [`docs/brief.md`](docs/brief.md); the design and each
 stage's progress are in [`docs/orchestration.md`](docs/orchestration.md);
 real runs are in [`docs/measurements/`](docs/measurements/).
 
-| Phase | What                                                         | Status (2026-11-15)                                                    |
-| ----- | ------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| A     | Several Claude Code workers under a deterministic scheduler  | **Done** (A1–A9), with one open item below                             |
-| B     | Several providers: Codex CLI next to Claude Code             | **In progress**: B1–B5 done; B6 (interface, a real mixed run) underway |
-| C     | A router that learns from real metrics                       | Design only; the metrics it needs are recorded since A8                |
-| D     | Long autonomous runs: replanning, a supervisor, cross review | Design only                                                            |
+| Phase | What                                                         | Status (2026-11-15)                                           |
+| ----- | ------------------------------------------------------------ | ------------------------------------------------------------- |
+| A     | Several Claude Code workers under a deterministic scheduler  | **Done** (A1–A9), with one open item below                    |
+| B     | Several providers: Codex CLI next to Claude Code             | **Done** (B1–B7)                                              |
+| C     | A router that learns from real metrics                       | **Done** (C1–C5)                                              |
+| D     | Long autonomous runs: replanning, a supervisor, cross review | **Done** (D1–D6), checked against §D in docs/orchestration.md |
 
 ### Phase A against the brief's acceptance list (§A.10)
 

@@ -1093,7 +1093,7 @@ router keeps the rules' choice, and it says why. It is the expected state
 at the start, not a gap. It changes as runs are recorded. **Phase C is
 closed**, with the three partial points above written down.
 
-### Phase D — long autonomous runs (building, from 2026-11-15)
+### Phase D — long autonomous runs (closed 2026-11-15)
 
 The brief's §D asks for long runs with little intervention:
 
@@ -1356,6 +1356,67 @@ resume <id>`. Pause and cancel work only inside the process that runs
     - no review without `--review`, and none for docs.
 
     Full CI: 470, and all evaluations pass.
+
+- **D6, integration into the user's branch (done, 2026-11-15):**
+  - **When:** a run that completes in the `extended` mode
+    (`Policy.action("merge-user")` allows it only there). In `controlled`
+    and `supervised` nothing changes: the work stays on the integration
+    branch and the CLI says how to merge it.
+  - **What** (`src/orchestrator/deliver.ts`, called by
+    `Orchestrator.run`):
+    1. Only on a branch (not a detached HEAD), with a clean tree: nothing
+       changed, staged or untracked. Otherwise it is skipped and says why,
+       and the user merges.
+    2. Where the branch was is kept under `refs/grafeno/<run>/rollback`.
+    3. The integration branch is merged with `--no-ff`. The commit says
+       where it came from (`Grafeno-Run:` and `Grafeno-Branch:`
+       trailers), and so does the run's store (`merged_user`, then
+       `delivery`). The user's own git hooks run.
+    4. A conflict or a merge git refuses is aborted at once. The branch
+       stays as it was.
+    5. The checks of every completed task run on the result, in the
+       user's tree.
+    6. If one fails, the merge is undone with `git reset --keep` to the
+       rollback ref. That happens only while HEAD is still that merge, so
+       a change the user made meanwhile is never lost. If it cannot be
+       undone, the delivery says so and gives the command.
+  - **Recorded as an effect** (`merge-user:<run>`), so a restart does not
+    merge twice. A merge a crash left unchecked is checked on the next
+    run, and undone if it fails.
+  - **Never pushed:** nothing in the delivery talks to a remote. A test
+    keeps a remote and shows it untouched.
+  - **The CLI** says what happened: merged (with the undo command),
+    already merged, undone with the failing checks, a conflict, or
+    skipped (with the manual merge, as before).
+  - Tests: `test/orchestrator/deliver.test.ts` (8), on a real git
+    repository:
+    - merged, with the rollback ref, the origin, the checks seeing the
+      merged tree, and the remote untouched;
+    - a failing check undone;
+    - a commit made during the checks not undone, with the command given
+      instead;
+    - a dirty tree, a detached HEAD and an empty run left alone;
+    - a conflict leaving the branch as it was;
+    - a merge a crash left unchecked, checked and undone;
+    - whole runs: merged in `extended`, untouched in `controlled`.
+
+    Each guard was mutation-checked: removing it fails a test. Full CI:
+    478, and all evaluations pass.
+
+**Phase D against the brief (§D), closed 2026-11-15:**
+
+| §   | Asked                                                                          | Shown by                                                                                                                                          |
+| --- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D.1 | Replanning only what failed, keeping valid results                             | D3: `replan.ts`, a DAG-checked replacement for the failed task and its dependants, completed tasks untouched, bounded, asked except in `extended` |
+| D.2 | Runs without the terminal: progress, pause, resume, cancel, reboots, notices   | D4: `run --background`, orders through the store, heartbeat and liveness, resumed after a reboot, desktop notifications                           |
+| D.3 | Recovery from every listed failure, idempotent, bounded                        | D1: one test per failure (worker, timeout, process, provider, quota, git conflict, failing tests, Grafeno lost); effects never repeated           |
+| D.4 | A worker reviews another's; two LLM answers are not proof                      | D5: a reviewer on another model sends work back, never approves; merging needs the checks run by code                                             |
+| D.5 | Autonomous integration within limits: conflicts, tests, origin, user's changes | D6: `extended` only, clean tree, checks on the result, origin in the commit and the store, rollback ref and undo, never pushed                    |
+| D.6 | Global and per-worker limits: concurrency, time, retries, tokens, CPU, results | D2: run limits for tokens, time and failed attempts; capped tool results; the process's memory and CPU recorded; per-attempt limits from phase A  |
+
+**What is still partial:** the D4 desktop toast was sent, but whether it
+was shown was up to the user's eyes, not a test. Long real runs in the
+background, on real providers, are still to be measured.
 
 ## 5. Risks and limits
 
