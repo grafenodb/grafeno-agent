@@ -1,6 +1,6 @@
 import { Box, Text } from "ink";
-import { useState, type ReactNode } from "react";
-import type { AppServices } from "../app/services.js";
+import { useEffect, useState, type ReactNode } from "react";
+import type { AppServices, LocalGrafeno } from "../app/services.js";
 import { Connect } from "./connect.js";
 import { Picker, type PickerItem } from "./picker.js";
 import { theme } from "./theme.js";
@@ -23,6 +23,22 @@ export function PalacePanel(props: PalacePanelProps): ReactNode {
   const [progress, setProgress] = useState<{ done: number; total: number } | undefined>(undefined);
   const [phase, setPhase] = useState("Downloading Grafeno");
   const [error, setError] = useState<string | undefined>(undefined);
+  // A Grafeno already on this computer: offered by name, beside the agent's own.
+  const [local, setLocal] = useState<LocalGrafeno | undefined | "looking">(
+    services.findLocalGrafeno ? "looking" : undefined,
+  );
+  const [serverUrl, setServerUrl] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    let live = true;
+    void services.findLocalGrafeno?.().then((found) => {
+      if (live) setLocal(found);
+    });
+    return () => {
+      live = false;
+    };
+  }, [services]);
+  const found = local === "looking" ? undefined : local;
 
   const include = () => {
     setStep("installing");
@@ -41,20 +57,36 @@ export function PalacePanel(props: PalacePanelProps): ReactNode {
       });
   };
 
+  const usingLocal =
+    !props.firstRun && info.mode === "external" && info.hasKey && found?.url === info.url;
   const items: PickerItem[] = [
     {
       id: "include",
-      label: "Include Grafeno",
+      label: "The agent's own Grafeno",
       hint: info.includable
-        ? `${props.firstRun ? "recommended · " : ""}runs on this computer, nothing else to install`
+        ? `${props.firstRun ? "recommended · " : ""}self-hosted by the agent on 127.0.0.1:7811, with its own data${found ? `: your Grafeno at ${found.url} stays untouched` : ""}`
         : "not available for this system",
       current: !props.firstRun && info.mode === "included",
     },
+    ...(found
+      ? [
+          {
+            id: "local",
+            label: "The Grafeno on this computer",
+            hint: `Grafeno ${found.version} at ${found.url} · the agent's memory goes in a namespace of its own there (a key from its administrator)`,
+            current: usingLocal,
+          },
+        ]
+      : []),
     {
       id: "server",
-      label: "Connect to a Grafeno server",
-      hint: "one you already run, such as http://127.0.0.1:7810",
-      current: !props.firstRun && info.mode === "external" && info.hasKey,
+      label: found ? "Another Grafeno server" : "Connect to a Grafeno server",
+      hint: found
+        ? "a server elsewhere, at its address"
+        : local === "looking"
+          ? "looking for a Grafeno on this computer…"
+          : "one you already run (none answers on this computer)",
+      current: !props.firstRun && info.mode === "external" && info.hasKey && !usingLocal,
     },
     ...(info.mode === "included" && !props.firstRun
       ? [
@@ -94,8 +126,13 @@ export function PalacePanel(props: PalacePanelProps): ReactNode {
               if (info.includable) include();
               else
                 setError("Grafeno has no build to include for this system: connect to a server.");
-            } else if (item.id === "server") setStep("server");
-            else props.onDone({ message: services.stopGrafeno(), changed: false });
+            } else if (item.id === "local" && found) {
+              setServerUrl(found.url);
+              setStep("server");
+            } else if (item.id === "server") {
+              setServerUrl(undefined);
+              setStep("server");
+            } else props.onDone({ message: services.stopGrafeno(), changed: false });
           }}
         />
       )}
@@ -112,7 +149,7 @@ export function PalacePanel(props: PalacePanelProps): ReactNode {
       {step === "server" && (
         <Connect
           current={{
-            url: info.mode === "external" ? info.url : "http://127.0.0.1:7810",
+            url: serverUrl ?? (info.mode === "external" ? info.url : "http://127.0.0.1:7810"),
             namespace: info.namespace,
             hasKey: info.mode === "external" && info.hasKey,
           }}

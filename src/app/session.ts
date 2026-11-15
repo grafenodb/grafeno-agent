@@ -34,6 +34,7 @@ import {
   type SessionSummary,
 } from "../sessions/store.js";
 import { projectTools, toolsPrompt } from "../tools/index.js";
+import { detectLanguage, withLanguage } from "../agent/language.js";
 import type { PluginState } from "../plugins/index.js";
 import { Workspace } from "../tools/workspace.js";
 
@@ -128,6 +129,8 @@ export class AgentSession {
   #lastActivity: Date | undefined;
   #turnsSinceRenewal = 0;
   #renewals = 0;
+  /** The language the user writes in, from their latest message that said it. */
+  #language: string | undefined;
 
   private constructor(
     private readonly options: AgentSessionOptions,
@@ -433,7 +436,13 @@ export class AgentSession {
       prepare: async (message) => {
         const prepared = await this.memory.beforeTurn(message);
         this.#onMemory?.(this.memory.lastRecall);
-        return prepared;
+        // The answer goes in the user's language; a message too short to
+        // tell ("ok", "sí") keeps the one before.
+        // The agent's own end-of-session message says nothing of the user's language.
+        if (message !== this.memory.endOfSession()) {
+          this.#language = detectLanguage(message) ?? this.#language;
+        }
+        return withLanguage(prepared, message, this.#language);
       },
     });
     return this.#agent;

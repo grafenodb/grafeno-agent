@@ -76,12 +76,18 @@ uninstall -g grafeno-agent` removes the command.
 
 Run `grafeno-agent` in a terminal. The first time, it asks two things:
 
-1. **Where the agent keeps its memory.**
-   - **Include Grafeno** (recommended): the official build of Grafeno is
-     downloaded once, checked against its published checksum, and runs in
-     the background on `127.0.0.1:7811` (so it never meets a Grafeno of your
-     own on 7810). The agent makes its own key. Several agents share it.
-   - **Connect to a Grafeno server**: its address, the agent's key and the
+1. **Where the agent keeps its memory.** It first looks for a Grafeno
+   already running on this computer (at `GRAFENO_URL`, else
+   `127.0.0.1:7810`) and says what it found.
+   - **The agent's own Grafeno** (recommended): self-hosted by the agent,
+     apart from any Grafeno you have, so yours stays untouched. The official
+     build is downloaded once, checked against its published checksum, and
+     runs in the background on `127.0.0.1:7811` with its own data. The
+     agent makes its own key. Several agents share it.
+   - **The Grafeno on this computer**, when one answers: its version and
+     address are shown; the agent's memory goes in a namespace of its own
+     there, with a key its administrator makes (below).
+   - **Another Grafeno server**: its address, the agent's key and the
      namespace. The server's administrator makes the key:
 
      ```bash
@@ -101,12 +107,14 @@ grafeno-agent init --grafeno-url http://127.0.0.1:7810 --key <key>
 ```
 
 `grafeno-agent check` checks that Grafeno answers and the key works.
+`/palace` changes the choice later. While `GRAFENO_MODE` is empty, the
+agent asks again when it starts.
 
 ### Settings
 
 | Variable               | Default                 | What                                                                      |
 | ---------------------- | ----------------------- | ------------------------------------------------------------------------- |
-| `GRAFENO_MODE`         | `external`              | `included` (Grafeno runs with the agent) or `external`                    |
+| `GRAFENO_MODE`         | (asked)                 | `included` (the agent's own Grafeno) or `external`; empty: asked at start |
 | `GRAFENO_URL`          | `http://127.0.0.1:7810` | The Grafeno server, when external                                         |
 | `GRAFENO_AGENT_KEY`    | (required)              | The agent's key                                                           |
 | `GRAFENO_NAMESPACE`    | `grafeno-agent`         | Where the agent keeps its memory                                          |

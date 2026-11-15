@@ -424,6 +424,38 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.unmount();
   });
 
+  it("tells the model to answer in the language the user writes in", async () => {
+    const app = render(
+      <App
+        services={services({
+          turns: [
+            [
+              {
+                say: (c) =>
+                  c.message.includes("[The user writes in Spanish") ? "En-Espanol" : "Sin-Nota",
+              },
+            ],
+            [
+              {
+                say: (c) =>
+                  c.message.includes("[The user writes in English") ? "In-English" : "No-Note",
+              },
+            ],
+          ],
+        })}
+      />,
+    );
+    await ready(app);
+    await type(app, "¿Puedes crear una carpeta para los tests?");
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("En-Espanol"), "the Spanish answer");
+    await ready(app);
+    await type(app, "Now add a file with the function");
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("In-English"), "the English answer");
+    app.unmount();
+  });
+
   it("shows the provider's real usage with /usage", async () => {
     const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
     await ready(app);
@@ -504,7 +536,7 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
 
   it("guides the first run: memory, then the provider", async () => {
     const app = render(<App services={services({ turns: [[{ say: "hi" }]], needsSetup: true })} />);
-    await until(() => now(app).includes("Include Grafeno"), "the memory choice");
+    await until(() => now(app).includes("The agent's own Grafeno"), "the memory choice");
     expect(now(app)).toContain("Connect to a Grafeno server");
     app.stdin.write(ENTER);
     await until(() => now(app).includes("The chat uses the one chosen here"), "the provider step");
@@ -761,6 +793,9 @@ describe("sub-agents in the interface", { timeout: 90_000 }, () => {
       () => `a sub-agent's view; the screen was:\n${now(app)}`,
     );
     expect(now(app)).toContain("Writing alpha.txt now.");
+    // Which one is on screen is said plainly: a band at the bottom, and ▌ on the left.
+    expect(now(app)).toMatch(/Viewing \S+\s+1 of 2/);
+    expect(now(app)).toContain("▌");
     // A finished sub-agent's summary is not shown as a warning.
     expect(now(app)).not.toContain("now.done");
     expect(now(app)).toContain("alpha.txt");

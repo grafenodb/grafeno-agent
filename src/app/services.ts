@@ -49,13 +49,45 @@ export interface ServerValues {
 }
 
 /** What the interface needs from the rest of the program. */
+/** A Grafeno found running on this computer. */
+export interface LocalGrafeno {
+  readonly url: string;
+  readonly version: string;
+}
+
+/** Whether a Grafeno answers at a URL, and its version: one short /health. */
+export async function probeGrafeno(
+  url: string,
+  doFetch: typeof fetch = fetch,
+): Promise<LocalGrafeno | undefined> {
+  try {
+    const response = await doFetch(`${url.replace(/\/+$/, "")}/health`, {
+      signal: AbortSignal.timeout(1500),
+    });
+    if (!response.ok) return undefined;
+    const health = (await response.json()) as { status?: unknown; version?: unknown };
+    return typeof health.version === "string" ? { url, version: health.version } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface AppServices {
   readonly version: string;
   readonly settingsPath: string;
   /** Where the reasoning can come from: Claude today, more later. */
   readonly providers: readonly Provider[];
-  /** No memory is set up yet: the first run asks how. */
+  /**
+   * Where the memory lives has not been chosen yet (or it cannot work as
+   * set): the interface asks first.
+   */
   needsSetup(): boolean;
+  /**
+   * A Grafeno already running on this computer (at the settings' address,
+   * else 127.0.0.1:7810), with its version; nothing when none answers. The
+   * agent's own (included) Grafeno is not it.
+   */
+  findLocalGrafeno?(): Promise<LocalGrafeno | undefined>;
   /**
    * Starts a session with the settings as they are; throws saying why it
    * cannot. `tools`: tools the interface adds (such as `delegate`).
@@ -209,8 +241,25 @@ export function realServices(version: string): AppServices {
     providers,
     needsSetup() {
       const mode = env.GRAFENO_MODE?.trim();
+      // Not chosen yet: a Grafeno of the user's own or the agent's own is a question.
+      if (!mode) return true;
       if (mode === "included") return !env.GRAFENO_OWNER_TOKEN?.trim() || !includedInstalled();
       return !env.GRAFENO_AGENT_KEY?.trim();
+    },
+    async findLocalGrafeno() {
+      const candidates = [
+        ...new Set(
+          [env.GRAFENO_URL?.trim(), DEFAULTS.grafenoUrl]
+            .filter((url): url is string => Boolean(url))
+            .map((url) => url.replace(/\/+$/, ""))
+            .filter((url) => url !== INCLUDED_GRAFENO_URL),
+        ),
+      ];
+      for (const url of candidates) {
+        const found = await probeGrafeno(url);
+        if (found) return found;
+      }
+      return undefined;
     },
     async start(extra) {
       const config = loadConfig();

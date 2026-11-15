@@ -1372,10 +1372,17 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
               />
             )}
             {mode === "chat" && !approval && viewed && (
-              <Box borderStyle="round" borderColor={theme.muted} paddingX={1}>
-                <Text dimColor wrap="truncate-end">
-                  Sub-agent {viewed.id} · read only: the main agent orchestrates it · ctrl+n /
-                  ctrl+p switch · /agents
+              <Box borderStyle="round" borderColor={theme.brand} paddingX={1}>
+                <Text wrap="truncate-end">
+                  <Text inverse bold color={theme.brand}>
+                    {` Viewing ${viewed.id} `}
+                  </Text>
+                  <Text dimColor>
+                    {" "}
+                    {String(agents.findIndex((a) => agentKey(a) === viewing) + 1)} of{" "}
+                    {String(agents.length)} · read only: the main agent orchestrates it · ctrl+n /
+                    ctrl+p switch · /agents
+                  </Text>
                 </Text>
               </Box>
             )}

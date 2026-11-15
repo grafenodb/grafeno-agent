@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- **Answers in your language**: each message's language is told from its
+  words (Spanish, English, Portuguese, French, German, Italian), and the
+  model is reminded just before your words to answer in it, since memory,
+  files and tool output are often in another language. A message too short
+  to tell keeps the language before.
+- **Your Grafeno or the agent's own**: the first run looks for a Grafeno on
+  this computer and offers it by version and address, beside the agent's
+  own (self-hosted on 127.0.0.1:7811 with its own data, leaving yours
+  untouched), or another server. Settings that never chose
+  (`GRAFENO_MODE` empty, now the template's default) are asked at start.
+- **The sub-agent on screen is marked**: in the left panel as a selection
+  (a bar and an inverted band), and at the bottom ("Viewing task-2 · 2
+  of 5").
+- **Checked for real**: with Claude Code, the agent made folders, wrote
+  TypeScript and a test, ran `node --test` (2 of 2 passing) and answered
+  in Spanish.
+
 ## 0.1.0 (2026-11-15)
 
 The first version: a programming assistant with long-term memory in

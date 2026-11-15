@@ -64,6 +64,7 @@ export function AgentsPanel({
           name="Main"
           detail={main.model}
           doing={main.doing}
+          width={width}
         />
         {agents.map((agent) => {
           const look = MARK[agent.state];
@@ -81,13 +82,14 @@ export function AgentsPanel({
               name={agent.id}
               detail={[agent.model, agent.effort].filter(Boolean).join(" · ") || agent.title}
               doing={agent.doing ?? agent.state}
+              width={width}
             />
           );
         })}
       </Box>
       <Box marginTop={1}>
         <Text dimColor wrap="wrap">
-          ctrl+n / ctrl+p switch · /agents picks one
+          ctrl+n / ctrl+p switch (▌ the one on screen) · /agents picks one
         </Text>
       </Box>
     </Box>
@@ -100,26 +102,40 @@ function Entry({
   name,
   detail,
   doing,
+  width,
 }: {
   readonly selected: boolean;
   readonly mark: ReactNode;
   readonly name: string;
   readonly detail: string;
   readonly doing: string;
+  readonly width: number;
 }): ReactNode {
+  // The one being viewed is drawn as a selection: a bar on its left and its
+  // name on an inverted band, so it is plain which agent is on screen.
+  const bar = selected ? "▌" : " ";
+  const label = ` ${name}`;
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Text wrap="truncate-end">
-        <Text color={selected ? theme.brand : theme.muted}>{selected ? "▸ " : "  "}</Text>
+        <Text color={selected ? theme.brand : theme.muted}>{bar}</Text>
         {mark}
-        <Text bold={selected}> {name}</Text>
+        {selected ? (
+          <Text inverse bold color={theme.brand}>
+            {label.padEnd(Math.max(label.length, width - 4))}
+          </Text>
+        ) : (
+          <Text>{label}</Text>
+        )}
       </Text>
-      <Text dimColor wrap="truncate-end">
-        {"    "}
+      <Text wrap="truncate-end" {...(selected ? { color: theme.brand } : { dimColor: true })}>
+        <Text color={selected ? theme.brand : theme.muted}>{bar}</Text>
+        {"   "}
         {detail}
       </Text>
       <Text color={theme.accent} wrap="truncate-end">
-        {"    "}
+        <Text color={selected ? theme.brand : theme.muted}>{bar}</Text>
+        {"   "}
         {doing}
       </Text>
     </Box>

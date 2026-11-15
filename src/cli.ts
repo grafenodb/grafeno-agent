@@ -12,6 +12,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { Agent } from "./agent/agent.js";
 import { SYSTEM_PROMPT } from "./agent/builtin-tools.js";
 import { ToolRegistry } from "./agent/tools.js";
+import { detectLanguage, withLanguage } from "./agent/language.js";
 import { runChat } from "./chat.js";
 import { ConfigError, describeConfig, loadConfig, type Config } from "./config.js";
 import type { Embedder } from "./embed/types.js";
@@ -243,6 +244,7 @@ async function chat(plain: boolean): Promise<number> {
     hiddenEnv: ["GRAFENO_AGENT_KEY", ...PROVIDER_SECRET_ENV],
   });
   const system = `${memory.systemPrompt(SYSTEM_PROMPT)}\n\n${toolsPrompt(workspace)}`;
+  let language: string | undefined;
   await runChat({
     input: process.stdin,
     output: process.stdout,
@@ -254,7 +256,10 @@ async function chat(plain: boolean): Promise<number> {
         tools: new ToolRegistry([...ownTools, ...memoryTools], approve, {
           redact: [config.agentKey],
         }),
-        prepare: (message) => memory.beforeTurn(message),
+        prepare: async (message) => {
+          if (message !== memory.endOfSession()) language = detectLanguage(message) ?? language;
+          return withLanguage(await memory.beforeTurn(message), message, language);
+        },
       }),
   });
   return 0;
