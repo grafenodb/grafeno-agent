@@ -31,8 +31,13 @@ openrouter`. Free models only by default.
 It installs as a command, `grafeno-agent`, that you run in any project
 folder, like other terminal assistants.
 
-**From the latest release** (no copy of the repository needed): the
-release carries the package already built.
+**From npm:**
+
+```bash
+npm install -g @grafenodb/agent-cli
+```
+
+**From the latest GitHub release**, the same package:
 
 ```bash
 npm install -g https://github.com/grafenodb/grafeno-agent/releases/latest/download/grafeno-agent.tgz
@@ -49,7 +54,7 @@ npm link
 `npm link` makes `grafeno-agent` a command that runs this copy's build:
 after changing the code, `npm run build` is enough (`npx tsc -p
 tsconfig.build.json --watch` rebuilds as you go). `npm unlink -g
-grafeno-agent` removes the command.
+@grafenodb/agent-cli` removes the command.
 
 Then, in any folder:
 
@@ -70,7 +75,7 @@ meaning model (`@huggingface/transformers`, an optional dependency). The
 agent works without it, by words alone, if it is missing or does not load.
 npm may warn that it did not run the install scripts of `onnxruntime-node`
 and `protobufjs` (it asks before running scripts of dependencies). `npm
-uninstall -g grafeno-agent` removes the command.
+uninstall -g @grafenodb/agent-cli` removes the command.
 
 ## Set up
 

@@ -1,11 +1,16 @@
 # Releasing
 
-A release is a GitHub release with the package already built
-(`grafeno-agent-<version>.tgz`, and `grafeno-agent.tgz` for
-`releases/latest/download/grafeno-agent.tgz`), installed with
-`npm install -g <its URL>`; and, once `package.json` is no longer private,
-the same package on npm as `grafeno-agent`. A release is the owner's
+A release publishes `@grafenodb/agent-cli` to npm (the command it
+installs is `grafeno-agent`) and makes a GitHub release with the same
+package (`grafenodb-agent-cli-<version>.tgz`, and `grafeno-agent.tgz` for
+`releases/latest/download/grafeno-agent.tgz`). A release is the owner's
 decision: nothing is published by an agent or a session on its own.
+
+npm trusts the release workflow through trusted publishing (OIDC): no
+token is stored. On npmjs.com, the package's settings name the trusted
+publisher: GitHub Actions, `grafenodb/grafeno-agent`, workflow
+`release.yml`. A package must exist before it can be given one, so its
+very first version was a placeholder published by hand.
 
 ## Rules
 
@@ -15,8 +20,6 @@ ci` on Node 22.18 and 24) and the evaluation (`npm run eval`, at or above
   publishes, and refuses a tag that does not match `package.json`.
 - Versions follow semantic versioning. Before 1.0, a minor version may
   change settings or behaviour; the changelog says how.
-- `package.json` keeps `"private": true` until the owner decides to
-  publish: removing it is part of the first release, done on purpose.
 - Nothing secret goes into the package: `npm pack --dry-run` lists what
   would be published (`dist`, the README, the changelog, the licenses and
   `.env.example`).
@@ -36,6 +39,6 @@ ci` on Node 22.18 and 24) and the evaluation (`npm run eval`, at or above
    `eval:real` spends a little of the Claude plan; its results go in
    `docs/eval/`.
 
-3. Commit, tag `v<version>`, and push the commit and the tag. The release
-   workflow publishes after the pipeline is green. It needs the `npm`
-   environment and an `NPM_TOKEN` secret in the repository.
+3. Commit and push; once the pipeline on that commit is green, tag
+   `v<version>` and push the tag. The release workflow runs the pipeline
+   again, then publishes to npm and makes the GitHub release.

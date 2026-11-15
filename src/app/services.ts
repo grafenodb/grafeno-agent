@@ -9,7 +9,7 @@ import { assertBillingAllowed } from "../providers/billing.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DEFAULTS, INCLUDED_GRAFENO_URL, loadConfig, type Config } from "../config.js";
-import { LOCAL_MODELS, localEmbedder } from "../embed/local.js";
+import { LOCAL_MODELS, loadTransformers, localEmbedder } from "../embed/local.js";
 import type { Embedder } from "../embed/types.js";
 import {
   includedAsset,
@@ -131,7 +131,7 @@ export async function embedderFor(
 ): Promise<Embedder | undefined> {
   if (name !== "e5-small") return undefined;
   try {
-    await import("@huggingface/transformers");
+    await loadTransformers();
   } catch {
     say(
       "Meaning is off: @huggingface/transformers is not installed, so memory works by words alone.",

@@ -29,6 +29,24 @@ type Extractor = (
 ) => Promise<{ tolist(): number[][] }>;
 
 /**
+ * The optional package, loaded by a name the compiler does not follow: the
+ * agent builds and runs without it (memory then works by words alone), so
+ * its types are not needed to build either.
+ */
+export const TRANSFORMERS: string = "@huggingface/transformers";
+
+/** What the agent uses of transformers.js. */
+interface Transformers {
+  readonly env: { cacheDir: string };
+  pipeline(task: string, model: string, options: { dtype: string }): Promise<Extractor>;
+}
+
+/** transformers.js, when it is installed; throws when it is not. */
+export async function loadTransformers(): Promise<Transformers> {
+  return (await import(TRANSFORMERS)) as Transformers;
+}
+
+/**
  * Embeddings computed on this computer with transformers.js (ONNX), no
  * service and no API: the model is downloaded from Hugging Face once, on
  * first use, then read from the cache.
@@ -38,7 +56,7 @@ export function localEmbedder(model: LocalModelName, options: LocalEmbedderOptio
   let extractor: Promise<Extractor> | undefined;
 
   async function load(): Promise<Extractor> {
-    const transformers = await import("@huggingface/transformers");
+    const transformers = await loadTransformers();
     transformers.env.cacheDir =
       options.cacheDir ?? join(homedir(), ".cache", "grafeno-agent", "models");
     const pipe = await transformers.pipeline("feature-extraction", spec.id, { dtype: "q8" });

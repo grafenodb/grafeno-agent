@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.2 (2026-11-15)
+
+- **On npm as `@grafenodb/agent-cli`**: `npm install -g
+@grafenodb/agent-cli` installs the `grafeno-agent` command. A tag
+  publishes it through trusted publishing (OIDC, with provenance) after the
+  pipeline is green, and the GitHub release carries the same package.
+  Settings, sessions and data stay where they were.
+- **Builds without the optional meaning runtime**: transformers.js is
+  loaded by name, so neither building nor running needs it installed (the
+  0.1.1 release failed to build where it was missing; 0.1.1 was tagged but
+  never released).
+
 ## 0.1.1 (2026-11-15)
 
 - **Permissions** (`/permissions`): **Ask** (the default), **Automatic**
