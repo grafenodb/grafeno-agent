@@ -57,7 +57,11 @@ Commands:
           --memory-budget N (default 500), --max-memories N (default 5), --json.
           --level 0 (the checkpoint alone), 1 (and related memories: the default),
           2 --query "<topic>" (memories about something specific). Measures go to
-          stderr. Meant for a Claude Code SessionStart hook.`;
+          stderr. Meant for a Claude Code SessionStart hook.
+  router [--import]  What the router has learned: each kind of task and complexity, each
+          provider, model and effort, how often it succeeded cleanly (with its 95%
+          interval), cost and time, and whether the sample is big enough to count.
+          --import first reads the runs already kept for every project.`;
 
 /** Days between upkeeps before the chat suggests one. */
 const UPKEEP_EVERY_DAYS = 7;
@@ -414,6 +418,27 @@ async function compactResumeCommand(argv: readonly string[]): Promise<number> {
   return 0;
 }
 
+/** What the router learned so far, from the metrics of every project. */
+async function routerCommand(argv: readonly string[]): Promise<number> {
+  const { dataDir } = await import("./orchestrator/orchestrator.js");
+  const { importRuns, MetricsStore } = await import("./orchestrator/metrics.js");
+  const { computeStats, describeStats } = await import("./orchestrator/stats.js");
+  const { join } = await import("node:path");
+  const metrics = new MetricsStore(join(dataDir(), "metrics.db"));
+  try {
+    if (argv.includes("--import")) {
+      console.log(`Imported ${String(importRuns(dataDir(), metrics))} runs.\n`);
+    }
+    const attempts = metrics.attempts();
+    for (const line of describeStats(computeStats(attempts, metrics.outcomes()), attempts.length)) {
+      console.log(line);
+    }
+  } finally {
+    metrics.close();
+  }
+  return 0;
+}
+
 async function main(argv: readonly string[]): Promise<number> {
   // Real environment variables win over the settings file. Run from the
   // source (development), ./.env is read too; installed, never.
@@ -440,6 +465,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return runsCommand(argv.slice(1));
     case "resume":
       return resumeCommand(argv.slice(1));
+    case "router":
+      return routerCommand(argv.slice(1));
     case "help":
     case "--help":
     case "-h":

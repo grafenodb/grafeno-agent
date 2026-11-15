@@ -901,6 +901,36 @@ The planner's explicit recommendation for a task still comes first.
   - Tests: `test/orchestrator/metrics.test.ts` (6) covers every field, old
     attempts, no double counting, no text, the import and failure
     categories. A whole General Auto run fills the metrics. Full CI: 406.
+- **C2, the statistics (done, 2026-11-15):**
+  - `computeStats` (`src/orchestrator/stats.ts`) groups the finished tasks
+    by cell (kind and complexity band) and arm (provider, model and
+    effort). A task counts for the arm of its final attempt. Attempts the
+    model was not to blame for (a plan's limit, a move to another
+    provider) are left out. Each arm has:
+    - clean success: completed, merged, at the first attempt, with no
+      failed check sent back;
+    - success;
+    - tokens and time per task;
+    - a Wilson 95% interval on each rate;
+    - "enough" once it has 10 tasks in the cell.
+  - `grafeno-agent router [--import]` prints it, and marks every small
+    sample.
+  - On a copy of the real runs: 24 finished tasks in 3 cells (backend,
+    docs and tests, all of low complexity), and no arm with 10 tasks
+    except one near it (claude-code/haiku on backend, 9). Nothing counts as
+    evidence yet, and the report says so.
+  - **Tokens compare only within a provider.** Codex used about 30k
+    uncached input tokens per task, against about 1k for Claude. The
+    adapter already counts its cached tokens apart, so the difference is
+    real: Codex starts `codex exec` for every message and sends its context
+    again, while Claude Code keeps a live session with its cache. A token of
+    one plan is not a token of another, either. C3's rule therefore
+    compares arms within the provider the rules chose, and the report says
+    so.
+  - Tests: `test/orchestrator/stats.test.ts` (7) covers Wilson intervals,
+    cells never mixed, the measures of an arm, the final attempt's arm
+    (limits and moves left out, a retry not clean), "enough", and the
+    report. Full CI: 413.
 
 ### Phase D — long autonomous runs (design only now)
 
