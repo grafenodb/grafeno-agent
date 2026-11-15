@@ -1,3 +1,5 @@
+import { deliveryMode } from "../orchestrator/orchestrator.js";
+import { routingMode } from "../orchestrator/router.js";
 import { loadConfig } from "../config.js";
 import { detectProject } from "../memory/project.js";
 import { grafenoVault } from "../memory/vault.js";
@@ -8,7 +10,7 @@ import { TASK_KINDS, type TaskKind } from "../orchestrator/plan.js";
 import type { Planned } from "../orchestrator/planner.js";
 import type { Autonomy } from "../orchestrator/policy.js";
 import type { Route } from "../orchestrator/router.js";
-import { affinityFor, chosenProviders, isAuto } from "../providers/index.js";
+import { affinityFor, autoModels, chosenProviders, isAuto } from "../providers/index.js";
 import type { Provider } from "../providers/types.js";
 import { checkGrafeno } from "../startup.js";
 import { embedderFor, prepareGrafeno } from "./services.js";
@@ -65,6 +67,9 @@ export async function createOrchestrator(
     vault: grafenoVault(config),
     secrets: [config.agentKey, process.env.GRAFENO_OWNER_TOKEN ?? ""].filter(Boolean),
     mode: settings.mode ?? "controlled",
+    routing: routingMode(process.env.AGENT_ROUTING),
+    delivery: deliveryMode(process.env.AGENT_DELIVERY),
+    models: autoModels(),
     maxWorkers: settings.workers ?? 3,
     ...(embedder ? { embedder } : {}),
     ...(light

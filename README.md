@@ -117,27 +117,30 @@ agent asks again when it starts.
 
 ### Settings
 
-| Variable               | Default                 | What                                                                      |
-| ---------------------- | ----------------------- | ------------------------------------------------------------------------- |
-| `GRAFENO_MODE`         | (asked)                 | `included` (the agent's own Grafeno) or `external`; empty: asked at start |
-| `GRAFENO_URL`          | `http://127.0.0.1:7810` | The Grafeno server, when external                                         |
-| `GRAFENO_AGENT_KEY`    | (required)              | The agent's key                                                           |
-| `GRAFENO_NAMESPACE`    | `grafeno-agent`         | Where the agent keeps its memory                                          |
-| `AGENT_MODEL`          | `claude-code`           | The model (`claude-code`: your Claude subscription)                       |
-| `CLAUDE_MODEL`         | Claude Code's own       | `haiku`, `sonnet`, `opus`, `fable` (set by `/models`)                     |
-| `AGENT_EFFORT`         | the model's own         | `low` … `max` (set by `/effort`)                                          |
-| `AGENT_PROJECT`        | the git repository      | The project whose memory the agent uses                                   |
-| `AGENT_EMBEDDER`       | `e5-small`              | Meaning for memory (a local model), or `none`                             |
-| `AGENT_PALACE`         | `shared`                | `shared` with other agents, or `own` (see below)                          |
-| `AGENT_SHELL`          | Git's bash on Windows   | The shell for commands, with its arguments                                |
-| `AGENT_PROVIDERS`      | `auto`                  | `claude-code`, `codex`, `gemini`, in order, or `auto` (set by `/connect`) |
-| `AGENT_PERMISSIONS`    | `ask`                   | `ask`, `auto` or `skip`, for the whole agent (set by `/permissions`)      |
-| `AGENT_AUTO_PROVIDERS` | none (you choose)       | The providers Auto includes (set in `/connect` with space)                |
-| `GEMINI_TIER`          | none                    | `free` or `paid`: your Gemini key's tier (set by `login gemini`)          |
-| `OPENROUTER_MODELS`    | `free`                  | `free` (never billed) or `all` (set by `login openrouter`)                |
-| `AGENT_ALLOW_BILLING`  | none                    | Providers allowed to bill by consumption, such as `gemini`                |
-| `AGENT_AFFINITY`       | the defaults below      | Where each task kind goes first in `auto`                                 |
-| `AGENT_MEMORY_BUDGET`  | see [Memory](#memory)   | How much memory may reach the model                                       |
+| Variable               | Default                 | What                                                                             |
+| ---------------------- | ----------------------- | -------------------------------------------------------------------------------- |
+| `GRAFENO_MODE`         | (asked)                 | `included` (the agent's own Grafeno) or `external`; empty: asked at start        |
+| `GRAFENO_URL`          | `http://127.0.0.1:7810` | The Grafeno server, when external                                                |
+| `GRAFENO_AGENT_KEY`    | (required)              | The agent's key                                                                  |
+| `GRAFENO_NAMESPACE`    | `grafeno-agent`         | Where the agent keeps its memory                                                 |
+| `AGENT_MODEL`          | `claude-code`           | The model (`claude-code`: your Claude subscription)                              |
+| `CLAUDE_MODEL`         | Claude Code's own       | `haiku`, `sonnet`, `opus`, `fable` (set by `/models`)                            |
+| `AGENT_EFFORT`         | the model's own         | `low` … `max` (set by `/effort`)                                                 |
+| `AGENT_PROJECT`        | the git repository      | The project whose memory the agent uses                                          |
+| `AGENT_EMBEDDER`       | `e5-small`              | Meaning for memory (a local model), or `none`                                    |
+| `AGENT_PALACE`         | `shared`                | `shared` with other agents, or `own` (see below)                                 |
+| `AGENT_SHELL`          | Git's bash on Windows   | The shell for commands, with its arguments                                       |
+| `AGENT_PROVIDERS`      | `auto`                  | `claude-code`, `codex`, `gemini`, in order, or `auto` (set by `/connect`)        |
+| `AGENT_PERMISSIONS`    | `ask`                   | `ask`, `auto` or `skip`, for the whole agent (set by `/permissions`)             |
+| `AGENT_AUTO_PROVIDERS` | none (you choose)       | The providers Auto includes (set in `/connect` with space)                       |
+| `GEMINI_TIER`          | none                    | `free` or `paid`: your Gemini key's tier (set by `login gemini`)                 |
+| `OPENROUTER_MODELS`    | `free`                  | `free` (never billed) or `all` (set by `login openrouter`)                       |
+| `AGENT_ALLOW_BILLING`  | none                    | Providers allowed to bill by consumption, such as `gemini`                       |
+| `AGENT_AFFINITY`       | the defaults below      | Where each task kind goes first in `auto`                                        |
+| `AGENT_ROUTING`        | `balanced`              | `economy`, `balanced` or `quality`: how eagerly runs spend the plans             |
+| `AGENT_AUTO_MODELS`    | (all)                   | Each Auto provider's models: `codex:gpt-6-astra,gpt-6.1-sol` (`m` in `/connect`) |
+| `AGENT_DELIVERY`       | `live`                  | `live` (task by task), `end` or `manual`: how runs' work reaches your folder     |
+| `AGENT_MEMORY_BUDGET`  | see [Memory](#memory)   | How much memory may reach the model                                              |
 
 Variables set in the environment win over the file. The agent never reads
 the `.env` of the folder it runs in: that belongs to your project.
@@ -453,8 +456,11 @@ model is not installed or fails, memory works by words alone.
 request into a plan of tasks with dependencies, shows it, and, when you say
 so, runs it with several workers at once:
 
-- each task works in its own **git worktree and branch**; your working tree
-  and branch are never written;
+- each task works in its own **git worktree and branch**, a copy of the
+  project under `%LOCALAPPDATA%\grafeno-agent\worktrees\<project>\<run>\<task>`
+  (`~/.local/state/grafeno-agent/worktrees/…` elsewhere), so workers running
+  at once never step on each other or on your uncommitted work; the run
+  says where when it starts;
 - each worker gets the model and effort its task needs (architecture and
   hard backend work on the deepest model, tests and docs on the lightest),
   checked against what your provider really offers and how much of your plan
@@ -464,7 +470,17 @@ so, runs it with several workers at once:
 - a task is done only when its **checks pass, run by code** (its tests,
   typecheck, build or files); a failed check goes back to its worker;
 - finished tasks are merged into the run's **integration branch**
-  (`grafeno/<run>/integration`); you look at it and merge it yourself.
+  (`grafeno/<run>/integration`), and from it **into your folder, task by
+  task** (`AGENT_DELIVERY=live`, the default): each task's work lands on
+  the branch you are on as a merge commit as soon as its checks pass, so you
+  see the work grow. At the end, every task's checks run together on your
+  branch; if any fails, the run's merges are undone (`git reset --keep` to
+  where your branch was before the run). Changes of yours are kept safe:
+  git refuses a merge that would overwrite them, and a task not brought in
+  is tried again with the next one and at the end; staged files hold it
+  until you commit or unstage them. Nothing is ever pushed.
+  `AGENT_DELIVERY=end` brings everything in only when the run completes;
+  `manual`, never (you merge the integration branch yourself).
 
 The run's policy decides what workers may do alone: `controlled` (default)
 lets them write in their worktree and run checks and builds; `supervised`
@@ -580,7 +596,29 @@ official CLI, signed in with your ChatGPT subscription, and with **Gemini**
   needs (`AGENT_AFFINITY`), each plan's limit is never passed, and ties go
   to the one with the most room. A provider that hits its limit or loses
   its sign-in is set aside, and its tasks go to another, unless a task has
-  a merge in flight.
+  a merge in flight. A provider that took most of a run's tasks yields to
+  another with room.
+- **How eagerly plans are spent** (`AGENT_ROUTING`):
+  - `balanced` (the default): the deep tier and high efforts only for hard
+    tasks (complexity 4–5), even when the planner asks for more; from half
+    of any window (5 hours or the week) one effort lower, from 70% a tier
+    lighter, at 95% the run waits for the reset;
+  - `economy`: the lightest that can do the task;
+  - `quality`: the planner's and the profiles' choice, lighter only from 80%.
+- **What each model spends is learned and kept.** Each attempt measures the
+  share of its provider's window it took (its part of what the provider
+  served meanwhile, when attempts run at once). The measurements are kept
+  in the metrics across sessions and projects, and grow as a run goes: a
+  model and effort seen to take 8% or more of a window per task (two tasks
+  are enough) is kept off tasks that are not hard, one effort lower first,
+  then the lighter tier's model. The run's events say why each choice was
+  made.
+- **Each provider's models in Auto.** In `/connect`, **m** on a provider in
+  Auto chooses its models: **Auto** (every model, chosen by the task and by
+  what each spends), or the ones you mark (`AGENT_AUTO_MODELS`). Chosen
+  models are used because you want them: hard tasks still go to the
+  strongest of them and simple ones to the lightest, but they are never
+  swapped by usage or cost. The plan's 95% hold still applies.
 
 The default affinities:
 

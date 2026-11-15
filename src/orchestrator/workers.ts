@@ -2,9 +2,9 @@ import { Agent, AgentError } from "../agent/agent.js";
 import { findSkills, skillCatalog, skillRoots, skillTool } from "../skills/skills.js";
 import { ToolRegistry, type Approver, type Tool } from "../agent/tools.js";
 import { ModelError, type Model, type ModelEvent, type Usage } from "../model/index.js";
-import type { ModelChoice, Provider, ProviderUsage } from "../providers/types.js";
+import type { ModelChoice, ModelOption, Provider, ProviderUsage } from "../providers/types.js";
 import { Workspace } from "../tools/workspace.js";
-import type { TaskSpec } from "./plan.js";
+import type { TaskSpec, Tier } from "./plan.js";
 import { CapabilityRegistry, type Unavailable } from "../providers/registry.js";
 import {
   route,
@@ -14,8 +14,10 @@ import {
   type Profile,
   type ProviderEntry,
   type ProviderRoute,
+  type RoutingMode,
 } from "./router.js";
 import { explore, suggest } from "./learned.js";
+import { attemptShare, weightedTokens, type CostBook } from "./costs.js";
 import type { CellStats } from "./stats.js";
 import type { AttemptContext, AttemptOutcome, TaskRunner } from "./scheduler.js";
 import type { TaskRecord } from "./store.js";
@@ -99,6 +101,8 @@ export interface AttemptMetrics {
   readonly attempt: number;
   /** The plan's fullest limit when the attempt started, from 0 to 1, when the provider said. */
   readonly quotaUsed?: number;
+  /** The share of that window this attempt spent, when it could be measured. */
+  readonly quotaShare?: number;
   /** Why it did not complete, as a category, never text. */
   readonly failure?: string;
   /** Tried on purpose to learn (phase C4 exploration). */
@@ -121,6 +125,15 @@ export interface WorkerPoolOptions {
   readonly auto?: boolean;
   /** For each task kind, its preferred provider and tier, in General Auto. */
   readonly affinity?: Partial<Record<TaskSpec["kind"], Affinity>>;
+  /** How eagerly the plans are spent (`AGENT_ROUTING`); without it, the rules as they were. */
+  readonly routing?: RoutingMode;
+  /** What models were seen to spend of their plans, kept across sessions; grows as attempts end. */
+  readonly costs?: CostBook;
+  /**
+   * The models the person chose for General Auto, per provider: the router
+   * picks among them by the task, and never swaps them by usage or cost.
+   */
+  readonly models?: Readonly<Record<string, readonly string[]>>;
   /**
    * Phase C: what the recorded runs taught. `shadow` records a suggestion
    * for each task; `learned` also uses it under the rule (learned.ts).
@@ -184,6 +197,8 @@ export class WorkerPool implements TaskRunner {
   readonly #registry: CapabilityRegistry | undefined;
   /** Attempts started on each provider: General Auto's spreading tie-break. */
   readonly #assigned = new Map<string, number>();
+  /** Weighted tokens each provider served in this pool: an attempt's part of a window's growth. */
+  readonly #served = new Map<string, number>();
 
   constructor(private readonly options: WorkerPoolOptions) {
     this.#providers = options.providers ?? [options.provider];
@@ -208,27 +223,30 @@ export class WorkerPool implements TaskRunner {
   catalog(id: string = this.#first().id): Promise<Catalog> {
     let known = this.#catalogs.get(id);
     if (!known) {
-      known = (async () => {
+      known = (async (): Promise<Catalog> => {
         const provider = this.#provider(id);
-        const models = await provider.models();
+        const all = await provider.models();
         const tiers = provider.tiers ?? {
-          deep: models.map((m) => m.id),
-          standard: models.map((m) => m.id),
-          light: [...models].reverse().map((m) => m.id),
+          deep: all.map((m) => m.id),
+          standard: all.map((m) => m.id),
+          light: [...all].reverse().map((m) => m.id),
         };
-        return { models, efforts: provider.efforts(), tiers };
+        const chosen = this.options.models?.[id];
+        if (!chosen || chosen.length === 0)
+          return { models: all, efforts: provider.efforts(), tiers };
+        return { ...pinnedCatalog(all, tiers, chosen), efforts: provider.efforts(), pinned: true };
       })();
       this.#catalogs.set(id, known);
     }
     return known;
   }
 
-  /** A provider's real usage, asked at most once a minute (the first provider by default). */
-  async usage(id: string = this.#first().id): Promise<ProviderUsage | undefined> {
+  /** A provider's real usage, asked at most once a minute unless `fresh` (the first provider by default). */
+  async usage(id: string = this.#first().id, fresh = false): Promise<ProviderUsage | undefined> {
     const known = this.#usages.get(id);
-    if (known && Date.now() - known.at < 60_000) return known.value;
+    if (!fresh && known && Date.now() - known.at < 60_000) return known.value;
     const value = await this.#provider(id)
-      .usage()
+      .usage(fresh ? { fresh: true } : {})
       .catch(() => undefined);
     this.#usages.set(id, { value, at: Date.now() });
     return value;
@@ -310,13 +328,17 @@ export class WorkerPool implements TaskRunner {
     task: TaskSpec,
     assigned?: ReadonlyMap<string, number>,
   ): Promise<ProviderRoute> {
-    const profiles = this.options.profiles ? { profiles: this.options.profiles } : {};
+    const profiles = {
+      ...(this.options.profiles ? { profiles: this.options.profiles } : {}),
+      ...(this.options.routing ? { routing: this.options.routing } : {}),
+    };
     if (!this.#registry) {
       const provider = this.#first();
       const usage = await this.usage(provider.id);
       const chosen = route(task, await this.catalog(provider.id), {
         ...profiles,
         ...(usage ? { usage } : {}),
+        ...(this.options.costs ? { costOf: this.options.costs.costOf(provider.id) } : {}),
       });
       return chosen.kind === "run" ? { ...chosen, provider: provider.id } : chosen;
     }
@@ -326,7 +348,12 @@ export class WorkerPool implements TaskRunner {
     const entries: ProviderEntry[] = await Promise.all(
       ready.map(async (c) => {
         const usage = await this.usage(c.id);
-        return { id: c.id, catalog: await this.catalog(c.id), ...(usage ? { usage } : {}) };
+        return {
+          id: c.id,
+          catalog: await this.catalog(c.id),
+          ...(usage ? { usage } : {}),
+          ...(this.options.costs ? { costOf: this.options.costs.costOf(c.id) } : {}),
+        };
       }),
     );
     return routeAcross(task, entries, {
@@ -483,8 +510,13 @@ export class WorkerPool implements TaskRunner {
     let outcome: AttemptOutcome;
     let failure: string | undefined;
     const quota = await this.usage(provider.id);
-    const quotaUsed =
-      quota && quota.limits.length > 0 ? Math.max(...quota.limits.map((l) => l.used)) : undefined;
+    const fullest =
+      quota && quota.limits.length > 0
+        ? [...quota.limits].sort((a, b) => b.used - a.used)[0]
+        : undefined;
+    const quotaUsed = fullest?.used;
+    const servedBefore = this.#served.get(provider.id) ?? 0;
+    let own = 0;
     let agent = makeAgent();
     const track = (event: ModelEvent) => {
       this.options.onActivity?.({ worker: name, task: task.id, runId: context.runId, event });
@@ -498,6 +530,13 @@ export class WorkerPool implements TaskRunner {
       spent.input += usage.inputTokens;
       spent.output += usage.outputTokens;
       spent.cache += usage.cacheReadTokens + usage.cacheWriteTokens;
+      const weight = weightedTokens(
+        usage.inputTokens + usage.cacheWriteTokens,
+        usage.outputTokens,
+        usage.cacheReadTokens,
+      );
+      own += weight;
+      this.#served.set(provider.id, (this.#served.get(provider.id) ?? 0) + weight);
     };
 
     this.#active.set(name, {
@@ -573,6 +612,22 @@ export class WorkerPool implements TaskRunner {
       await agent.close();
       await memory?.close?.();
     }
+    // What this attempt spent of the provider's window: learned at once, kept for later sessions.
+    let quotaShare: number | undefined;
+    if (fullest) {
+      const after = (await this.usage(provider.id, true))?.limits.find(
+        (l) => l.label === fullest.label,
+      )?.used;
+      quotaShare = attemptShare(
+        fullest.used,
+        after,
+        own,
+        (this.#served.get(provider.id) ?? 0) - servedBefore,
+      );
+      if (quotaShare !== undefined) {
+        this.options.costs?.add(provider.id, chosen.model, chosen.effort, quotaShare);
+      }
+    }
     const metrics: AttemptMetrics = {
       task: task.id,
       kind: task.spec.kind,
@@ -595,6 +650,7 @@ export class WorkerPool implements TaskRunner {
       modelId: chosen.model,
       attempt: context.attempt,
       ...(quotaUsed === undefined ? {} : { quotaUsed }),
+      ...(quotaShare === undefined ? {} : { quotaShare }),
       ...(failure === undefined ? {} : { failure }),
       explored: chosen.explored === true,
     };
@@ -752,3 +808,38 @@ function summarize(text: string): string {
 }
 
 export { Workspace };
+
+/**
+ * A provider's catalog narrowed to the models the person chose: each tier
+ * keeps the provider's own order among them, then the other chosen models
+ * (strongest first for deep and standard, lightest first for light), so the
+ * router still sends hard tasks to the strongest chosen model and simple
+ * ones to the lightest.
+ */
+export function pinnedCatalog(
+  all: readonly ModelOption[],
+  tiers: Readonly<Record<Tier, readonly string[]>>,
+  chosen: readonly string[],
+): { models: ModelOption[]; tiers: Record<Tier, string[]> } {
+  const offered = new Set(all.map((m) => m.id));
+  const picked = chosen.filter((id) => offered.has(id));
+  const models = all.filter((m) => picked.includes(m.id));
+  // Strength: where a model first appears in the deep tier, else after every one there.
+  const strength = (id: string) => {
+    const at = tiers.deep.indexOf(id);
+    return at < 0 ? tiers.deep.length + picked.indexOf(id) : at;
+  };
+  const strongest = [...picked].sort((a, b) => strength(a) - strength(b));
+  const order = (tier: Tier, rest: readonly string[]) => {
+    const own = tiers[tier].filter((id) => picked.includes(id));
+    return [...own, ...rest.filter((id) => !own.includes(id))];
+  };
+  return {
+    models: models.length > 0 ? models : [...all],
+    tiers: {
+      deep: order("deep", strongest),
+      standard: order("standard", strongest),
+      light: order("light", [...strongest].reverse()),
+    },
+  };
+}

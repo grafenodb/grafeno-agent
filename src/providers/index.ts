@@ -74,6 +74,41 @@ export function autoMembers(env: Record<string, string | undefined> = process.en
   return [...new Set(listed)];
 }
 
+/** The setting that keeps, for each provider in General Auto, the models it may use. */
+export const AUTO_MODELS_SETTING = "AGENT_AUTO_MODELS";
+
+/**
+ * For each provider in General Auto, the models the person chose
+ * (`AGENT_AUTO_MODELS=codex:gpt-6-astra,gpt-6.1-sol;claude-code:auto`). A
+ * provider not named, or named `auto`, uses all its models, chosen by the
+ * task and what they cost.
+ */
+export function autoModels(
+  env: Record<string, string | undefined> = process.env,
+): Record<string, string[]> {
+  const chosen: Record<string, string[]> = {};
+  for (const part of (env[AUTO_MODELS_SETTING] ?? "").split(";")) {
+    const at = part.indexOf(":");
+    if (at <= 0) continue;
+    const id = part.slice(0, at).trim();
+    const models = part
+      .slice(at + 1)
+      .split(",")
+      .map((m) => m.trim())
+      .filter((m) => m !== "" && m.toLowerCase() !== AUTO);
+    if (id !== "" && models.length > 0) chosen[id] = [...new Set(models)];
+  }
+  return chosen;
+}
+
+/** The setting's value for these choices; providers on `auto` are left out. */
+export function autoModelsSetting(chosen: Readonly<Record<string, readonly string[]>>): string {
+  return Object.entries(chosen)
+    .filter(([, models]) => models.length > 0)
+    .map(([id, models]) => `${id}:${models.join(",")}`)
+    .join(";");
+}
+
 /**
  * Whether a setting asks for General Auto (`AGENT_PROVIDERS=auto`). An
  * empty setting is Auto too, the default: every installed and signed-in

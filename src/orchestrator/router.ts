@@ -29,16 +29,80 @@ export interface Catalog {
    * aliases): the provider's own mapping, so that no model is named here.
    */
   readonly tiers: Readonly<Record<Tier, readonly string[]>>;
+  /**
+   * The person chose these models for General Auto: the router still picks
+   * among them by the task, but never swaps them for others by how much of
+   * the plan is used or by what they cost.
+   */
+  readonly pinned?: boolean;
 }
+
+/**
+ * How eagerly runs spend the plans (`AGENT_ROUTING`):
+ * - `economy`: the lightest that can do the task;
+ * - `balanced` (the default): the deep tier and high efforts only for hard
+ *   tasks (complexity 4–5), a pace that eases off as a plan's window fills,
+ *   and models found to spend a large share of a window kept off simple
+ *   tasks;
+ * - `quality`: the planner's and the profiles' choice, lighter only near
+ *   a limit.
+ */
+export const ROUTING_MODES = ["economy", "balanced", "quality"] as const;
+export type RoutingMode = (typeof ROUTING_MODES)[number];
+
+/** The routing mode a setting asks for; `balanced` when unset or unknown. */
+export function routingMode(setting: string | undefined): RoutingMode {
+  const value = (setting ?? "").trim().toLowerCase();
+  return (ROUTING_MODES as readonly string[]).includes(value) ? (value as RoutingMode) : "balanced";
+}
+
+/** What a model and effort were seen to spend: the share of a plan's window per task. */
+export interface QuotaCost {
+  /** The mean share of the provider's fullest window one task took, from 0 to 1. */
+  readonly share: number;
+  /** Tasks it was measured on. */
+  readonly n: number;
+}
+
+/** A task spending at least this share of a window is expensive for a simple task. */
+export const EXPENSIVE_SHARE = 0.08;
+/** Tasks measured before a model's cost is acted on: a share of a window is a strong signal. */
+export const COST_SAMPLE = 2;
 
 export interface RouterOptions {
   readonly profiles?: Partial<Record<TaskKind, Profile>>;
   /** The provider's real usage, when it said. */
   readonly usage?: ProviderUsage;
-  /** Above this share of a limit, tasks go one tier lighter. Default: 0.8. */
+  /** Above this share of a limit, tasks go one tier lighter. Default: 0.8 in `quality`, else 0.7. */
   readonly lighterAbove?: number;
   /** Above this share, no new task starts: the run waits for the reset. Default: 0.95. */
   readonly holdAbove?: number;
+  /** How eagerly the plans are spent. Without it, `quality`: the agent passes `AGENT_ROUTING`. */
+  readonly routing?: RoutingMode;
+  /** What a model and effort of this provider were seen to spend, when known. */
+  readonly costOf?: (model: string, effort: string | undefined) => QuotaCost | undefined;
+}
+
+/** Above this share of a limit, one effort lower (not in `quality`). */
+const EASE_ABOVE = 0.5;
+
+/** The lighter-tier threshold of a mode. */
+function lighterOf(options: RouterOptions): number {
+  const eager = options.routing === undefined || options.routing === "quality";
+  return options.lighterAbove ?? (eager ? 0.8 : 0.7);
+}
+
+const EFFORT_ORDER = ["low", "medium", "high", "xhigh", "max"];
+
+/** One effort lower than `effort` that the provider offers, if any. */
+function lowerEffort(effort: string | undefined, efforts: readonly string[]): string | undefined {
+  if (effort === undefined) return undefined;
+  const at = EFFORT_ORDER.indexOf(effort);
+  for (let i = at - 1; i >= 0; i--) {
+    const lower = EFFORT_ORDER[i];
+    if (lower !== undefined && efforts.includes(lower)) return lower;
+  }
+  return undefined;
 }
 
 export type Route =
@@ -87,6 +151,25 @@ export function route(task: TaskSpec, catalog: Catalog, options: RouterOptions =
     tier = "standard";
     reasons.push(`complexity ${String(task.complexity)} needs at least standard`);
   }
+  // Without a mode, the rules as they were (the agent passes AGENT_ROUTING, balanced by default).
+  const mode = options.routing ?? "quality";
+  const hard = task.complexity >= 4;
+  if (mode !== "quality" && !hard && tier === "deep") {
+    tier = "standard";
+    reasons.push(`complexity ${String(task.complexity)}: deep is kept for hard tasks (4–5)`);
+  }
+  if (mode === "economy" && !hard && tier === "standard") {
+    tier = "light";
+    reasons.push("economy: the light tier for a task that is not hard");
+  }
+  let wantedEffort = task.recommended?.effort ?? profile.effort;
+  if (mode !== "quality" && !hard && wantedEffort !== undefined) {
+    const cap = mode === "economy" ? (task.complexity <= 2 ? "low" : "medium") : "medium";
+    if (EFFORT_ORDER.indexOf(wantedEffort) > EFFORT_ORDER.indexOf(cap)) {
+      reasons.push(`complexity ${String(task.complexity)}: effort ${cap}, not ${wantedEffort}`);
+      wantedEffort = cap;
+    }
+  }
 
   const limit = mostUsed(options.usage);
   if (limit && limit.used >= (options.holdAbove ?? 0.95)) {
@@ -96,7 +179,8 @@ export function route(task: TaskSpec, catalog: Catalog, options: RouterOptions =
       ...(limit.resets === undefined ? {} : { resets: limit.resets }),
     };
   }
-  if (limit && limit.used >= (options.lighterAbove ?? 0.8) && tier !== "light") {
+  // Models the person chose are never swapped by how full the plan is.
+  if (limit && limit.used >= lighterOf(options) && tier !== "light" && catalog.pinned !== true) {
     tier = LIGHTER[tier];
     reasons.push(
       `${limit.label} is ${String(Math.round(limit.used * 100))}% used: one tier lighter (${tier})`,
@@ -120,13 +204,52 @@ export function route(task: TaskSpec, catalog: Catalog, options: RouterOptions =
   if (model === undefined) return { kind: "hold", reason: "the provider offers no model" };
   reasons.push(`model ${model}`);
 
-  const effort = chooseEffort(task.recommended?.effort ?? profile.effort, catalog.efforts);
+  const effort = chooseEffort(wantedEffort, catalog.efforts);
   if (effort.note) reasons.push(effort.note);
+  let chosenEffort = effort.value;
+  // A pace: as a window fills, one effort lower, before any tier lighter.
+  if (mode !== "quality" && limit && limit.used >= EASE_ABOVE && limit.used < lighterOf(options)) {
+    const eased = lowerEffort(chosenEffort, catalog.efforts);
+    if (eased !== undefined) {
+      reasons.push(
+        `${limit.label} is ${String(Math.round(limit.used * 100))}% used: effort ${eased}, not ${chosenEffort ?? "the default"}`,
+      );
+      chosenEffort = eased;
+    }
+  }
+  // What was learned of this model's cost: an expensive one stays off tasks that are not hard.
+  if (mode !== "quality" && !hard && catalog.pinned !== true && options.costOf) {
+    const cost = options.costOf(model, chosenEffort);
+    if (cost && cost.n >= COST_SAMPLE && cost.share >= EXPENSIVE_SHARE) {
+      const spent = `${model}${chosenEffort ? ` · ${chosenEffort}` : ""} took ~${String(Math.round(cost.share * 100))}% of a window per task (${String(cost.n)} tasks)`;
+      const eased = lowerEffort(chosenEffort, catalog.efforts);
+      const easedCost = eased === undefined ? undefined : options.costOf(model, eased);
+      if (
+        eased !== undefined &&
+        !(easedCost && easedCost.n >= COST_SAMPLE && easedCost.share >= EXPENSIVE_SHARE)
+      ) {
+        reasons.push(
+          `${spent}: effort ${eased} for a task of complexity ${String(task.complexity)}`,
+        );
+        chosenEffort = eased;
+      } else if (tier !== "light") {
+        const lighterTier = LIGHTER[tier];
+        const lighterModel = catalog.tiers[lighterTier].find((id) => available.has(id));
+        if (lighterModel !== undefined && lighterModel !== model) {
+          reasons.push(
+            `${spent}: ${lighterModel} (${lighterTier}) for a task of complexity ${String(task.complexity)}`,
+          );
+          tier = lighterTier;
+          model = lighterModel;
+        }
+      }
+    }
+  }
   return {
     kind: "run",
     tier,
     model,
-    ...(effort.value === undefined ? {} : { effort: effort.value }),
+    ...(chosenEffort === undefined ? {} : { effort: chosenEffort }),
     reasons,
   };
 }
@@ -159,6 +282,8 @@ export interface ProviderEntry {
   readonly id: string;
   readonly catalog: Catalog;
   readonly usage?: ProviderUsage;
+  /** What its models were seen to spend. */
+  readonly costOf?: (model: string, effort: string | undefined) => QuotaCost | undefined;
 }
 
 export interface AcrossOptions extends RouterOptions {
@@ -226,7 +351,7 @@ export function routeAcross(
   options: AcrossOptions = {},
 ): ProviderRoute {
   if (providers.length === 0) return { kind: "hold", reason: "no provider is ready" };
-  const lighter = options.lighterAbove ?? 0.8;
+  const lighter = lighterOf(options);
   const hold = options.holdAbove ?? 0.95;
   const used = (p: ProviderEntry) => mostUsed(p.usage)?.used ?? 0;
   if (options.auto === true) return routePool(task, providers, options, used, lighter, hold);
@@ -317,7 +442,16 @@ function routePool(
     (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0);
 
   const withRoom = providers.filter((p) => used(p) < lighter);
-  const preferred = withRoom.find((p) => p.id === wanted);
+  const total = [...(options.assigned?.values() ?? [])].reduce((a, b) => a + b, 0);
+  // Not in `quality`: a provider that took most of the run's tasks yields to one with room.
+  const overloaded = (p: ProviderEntry) =>
+    options.routing !== undefined &&
+    options.routing !== "quality" &&
+    assigned(p) >= 2 &&
+    assigned(p) > total / 2 &&
+    withRoom.some((other) => other.id !== p.id);
+  const affine = withRoom.find((p) => p.id === wanted);
+  const preferred = affine && !overloaded(affine) ? affine : undefined;
   const rest = withRoom.filter((p) => p !== preferred).sort(spread);
   const tryEntries = (entries: readonly ProviderEntry[], first: (p: ProviderEntry) => string) => {
     for (const entry of entries) {
@@ -335,9 +469,11 @@ function routePool(
   const notes: string[] = [];
   if (wanted !== undefined && preferred === undefined) {
     notes.push(
-      providers.some((p) => p.id === wanted)
-        ? `${wanted} has no room for ${task.kind} tasks now`
-        : `${wanted} is not ready`,
+      affine
+        ? `${wanted} took most of this run's tasks: spreading`
+        : providers.some((p) => p.id === wanted)
+          ? `${wanted} has no room for ${task.kind} tasks now`
+          : `${wanted} is not ready`,
     );
   }
   const chosen =
@@ -372,6 +508,9 @@ function routePool(
   };
 }
 
-function withUsage(entry: ProviderEntry): { usage?: ProviderUsage } {
-  return entry.usage ? { usage: entry.usage } : {};
+function withUsage(entry: ProviderEntry): Pick<RouterOptions, "usage" | "costOf"> {
+  return {
+    ...(entry.usage ? { usage: entry.usage } : {}),
+    ...(entry.costOf ? { costOf: entry.costOf } : {}),
+  };
 }

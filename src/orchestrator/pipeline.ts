@@ -29,6 +29,8 @@ export interface PipelineOptions {
   readonly verify?: Verify;
   /** The run's policy: whether merging into the integration branch needs a person. */
   readonly policy?: Policy;
+  /** Told when a task's work was merged into the integration branch. */
+  readonly onMerged?: (runId: string, taskId: string) => Promise<void>;
   /** Asks a person (through the interface); without it, what needs a person goes to review. */
   readonly ask?: (question: Question) => Promise<boolean>;
   /**
@@ -214,6 +216,8 @@ export class TaskPipeline implements TaskRunner {
           { commit: integration.commit, files: integration.files },
           task.id,
         );
+        // A failure to deliver it never fails the task: its work is merged.
+        await this.options.onMerged?.(runId, task.id).catch(() => undefined);
         return outcome;
     }
   }

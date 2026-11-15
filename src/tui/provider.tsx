@@ -1,6 +1,7 @@
 import { Box, Text, useInput } from "ink";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Provider, ProviderStatus } from "../providers/types.js";
+import { AutoModelsPanel } from "./auto-models.js";
 import { Spinner } from "./spinner.js";
 import { theme } from "./theme.js";
 
@@ -19,6 +20,9 @@ export interface ProviderPanelProps {
   readonly onToggleAuto?: (id: string) => void;
   /** Providers reached with an API key (they may bill per token): said on their row. */
   readonly apiKeyProviders?: readonly string[];
+  /** For each provider in Auto, the models chosen (none: Auto); with `onAutoModels`, m chooses them. */
+  readonly autoModels?: Readonly<Record<string, readonly string[]>>;
+  readonly onAutoModels?: (id: string, models: string[]) => void;
   /** With the status of the provider chosen (Enter), and the provider; nothing on Esc. */
   readonly onDone: (status: ProviderStatus | undefined, provider?: Provider) => void;
 }
@@ -39,6 +43,7 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
   const [checking, setChecking] = useState(0);
   const [query, setQuery] = useState("");
   // The row of what is in use: Auto (the first row) or the current provider.
+  const [choosingModels, setChoosingModels] = useState<Provider | undefined>(undefined);
   const [selected, setSelected] = useState(() => {
     if (props.auto && props.onAuto) return 0;
     const index = props.providers.findIndex((p) => p.id === props.current);
@@ -72,6 +77,7 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
   }, [props.providers, checking]);
 
   useInput((input, key) => {
+    if (choosingModels) return;
     if (key.escape) {
       if (query !== "") {
         setQuery("");
@@ -82,6 +88,14 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
     else if (key.ctrl && input === "r") {
       setStatuses(new Map());
       setChecking((c) => c + 1);
+    } else if (
+      (input === "m" || input === "M") &&
+      query === "" &&
+      props.onAutoModels &&
+      !onAuto &&
+      shown[at - first] !== undefined
+    ) {
+      setChoosingModels(shown[at - first]);
     } else if (input === " " && props.onToggleAuto && !onAuto) {
       const chosen = shown[at - first];
       if (chosen) props.onToggleAuto(chosen.id);
@@ -99,6 +113,19 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
       setSelected(0);
     }
   });
+
+  if (choosingModels) {
+    return (
+      <AutoModelsPanel
+        provider={choosingModels}
+        chosen={props.autoModels?.[choosingModels.id] ?? []}
+        onDone={(models) => {
+          if (models !== undefined) props.onAutoModels?.(choosingModels.id, models);
+          setChoosingModels(undefined);
+        }}
+      />
+    );
+  }
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.brand} paddingX={1}>
@@ -147,6 +174,13 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
                   {props.autoMembers.includes(provider.id) ? "  [✓ in Auto]" : "  [  not in Auto]"}
                 </Text>
               ) : null}
+              {props.autoMembers?.includes(provider.id) && props.onAutoModels ? (
+                <Text dimColor>
+                  {(props.autoModels?.[provider.id]?.length ?? 0) > 0
+                    ? ` models: ${(props.autoModels?.[provider.id] ?? []).join(", ")}`
+                    : " models: auto"}
+                </Text>
+              ) : null}
             </Text>
             {props.apiKeyProviders?.includes(provider.id) && (
               <Box paddingLeft={4}>
@@ -188,7 +222,8 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
       </Box>
       <Text dimColor>
         type to search · enter {props.firstRun ? "continue" : "use it"}
-        {props.onToggleAuto ? " · space in Auto or not" : ""} · ctrl+r check again · esc{" "}
+        {props.onToggleAuto ? " · space in Auto or not" : ""}
+        {props.onAutoModels ? " · m its models" : ""} · ctrl+r check again · esc{" "}
         {props.firstRun ? "skip" : "close"}
       </Text>
     </Box>

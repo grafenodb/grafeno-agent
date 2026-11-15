@@ -93,6 +93,12 @@ export class WorktreeManager {
   }
 
   /** Files the user changed and did not commit: the run does not see them (it starts from HEAD). */
+  /** Files staged in the user's tree (a merge commit would take them in). */
+  async staged(): Promise<string[]> {
+    const staged = await this.#must(this.repo, ["diff", "--cached", "--name-only"]);
+    return staged.split("\n").filter(Boolean);
+  }
+
   async uncommitted(): Promise<string[]> {
     const status = await this.#must(this.repo, ["status", "--porcelain"]);
     return status
@@ -296,7 +302,16 @@ export class WorktreeManager {
   > {
     return this.#serial("repo", async () => {
       const before = (await this.#must(this.repo, ["rev-parse", "HEAD"])).trim();
-      await this.#must(this.repo, ["update-ref", this.rollbackRef(runId), before]);
+      // Where the branch was before the run's first merge: work delivered task by task
+      // is undone, if it must be, back to before all of it.
+      const kept = await this.#git(this.repo, [
+        "rev-parse",
+        "-q",
+        "--verify",
+        this.rollbackRef(runId),
+      ]);
+      if (kept.code !== 0)
+        await this.#must(this.repo, ["update-ref", this.rollbackRef(runId), before]);
       const merge = await this.#git(
         this.repo,
         ["merge", "--no-ff", "--no-edit", "-m", message, this.integrationBranch(runId)],

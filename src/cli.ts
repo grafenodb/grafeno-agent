@@ -470,6 +470,9 @@ async function orchestrateCommand(argv: readonly string[]): Promise<number> {
   }
   const orchestrator = await createOrchestrator(settings, {
     ...printChanges(),
+    onDelivered: ({ lines }) => {
+      for (const line of lines) console.log(`  ${line.trim()}`);
+    },
     permissions,
     ask: async (question) =>
       unattended ||
@@ -486,6 +489,7 @@ async function orchestrateCommand(argv: readonly string[]): Promise<number> {
     return 0;
   }
   const { run, uncommitted } = await orchestrator.start(request, planned);
+  console.log(orchestrator.describeWork(run.id));
   if (argv.includes("--background")) {
     // Phase D4: a detached process owns the run; this terminal may close.
     orchestrator.close();

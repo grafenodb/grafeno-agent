@@ -5,7 +5,13 @@ import type { AppServices } from "../app/services.js";
 import { describeCall, type AgentSession } from "../app/session.js";
 import { describeError } from "../chat.js";
 import type { ToolCall } from "../model/index.js";
-import { API_KEY_PROVIDERS, autoMembers, isAuto, providerIds } from "../providers/index.js";
+import {
+  API_KEY_PROVIDERS,
+  autoMembers,
+  isAuto,
+  providerIds,
+  autoModels,
+} from "../providers/index.js";
 import { mostRoom } from "../app/triage.js";
 import type { ModelOption, ProviderStatus, ProviderUsage } from "../providers/types.js";
 import type { Recall } from "../memory/session.js";
@@ -148,6 +154,10 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
   });
   const [items, setItems] = useState<Item[]>([]);
   const [mode, setMode] = useState<Mode>("chat");
+  /** For each provider in Auto, the models chosen (AGENT_AUTO_MODELS). */
+  const [autoModelChoice, setAutoModelChoice] = useState<Record<string, string[]>>(() =>
+    autoModels(process.env),
+  );
   /** /permissions: the mode chosen, before its scope is. */
   const [permissionChoice, setPermissionChoice] = useState<PermissionMode | undefined>(undefined);
   const [busy, setBusy] = useState<string | undefined>(undefined);
@@ -451,6 +461,14 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
           onActivity: (activity) => {
             setAgents((current) => withActivity(current, activity));
           },
+          // The run's work reaching the person's folder, task by task and at the end.
+          onDelivered: ({ lines }) => {
+            for (const line of lines) {
+              const text = line.trim();
+              if (text !== "")
+                notice(text, /not brought|Not merged|failed/.test(text) ? "warning" : "success");
+            }
+          },
           ask: (question) =>
             new Promise<boolean>((resolve) => {
               setApproval({
@@ -501,7 +519,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
       orchestrator: Orchestrator,
       runId: string,
       options: { readonly forAgent?: boolean } = {},
-    ): Promise<{ state: string; lines: string[] }> => {
+    ): Promise<{ state: string; lines: string[]; delivered: boolean }> => {
       const tasks = orchestrator.store.tasks(runId).map((t) => ({
         id: t.id,
         title: t.spec.title,
@@ -509,6 +527,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         ...(t.reason ? { reason: t.reason } : {}),
       }));
       setWatched({ runId, state: "running", tasks, workers: [] });
+      notice(orchestrator.describeWork(runId), "info");
       runNow.current = runId;
       setAgents((current) => withTasks(current, runId, tasks));
       orchestration.current = { orchestrator, running: true };
@@ -516,13 +535,23 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
       if (!options.forAgent) setBusy("Running the plan");
       let lines: string[];
       let state = "failed";
+      let delivered = false;
       try {
         state = await orchestrator.run(runId);
         lines = describeReport(orchestrator.report(runId));
+        const delivery = orchestrator.delivery(runId)?.status;
+        delivered = delivery === "merged" || delivery === "already";
         if (state === "completed") {
           const branch = orchestrator.integrationBranch(runId);
-          lines.push("", `The work is on ${branch}. Look at it, then merge it when you are ready:`);
-          lines.push(`  git diff HEAD...${branch}`, `  git merge ${branch}`);
+          if (delivered) {
+            lines.push("", `The work is in your folder: merged into your branch from ${branch}.`);
+          } else {
+            lines.push(
+              "",
+              `The work is on ${branch}. Look at it, then merge it when you are ready:`,
+            );
+            lines.push(`  git diff HEAD...${branch}`, `  git merge ${branch}`);
+          }
         } else if (state === "paused" || state === "waiting") {
           lines.push("", `The run is ${state}: /runs takes it up again.`);
         }
@@ -538,7 +567,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         orchestration.current = undefined;
         orchestrator.close();
       }
-      return { state, lines };
+      return { state, lines, delivered };
     },
     [push, notice],
   );
@@ -614,7 +643,9 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
             : []),
           ...done.lines,
           "",
-          `Their work is on the branch ${branch}; the person merges it (git merge ${branch}).`,
+          done.delivered
+            ? `Their work is in the person's folder: merged into their branch from ${branch}, and checked there.`
+            : `Their work is on the branch ${branch}; it is not in the person's folder yet (git merge ${branch}).`,
         ].join("\n");
       } finally {
         signal.removeEventListener("abort", stop);
@@ -1371,6 +1402,19 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
                 auto={auto}
                 autoMembers={autoIds}
                 apiKeyProviders={API_KEY_PROVIDERS}
+                autoModels={autoModelChoice}
+                onAutoModels={(id, chosen) => {
+                  const next = { ...autoModelChoice, [id]: chosen };
+                  services.saveChoice({ autoModels: next });
+                  setAutoModelChoice(next);
+                  const name = services.providers.find((p) => p.id === id)?.name ?? id;
+                  notice(
+                    chosen.length === 0
+                      ? `${name} in Auto: every model, chosen by the task and by what each spends.`
+                      : `${name} in Auto: ${chosen.join(", ")}, as you chose them (the hardest tasks to the strongest, simple ones to the lightest).`,
+                    "success",
+                  );
+                }}
                 onToggleAuto={(id) => {
                   const next = autoIds.includes(id)
                     ? autoIds.filter((x) => x !== id)

@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+- **Runs spend the plans with care** (`AGENT_ROUTING`, `balanced` by
+  default): the deep tier and high efforts only for hard tasks
+  (complexity 4–5), whatever the planner asks; one effort lower from half
+  of a window, a tier lighter from 70%, a hold at 95%; a provider that took
+  most of a run's tasks yields to another with room. `economy` and
+  `quality` too.
+- **What each model spends is learned and kept**: every attempt measures
+  the share of its provider's window it took; kept in the metrics across
+  sessions and projects and learned as a run goes, so a model seen to take
+  8% or more of a window per task is kept off simple tasks from then on.
+- **Each provider's models in Auto**: **m** in `/connect` (or
+  `AGENT_AUTO_MODELS`) chooses Auto or specific models per provider;
+  chosen models are routed by the task among themselves, never swapped by
+  usage or cost.
+- **The run's work reaches your folder task by task** (`AGENT_DELIVERY`,
+  `live` by default): each task's work is merged into your branch as soon
+  as its checks pass, everything is checked together at the end (and
+  undone if that fails), changes of yours are kept safe by git. The run
+  says where its sub-agents work, and each delivery.
+
 ## 0.1.2 (2026-11-15)
 
 - **On npm as `@grafenodb/agent-cli`**: `npm install -g

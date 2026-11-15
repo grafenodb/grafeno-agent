@@ -1,8 +1,10 @@
 import type { PermissionMode } from "../agent/permissions.js";
+import { CostBook } from "./costs.js";
+import type { RoutingMode } from "./router.js";
 import { CapabilityRegistry } from "../providers/registry.js";
 import { PROVIDER_SECRET_ENV } from "../providers/index.js";
 import { assertBillingAllowed } from "../providers/billing.js";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Tool } from "../agent/tools.js";
 import type { Embedder } from "../embed/types.js";
 import type { Project } from "../memory/session.js";
@@ -29,7 +31,13 @@ import type { RunState } from "./states.js";
 import { SqliteStore, type OperationalStore, type Run } from "./store.js";
 import { runReport, type RunReport } from "./telemetry.js";
 import { shellRunner, verifier, verify, type CommandRunner } from "./verify.js";
-import { deliver, type Delivery } from "./deliver.js";
+import {
+  deliver,
+  deliverPart,
+  describeDelivery,
+  type Delivery,
+  type PartDelivery,
+} from "./deliver.js";
 import { Workspace } from "../tools/workspace.js";
 import {
   WorkerPool,
@@ -65,6 +73,20 @@ export interface OrchestratorOptions {
   readonly mode?: Autonomy;
   /** The person's permission mode for the workers' calls (see `Policy`). */
   readonly permissions?: PermissionMode;
+  /** How eagerly the plans are spent (`AGENT_ROUTING`); without it, the rules as they were. */
+  readonly routing?: RoutingMode;
+  /**
+   * How the run's work reaches the branch the user is on (`AGENT_DELIVERY`):
+   * `live`, each task as soon as it is merged, and everything checked
+   * together at the end; `end`, all of it when the run completes and its
+   * checks pass; `manual`, only in the extended mode (as before), else the
+   * person merges the integration branch. Without it, `manual`.
+   */
+  readonly delivery?: Delivery_Mode;
+  /** Told what became of the work in the user's branch, task by task and at the end. */
+  readonly onDelivered?: (info: { task?: string; lines: string[] }) => void;
+  /** For each provider in General Auto, the models the person chose (`AGENT_AUTO_MODELS`). */
+  readonly models?: Readonly<Record<string, readonly string[]>>;
   readonly maxWorkers?: number;
   readonly maxAttempts?: number;
   readonly attemptTimeoutMs?: number;
@@ -193,6 +215,10 @@ export class Orchestrator {
       ...(options.providerFor ? { providerFor: options.providerFor } : {}),
       ...(options.auto === true ? { auto: true } : {}),
       ...(options.affinity ? { affinity: options.affinity } : {}),
+      ...(options.routing ? { routing: options.routing } : {}),
+      ...(options.models && options.auto === true ? { models: options.models } : {}),
+      // What models spent of their plans, from every recorded run; it grows as attempts end.
+      costs: new CostBook(this.metrics?.attempts() ?? []),
       ...(this.metrics && (options.router ?? "learned") !== "rules"
         ? {
             learning: {
@@ -256,6 +282,17 @@ export class Orchestrator {
       policy: this.policy,
       ...(options.ask ? { ask: options.ask } : {}),
       ...(options.review ? { review: this.#reviewing(options.review) } : {}),
+      ...(options.delivery === "live"
+        ? {
+            onMerged: async (runId: string, taskId: string) => {
+              const part = await deliverPart(
+                { store: this.store, worktrees: this.worktrees, runId },
+                taskId,
+              );
+              this.options.onDelivered?.({ task: taskId, lines: [describePart(part, taskId)] });
+            },
+          }
+        : {}),
     });
   }
 
@@ -395,9 +432,15 @@ export class Orchestrator {
       else if (this.#order === "cancel") scheduler.cancel();
       this.#order = undefined;
       const state = await running;
-      if (state === "completed" && this.policy.action("merge-user").decision === "allow") {
-        // Phase D6: only in the extended mode, the work goes into the user's branch.
-        await this.deliver(runId);
+      const delivering =
+        (this.options.delivery ?? "manual") !== "manual" ||
+        this.policy.action("merge-user").decision === "allow";
+      if (state === "completed" && delivering) {
+        // The work goes into the user's branch (phase D6), checked there as a whole.
+        const delivered = await this.deliver(runId);
+        this.options.onDelivered?.({
+          lines: describeDelivery(delivered, this.worktrees.integrationBranch(runId)),
+        });
       }
       if (state === "completed" || state === "cancelled") await this.pipeline.finish(runId);
       return state;
@@ -526,6 +569,27 @@ export class Orchestrator {
   }
 
   /** The run's integration branch, where its work landed. */
+  /** Where the run's sub-agents work: one folder per task, each a git worktree of its own. */
+  workFolder(runId: string): string {
+    return dirname(this.worktrees.pathFor(runId, "_"));
+  }
+
+  /** How the run's work reaches the user's branch. */
+  get deliveryMode(): Delivery_Mode {
+    return this.options.delivery ?? "manual";
+  }
+
+  /** Where the work goes and how, in a line for a person, when a run starts. */
+  describeWork(runId: string): string {
+    const how =
+      this.deliveryMode === "live"
+        ? "each task's work comes into your folder as soon as it passes its checks, and everything is checked together at the end"
+        : this.deliveryMode === "end"
+          ? "the work comes into your folder when the run completes and its checks pass"
+          : `the work stays on ${this.integrationBranch(runId)} until you merge it`;
+    return `The sub-agents work in copies of the project under ${this.workFolder(runId)} (one per task); ${how}.`;
+  }
+
   integrationBranch(runId: string): string {
     return this.worktrees.integrationBranch(runId);
   }
@@ -600,4 +664,26 @@ function plannerLabel(planner: {
 }): string {
   const model = planner.model ?? planner.choice.model ?? "default";
   return `${planner.provider.id}/${model}${planner.choice.effort ? ` · ${planner.choice.effort}` : ""}`;
+}
+
+/** How the run's work reaches the user's branch. */
+export const DELIVERY_MODES = ["live", "end", "manual"] as const;
+export type Delivery_Mode = (typeof DELIVERY_MODES)[number];
+
+/** The delivery a setting asks for (`AGENT_DELIVERY`); `live` when unset or unknown. */
+export function deliveryMode(setting: string | undefined): Delivery_Mode {
+  const value = (setting ?? "").trim().toLowerCase();
+  return (DELIVERY_MODES as readonly string[]).includes(value) ? (value as Delivery_Mode) : "live";
+}
+
+/** One task's delivery, in a line for a person. */
+export function describePart(part: PartDelivery, taskId: string): string {
+  switch (part.status) {
+    case "delivered":
+      return `${taskId}: its work is in your folder now (${part.branch}, ${part.commit.slice(0, 8)}).`;
+    case "already":
+      return `${taskId}: its work was already in your folder.`;
+    case "skipped":
+      return `${taskId}: not brought to your folder yet (${part.reason}); it is tried again with the next task and at the end.`;
+  }
 }

@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FakeModel, type FakeTurn } from "../../src/model/index.js";
 import { deliver, describeDelivery, type DeliveryChecks } from "../../src/orchestrator/deliver.js";
+import { CostBook } from "../../src/orchestrator/costs.js";
+import { MetricsStore } from "../../src/orchestrator/metrics.js";
 import { Orchestrator } from "../../src/orchestrator/orchestrator.js";
 import type { Plan, TaskSpec } from "../../src/orchestrator/plan.js";
 import type { Autonomy } from "../../src/orchestrator/policy.js";
@@ -140,14 +142,15 @@ describe("delivery into the user's branch (phase D6)", { timeout: 30_000 }, () =
     expect(git("log", "-1", "--format=%s")).toBe("my notes");
   });
 
-  it("leaves a dirty tree, a detached HEAD and an empty run alone", async () => {
+  it("leaves staged files, a detached HEAD and an empty run alone; merges beside changes git keeps safe", async () => {
     const dirty = await finishedRun();
-    writeFileSync(join(repo, "scratch.txt"), "untracked\n");
+    writeFileSync(join(repo, "scratch.txt"), "mine\n");
+    git("add", "scratch.txt");
     const skipped = await deliver({ ...dirty, checks: pass });
     expect(skipped).toMatchObject({ status: "skipped" });
-    expect(skipped.status === "skipped" && skipped.reason).toContain("1 file not committed");
+    expect(skipped.status === "skipped" && skipped.reason).toContain("1 file staged");
     expect(git("rev-parse", "HEAD")).toBe(dirty.base);
-    rmSync(join(repo, "scratch.txt"));
+    git("reset", "-q", "scratch.txt");
 
     git("checkout", "-q", "--detach");
     expect(await deliver({ ...dirty, checks: pass })).toMatchObject({
@@ -155,6 +158,11 @@ describe("delivery into the user's branch (phase D6)", { timeout: 30_000 }, () =
       reason: "HEAD is detached, not on a branch",
     });
     git("checkout", "-q", "main");
+
+    // An untracked file the run does not touch stays as it is, and the work comes in.
+    expect(await deliver({ ...dirty, checks: pass })).toMatchObject({ status: "merged" });
+    expect(readFileSync(join(repo, "scratch.txt"), "utf8")).toBe("mine\n");
+    rmSync(join(repo, "scratch.txt"));
 
     const store = new SqliteStore();
     const worktrees = new WorktreeManager({ repo, root: join(dir, "w2") });
@@ -252,5 +260,80 @@ describe("a run and the user's branch", { timeout: 60_000 }, () => {
     expect(delivery).toBeUndefined();
     expect(git("rev-parse", "HEAD")).toBe(before);
     expect(existsSync(join(repo, "api.txt"))).toBe(false);
+  });
+});
+
+describe(
+  "live delivery: the work reaches the user's folder task by task",
+  { timeout: 60_000 },
+  () => {
+    it("in controlled, each task's work comes in as it is merged, then the whole run is checked", async () => {
+      const before = git("rev-parse", "HEAD");
+      const told: { task?: string; lines: string[] }[] = [];
+      const orchestrator = new Orchestrator({
+        provider: provider(),
+        project: { name: "shop", path: repo },
+        projectRoot: repo,
+        dataDir: join(dir, "data"),
+        metrics: false,
+        mode: "controlled",
+        delivery: "live",
+        onDelivered: (info) => told.push(info),
+      });
+      try {
+        const planned = await orchestrator.plan("Write the api");
+        const { run } = await orchestrator.start("Write the api", planned);
+        expect(orchestrator.describeWork(run.id)).toContain(
+          "each task's work comes into your folder as soon as it passes its checks",
+        );
+        expect(await orchestrator.run(run.id)).toBe("completed");
+        // The task's part came in as soon as it was merged; the end found it there.
+        expect(told[0]).toMatchObject({ task: "api" });
+        expect(told[0]?.lines[0]).toContain("api: its work is in your folder now (main,");
+        expect(told.at(-1)?.lines.join("\n")).toContain("already in main");
+        expect(readFileSync(join(repo, "api.txt"), "utf8")).toBe("api\n");
+        expect(git("log", "-1", "--format=%B")).toContain("Grafeno-Task: api");
+        // Undoing goes back to before all of it.
+        expect(git("rev-parse", `refs/grafeno/${run.id.slice(-8)}/rollback`)).toBe(before);
+      } finally {
+        orchestrator.close();
+      }
+    });
+  },
+);
+
+describe("what a run's models spend of their plans", { timeout: 60_000 }, () => {
+  it("is measured for each attempt and kept in the metrics, for the next sessions", async () => {
+    let used = 0.2;
+    const growing: Provider = {
+      ...provider(),
+      // Each reading finds the window a little fuller: the attempt's work.
+      usage: () => {
+        used += 0.05;
+        return Promise.resolve({ limits: [{ label: "5 hours", used }], at: new Date() });
+      },
+    };
+    const metrics = new MetricsStore(":memory:");
+    const orchestrator = new Orchestrator({
+      provider: growing,
+      project: { name: "shop", path: repo },
+      projectRoot: repo,
+      dataDir: join(dir, "data"),
+      metrics,
+      mode: "controlled",
+      routing: "balanced",
+    });
+    try {
+      const planned = await orchestrator.plan("Write the api");
+      const { run } = await orchestrator.start("Write the api", planned);
+      expect(await orchestrator.run(run.id)).toBe("completed");
+      const attempt = metrics.attempts().find((a) => a.task === "api");
+      expect(attempt?.quotaShare).toBeGreaterThan(0);
+      expect(attempt?.quotaShare).toBeLessThanOrEqual(0.2);
+      // A new session's cost book starts from it.
+      expect(new CostBook(metrics.attempts()).cost("fake", "small", "low")?.n).toBe(1);
+    } finally {
+      orchestrator.close();
+    }
   });
 });

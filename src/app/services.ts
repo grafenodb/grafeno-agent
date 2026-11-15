@@ -21,7 +21,13 @@ import {
   stopIncluded,
 } from "../grafeno/included.js";
 import { describeUpkeep, upkeep } from "../memory/upkeep.js";
-import { allProviders, autoMembers } from "../providers/index.js";
+import {
+  allProviders,
+  AUTO_MODELS_SETTING,
+  autoMembers,
+  autoModels,
+  autoModelsSetting,
+} from "../providers/index.js";
 import { lightModel, mostRoom, triage, type PoolMember, type TriageDecision } from "./triage.js";
 import type { ModelChoice, Provider } from "../providers/types.js";
 import { settingsPath, updateSettings } from "../settings-file.js";
@@ -110,6 +116,8 @@ export interface AppServices {
     autoProviders?: readonly string[];
     /** The agent-wide permission mode (AGENT_PERMISSIONS). */
     permissions?: PermissionMode;
+    /** For each provider in Auto, the models it may use; none: all (AGENT_AUTO_MODELS). */
+    autoModels?: Readonly<Record<string, readonly string[]>>;
   }): void;
   /** The memory upkeep report for the session's project. */
   upkeep(session: AgentSession): Promise<string>;
@@ -337,8 +345,13 @@ export function realServices(version: string): AppServices {
         provider?: string;
         autoProviders?: readonly string[];
         permissions?: PermissionMode;
+        autoModels?: Readonly<Record<string, readonly string[]>>;
       },
     ) {
+      if (choice.autoModels !== undefined) {
+        save({ [AUTO_MODELS_SETTING]: autoModelsSetting(choice.autoModels) });
+        return;
+      }
       if (choice.permissions !== undefined) {
         save({ [PERMISSIONS_SETTING]: choice.permissions === "ask" ? "" : choice.permissions });
         return;
@@ -381,7 +394,7 @@ export function realServices(version: string): AppServices {
     async triage(message, signal) {
       const chosen = mostRoom(await readyPool(inAuto()));
       if (!chosen) return { route: "direct", reason: "no provider has room to triage" };
-      const model = lightModel(chosen.provider);
+      const model = lightModel(chosen.provider, autoModels(env)[chosen.provider.id]);
       return triage(
         message,
         chosen.provider.create({ ...(model ? { model } : {}), effort: "low" }),

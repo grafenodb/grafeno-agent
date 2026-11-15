@@ -76,11 +76,13 @@ async function attempt({ store, worktrees, runId, checks }: DeliverOptions): Pro
     return { status: "already", branch };
   }
 
-  const dirty = await worktrees.uncommitted();
-  if (dirty.length > 0) {
+  // Changes in the user's tree are kept safe by git, which refuses a merge
+  // that would overwrite them; staged ones would go into the merge commit.
+  const staged = await worktrees.staged();
+  if (staged.length > 0) {
     return {
       status: "skipped",
-      reason: `your tree has ${String(dirty.length)} file${dirty.length === 1 ? "" : "s"} not committed; merge ${from} yourself when it is clean`,
+      reason: `your tree has ${String(staged.length)} file${staged.length === 1 ? "" : "s"} staged; commit or unstage ${staged.length === 1 ? "it" : "them"}, then merge ${from}`,
     };
   }
 
@@ -161,4 +163,53 @@ export function describeDelivery(delivery: Delivery, from: string): string[] {
     case "skipped":
       return [`\nNot merged into your branch: ${delivery.reason}.`];
   }
+}
+
+/** What became of one task's work in the user's branch, delivered as soon as it was merged. */
+export type PartDelivery =
+  | { readonly status: "delivered"; readonly branch: string; readonly commit: string }
+  | { readonly status: "already" }
+  | { readonly status: "skipped"; readonly reason: string };
+
+/**
+ * Brings the integration branch, with the task just merged into it, into
+ * the branch the user is on: the run's work lands in the project's folder
+ * task by task, as each passes its checks, so the person sees it grow. A
+ * merge commit per task says where it came from. The user's changes are
+ * kept safe by git (a merge that would overwrite them is refused, and tried
+ * again with the next task or at the end). The run's end checks everything
+ * together (`deliver`), and undoes all of it if they fail. Never pushed.
+ */
+export async function deliverPart(
+  options: Omit<DeliverOptions, "checks">,
+  taskId: string,
+): Promise<PartDelivery> {
+  const { store, runId } = options;
+  const result = await attemptPart(options, taskId);
+  store.event(runId, "delivered_part", { ...result }, taskId);
+  return result;
+}
+
+async function attemptPart(
+  { worktrees, runId }: Omit<DeliverOptions, "checks">,
+  taskId: string,
+): Promise<PartDelivery> {
+  const tip = await worktrees.tip(runId);
+  if (!tip) return { status: "skipped", reason: "nothing merged yet" };
+  const branch = await worktrees.currentBranch();
+  if (!branch) return { status: "skipped", reason: "HEAD is detached, not on a branch" };
+  if (await worktrees.contains(tip)) return { status: "already" };
+  const staged = await worktrees.staged();
+  if (staged.length > 0) {
+    return { status: "skipped", reason: `${String(staged.length)} files are staged in your tree` };
+  }
+  const from = worktrees.integrationBranch(runId);
+  const merge = await worktrees.mergeIntoCurrent(
+    runId,
+    `Merge ${taskId} from ${from}\n\nGrafeno-Run: ${runId}\nGrafeno-Task: ${taskId}`,
+  );
+  if (merge.status === "merged") return { status: "delivered", branch, commit: merge.commit };
+  return merge.status === "conflict"
+    ? { status: "skipped", reason: `it would conflict in ${merge.files.join(", ")}` }
+    : { status: "skipped", reason: `git refused it: ${merge.reason.split("\n")[0] ?? ""}` };
 }

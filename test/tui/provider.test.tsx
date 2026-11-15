@@ -112,3 +112,52 @@ describe("/connect and Auto", () => {
     app.unmount();
   });
 });
+
+describe("each provider's models in Auto", () => {
+  it("m chooses them: Auto, or the ones marked with space", async () => {
+    const codex: Provider = {
+      ...fake("codex", "Codex"),
+      models: () =>
+        Promise.resolve([
+          { id: "gpt-6-astra", name: "Astra 6" },
+          { id: "gpt-6.1-sol", name: "Sol 6.1" },
+        ]),
+    };
+    const saved: [string, string[]][] = [];
+    const app = render(
+      <ProviderPanel
+        providers={[codex]}
+        auto
+        onAuto={() => undefined}
+        autoMembers={["codex"]}
+        onToggleAuto={() => undefined}
+        autoModels={{}}
+        onAutoModels={(id, models) => saved.push([id, models])}
+        onDone={() => undefined}
+      />,
+    );
+    await wait();
+    expect(app.lastFrame()).toContain("models: auto");
+    expect(app.lastFrame()).toContain("m its models");
+    // Down to Codex (Auto is the first row), then m.
+    app.stdin.write("\u001B[B");
+    await wait();
+    app.stdin.write("m");
+    await wait();
+    expect(app.lastFrame()).toContain("Codex · models in Auto");
+    expect(app.lastFrame()).toContain("[✓] Auto");
+    // Down to Sol, mark it, save.
+    app.stdin.write("\u001B[B");
+    await wait();
+    app.stdin.write("\u001B[B");
+    await wait();
+    app.stdin.write(" ");
+    await wait();
+    expect(app.lastFrame()).toContain("[✓] Sol 6.1");
+    app.stdin.write("\r");
+    await wait();
+    expect(saved).toEqual([["codex", ["gpt-6.1-sol"]]]);
+    expect(app.lastFrame()).toContain("Provider");
+    app.unmount();
+  });
+});

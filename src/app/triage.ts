@@ -84,6 +84,11 @@ export function mostRoom(members: readonly PoolMember[], holdAbove = 0.95): Pool
 }
 
 /** The lightest model of a provider, as its own tiers name it; undefined: its own choice. */
-export function lightModel(provider: Provider): string | undefined {
+export function lightModel(provider: Provider, chosen: readonly string[] = []): string | undefined {
+  // Models the person chose for Auto: the lightest of them, by the provider's own order.
+  if (chosen.length > 0) {
+    const light = provider.tiers?.light ?? [];
+    return light.find((id) => chosen.includes(id)) ?? chosen.at(-1);
+  }
   return provider.tiers?.light[0];
 }

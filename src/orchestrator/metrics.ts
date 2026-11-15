@@ -36,6 +36,8 @@ export interface AttemptRecord {
   readonly windowEstimated: boolean;
   /** The plan's fullest limit when the attempt started, from 0 to 1, when the provider said. */
   readonly quotaUsed?: number;
+  /** The share of that window the attempt itself spent, from 0 to 1, when it could be measured. */
+  readonly quotaShare?: number;
   readonly outcome: string;
   /** Why it did not complete, as a category (`usage_limit`, `timeout`, `checks`…), never text. */
   readonly failure?: string;
@@ -99,6 +101,11 @@ export class MetricsStore {
     this.#db = new DatabaseSync(file);
     this.#db.exec("PRAGMA journal_mode = WAL;");
     this.#db.exec(SCHEMA);
+    // Added later: what each attempt spent of its provider's window.
+    const columns = this.#db.prepare("PRAGMA table_info(attempts)").all() as { name: string }[];
+    if (!columns.some((c) => c.name === "quota_share")) {
+      this.#db.exec("ALTER TABLE attempts ADD COLUMN quota_share REAL");
+    }
   }
 
   /**
@@ -112,7 +119,10 @@ export class MetricsStore {
     const events = store.events(runId);
     const specs = new Map(run.plan.tasks.map((t) => [t.id, t]));
     const insertAttempt = this.#db.prepare(
-      `INSERT OR REPLACE INTO attempts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT OR REPLACE INTO attempts (run, task, attempt, project, at, kind, complexity,
+        provider, model, effort, tier, ms, rounds, renewals, input_tokens, output_tokens,
+        cache_tokens, context_peak, window, window_estimated, quota_used, outcome, failure,
+        explored, quota_share) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     );
     const insertOutcome = this.#db.prepare(
       `INSERT OR REPLACE INTO outcomes VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -153,6 +163,7 @@ export class MetricsStore {
           str(d.outcome) ?? "unknown",
           str(d.failure) ?? null,
           d.explored === true ? 1 : 0,
+          num(d.quotaShare) ?? null,
         );
       }
       for (const task of store.tasks(runId)) {
@@ -217,6 +228,9 @@ export class MetricsStore {
           window: Number(row.window),
           windowEstimated: Number(row.window_estimated) === 1,
           ...(row.quota_used === null ? {} : { quotaUsed: Number(row.quota_used) }),
+          ...(row.quota_share === null || row.quota_share === undefined
+            ? {}
+            : { quotaShare: Number(row.quota_share) }),
           outcome: String(row.outcome),
           ...(row.failure === null ? {} : { failure: row.failure as string }),
           explored: Number(row.explored) === 1,
