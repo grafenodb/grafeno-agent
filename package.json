@@ -61,6 +61,7 @@
     "eval:real": "tsx test/eval/run-eval.ts --model claude-code",
     "eval:agents": "tsx test/eval/agents.ts",
     "eval:orchestration": "tsx test/eval/orchestration.ts",
+    "eval:routing": "tsx test/eval/routing-sim.ts",
     "preview:tui": "tsx test/live/preview-tui.tsx",
     "prepack": "npm run build"
   },

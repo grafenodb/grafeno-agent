@@ -112,12 +112,17 @@ Commands:
           --level 0 (the checkpoint alone), 1 (and related memories: the default),
           2 --query "<topic>" (memories about something specific). Measures go to
           stderr. Meant for a Claude Code SessionStart hook.
-  router [--import] [--compare]  What the router has learned: each kind of task and complexity, each
+  router [--import] [--compare] [--decisions <run>]  What the router has learned: each kind of task and complexity, each
           provider, model and effort, how often it succeeded cleanly (with its 95%
           interval), cost and time, and whether the sample is big enough to count.
           --import first reads the runs already kept for every project. --compare
           replays the recorded tasks in order and says where the learned router would
-          have chosen differently from what ran, with estimated savings and risk.`;
+          have chosen differently from what ran, with estimated savings and risk. It also
+          shows what each model was seen to do (attempts judged by code, environment
+          failures apart, the share of a window each takes), how well the router knows its
+          arms, and whether deep models take too much of the work that is not hard.
+          --decisions <run> prints each routing decision of a run: its candidates, the
+          evidence and expected cost of each, and why the others were left out.`;
 
 /** Days between upkeeps before the chat suggests one. */
 const UPKEEP_EVERY_DAYS = 7;
@@ -654,6 +659,39 @@ async function routerCommand(argv: readonly string[]): Promise<number> {
     const outcomes = metrics.outcomes();
     for (const line of describeStats(computeStats(attempts, outcomes), attempts.length)) {
       console.log(line);
+    }
+    const { computeEvidence } = await import("./orchestrator/capability.js");
+    const { describeEvidence, describeQuality, learningQuality } =
+      await import("./orchestrator/capability-report.js");
+    console.log("");
+    for (const line of describeEvidence(computeEvidence(attempts))) console.log(line);
+    console.log("");
+    for (const line of describeQuality(learningQuality(attempts))) console.log(line);
+    const decisionsOf = flag(argv, "--decisions");
+    if (decisionsOf !== undefined) {
+      // Each choice of a run, with its candidates and why the others were left out.
+      const { runStoreFile } = await import("./orchestrator/orchestrator.js");
+      const { SqliteStore } = await import("./orchestrator/store.js");
+      const { describeDecision } = await import("./orchestrator/sufficient.js");
+      const project = detectProject(process.cwd(), process.env.AGENT_PROJECT);
+      const store = new SqliteStore(runStoreFile(dataDir(), project.name));
+      try {
+        const events = store.events(decisionsOf).filter((e) => e.kind === "route_decision");
+        console.log(
+          events.length === 0
+            ? `\nNo routing decision is recorded for ${decisionsOf}.`
+            : `\nRouting decisions of ${decisionsOf}:`,
+        );
+        for (const event of events) {
+          const attempt = typeof event.data.attempt === "number" ? event.data.attempt : 1;
+          console.log(
+            `\n${event.taskId ?? "?"} · attempt ${String(attempt)}${event.data.applied === true ? "" : " (shadow: recorded, not used)"}`,
+          );
+          for (const line of describeDecision(event.data as never)) console.log(`  ${line}`);
+        }
+      } finally {
+        store.close();
+      }
     }
     if (argv.includes("--compare")) {
       const { compareFixedLearned, describeComparison } = await import("./orchestrator/compare.js");

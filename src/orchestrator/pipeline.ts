@@ -104,6 +104,8 @@ export class TaskPipeline implements TaskRunner {
       // No worktrees: the checks run in the project's folder, and nothing is merged.
       if (!this.options.verify) return outcome;
       const verdict = await this.options.verify(task, new Workspace(this.options.projectRoot));
+      // Recorded here too: what the checks said is what the router learns from.
+      this.options.store.event(context.runId, "verified", { ok: verdict.ok }, task.id);
       return verdict.ok ? outcome : { status: "retry", reason: verdict.diagnostic };
     }
 

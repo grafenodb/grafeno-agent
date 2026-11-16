@@ -1,5 +1,8 @@
 import type { PermissionMode } from "../agent/permissions.js";
 import { CostBook } from "./costs.js";
+import { judge } from "./capability.js";
+import { deriveRun, type AttemptRecord } from "./metrics.js";
+import type { Decision, PriorAttempt } from "./sufficient.js";
 import {
   Coordinator,
   coordinationTools,
@@ -246,6 +249,17 @@ export class Orchestrator {
       ...(options.affinity ? { affinity: options.affinity } : {}),
       ...(options.routing ? { routing: options.routing } : {}),
       ...(options.models && options.auto === true ? { models: options.models } : {}),
+      // Minimum sufficient routing, unless the router is the fixed rules alone.
+      ...((options.router ?? "learned") !== "rules"
+        ? {
+            sufficient: {
+              mode: options.router === "shadow" ? ("shadow" as const) : ("learned" as const),
+              attempts: () => this.#attempts(),
+            },
+          }
+        : {}),
+      historyFor: (runId, taskId) => this.#history(runId, taskId),
+      ...(options.maxAttempts ? { maxAttempts: options.maxAttempts } : {}),
       // What models spent of their plans, from every recorded run; it grows as attempts end.
       costs: new CostBook(this.metrics?.attempts() ?? []),
       ...(this.metrics && (options.router ?? "learned") !== "rules"
@@ -598,6 +612,48 @@ export class Orchestrator {
   }
 
   /** The run's integration branch, where its work landed. */
+  /** Runs this orchestrator is driving: their attempts count as evidence as they end. */
+  readonly #live = new Set<string>();
+  #recorded: AttemptRecord[] | undefined;
+
+  /** Every recorded attempt, with those of the runs going on now. */
+  #attempts(): AttemptRecord[] {
+    this.#recorded ??= this.metrics?.attempts() ?? [];
+    const live = [...this.#live].flatMap(
+      (id) => deriveRun(this.store, id, this.options.project.name).attempts,
+    );
+    return [...this.#recorded.filter((a) => !this.#live.has(a.run)), ...live];
+  }
+
+  /** A task's earlier attempts in its run, judged by code: for retries and escalation. */
+  #history(runId: string, taskId: string): PriorAttempt[] {
+    this.#live.add(runId);
+    return deriveRun(this.store, runId, this.options.project.name)
+      .attempts.filter((a) => a.task === taskId)
+      .map((a) => ({
+        model: a.model,
+        ...(a.effort ? { effort: a.effort } : {}),
+        verdict: judge(a),
+        ...(a.failure ? { failure: a.failure } : {}),
+        ...(a.quotaShare === undefined ? {} : { share: a.quotaShare }),
+      }));
+  }
+
+  /** The decisions the router took in a run, in order, each with its candidates. */
+  decisions(
+    runId: string,
+  ): { task: string; attempt: number; decision: Decision; applied: boolean }[] {
+    return this.store
+      .events(runId)
+      .filter((e) => e.kind === "route_decision")
+      .map((e) => ({
+        task: e.taskId ?? "",
+        attempt: Number(e.data.attempt ?? 1),
+        decision: e.data as unknown as Decision,
+        applied: e.data.applied === true,
+      }));
+  }
+
   /** What the run's workers reported and asked, and how each request was decided. */
   coordination(runId: string): string[] {
     return describeCoordination(this.store, runId);

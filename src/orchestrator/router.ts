@@ -1,5 +1,6 @@
 import type { ModelOption, ProviderUsage } from "../providers/types.js";
 import type { Suggestion } from "./learned.js";
+import type { Decision } from "./sufficient.js";
 import type { TaskKind, TaskSpec, Tier } from "./plan.js";
 
 /** What a task kind gets by default: a tier and an effort. Configuration, not code. */
@@ -333,6 +334,8 @@ export type ProviderRoute =
       readonly suggestion?: Suggestion;
       /** Tried on purpose to learn (phase C4 exploration). */
       readonly explored?: boolean;
+      /** The minimum-sufficient router's decision, with its candidates (used, or in shadow). */
+      readonly decision?: Decision;
     })
   | Extract<Route, { kind: "hold" }>;
 

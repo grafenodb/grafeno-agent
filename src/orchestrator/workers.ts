@@ -18,6 +18,9 @@ import {
 } from "./router.js";
 import { explore, suggest } from "./learned.js";
 import { attemptShare, weightedTokens, type CostBook } from "./costs.js";
+import { computeEvidence, type CellEvidence } from "./capability.js";
+import type { AttemptRecord } from "./metrics.js";
+import { chooseSufficient, overBudget, type PriorAttempt } from "./sufficient.js";
 import type { CellStats } from "./stats.js";
 import type { AttemptContext, AttemptOutcome, TaskRunner } from "./scheduler.js";
 import type { TaskRecord } from "./store.js";
@@ -103,6 +106,10 @@ export interface AttemptMetrics {
   readonly quotaUsed?: number;
   /** The share of that window this attempt spent, when it could be measured. */
   readonly quotaShare?: number;
+  /** The exact model that answered, when the provider said. */
+  readonly modelVersion?: string;
+  /** The arm of the failed attempt before, when this one runs on another. */
+  readonly escalatedFrom?: string;
   /** Why it did not complete, as a category, never text. */
   readonly failure?: string;
   /** Tried on purpose to learn (phase C4 exploration). */
@@ -145,6 +152,21 @@ export interface WorkerPoolOptions {
     /** Exploration (phase C4), off unless given: a share of low-risk tasks try a less-sampled arm. */
     readonly explore?: { readonly share?: number; readonly random?: () => number };
   };
+  /**
+   * Minimum sufficient model routing (economy and balanced): the cheapest
+   * arm likely enough to pass the task's checks, from the recorded evidence,
+   * escalating after a failure of the model's own. `shadow` records each
+   * decision and keeps the rules' choice; `learned` uses it.
+   */
+  readonly sufficient?: {
+    readonly mode: "shadow" | "learned";
+    /** Every recorded attempt, this run's included. */
+    readonly attempts: () => readonly AttemptRecord[];
+  };
+  /** A task's earlier attempts in its run, for retries and escalation. */
+  readonly historyFor?: (runId: string, taskId: string) => readonly PriorAttempt[];
+  /** Attempts a task may have in all (the scheduler's limit). Default: 3. */
+  readonly maxAttempts?: number;
   /**
    * Whether a task has an irreversible effect started and not finished (a
    * merge): such a task is never given to another provider.
@@ -264,10 +286,17 @@ export class WorkerPool implements TaskRunner {
    * `assigned` counts tasks already given per provider (default: the
    * attempts this pool started), for General Auto's spreading.
    */
-  async routeFor(task: TaskSpec, assigned?: ReadonlyMap<string, number>): Promise<ProviderRoute> {
+  async routeFor(
+    task: TaskSpec,
+    assigned?: ReadonlyMap<string, number>,
+    history: readonly PriorAttempt[] = [],
+  ): Promise<ProviderRoute> {
     const route = await this.#routeByRules(task, assigned);
+    if (route.kind !== "run") return route;
+    const sufficient = await this.#sufficient(task, route, history);
+    if (sufficient) return sufficient;
     const learning = this.options.learning;
-    if (!learning || route.kind !== "run") return route;
+    if (!learning) return route;
     const suggestion = suggest(
       task,
       {
@@ -316,6 +345,55 @@ export class WorkerPool implements TaskRunner {
       reasons: [...route.reasons, `learned: ${suggestion.reason}`],
       suggestion,
     };
+  }
+
+  /**
+   * The minimum sufficient arm on the provider the rules chose (affinity,
+   * room and spreading still decide the provider). Not for `quality`, which
+   * keeps the rules' choice, nor for models the person chose themself.
+   */
+  async #sufficient(
+    task: TaskSpec,
+    route: Extract<ProviderRoute, { kind: "run" }>,
+    history: readonly PriorAttempt[],
+  ): Promise<ProviderRoute | undefined> {
+    const settings = this.options.sufficient;
+    const mode = this.options.routing;
+    if (!settings || (mode !== "economy" && mode !== "balanced")) return undefined;
+    const catalog = await this.catalog(route.provider);
+    if (catalog.pinned === true) return undefined;
+    const usage = await this.usage(route.provider);
+    const decision = chooseSufficient(task, catalog, {
+      provider: route.provider,
+      mode,
+      evidence: this.#evidence(settings.attempts),
+      history,
+      ...(usage ? { usage } : {}),
+      ...(this.options.maxAttempts ? { maxAttempts: this.options.maxAttempts } : {}),
+      rule: `${route.provider}/${route.model}${route.effort ? ` · ${route.effort}` : ""}`,
+    });
+    if (!decision) return undefined;
+    if (settings.mode !== "learned") return { ...route, decision };
+    const rest: Omit<typeof route, "effort"> & { effort?: string } = { ...route };
+    delete rest.effort;
+    return {
+      ...rest,
+      model: decision.model,
+      tier: decision.tier,
+      ...(decision.effort ? { effort: decision.effort } : {}),
+      reasons: [
+        ...route.reasons.filter((r) =>
+          /provider|affinity|room|limit|spreading|first choice/.test(r),
+        ),
+        decision.reason,
+      ],
+      decision,
+    };
+  }
+
+  /** The evidence in the recorded attempts: read anew, since this run's own attempts add to it. */
+  #evidence(attempts: () => readonly AttemptRecord[]): readonly CellEvidence[] {
+    return computeEvidence(attempts());
   }
 
   /** The recorded runs' statistics, computed once for this pool: they change only when a run ends. */
@@ -422,7 +500,14 @@ export class WorkerPool implements TaskRunner {
   }
 
   async run(task: TaskRecord, context: AttemptContext): Promise<AttemptOutcome> {
-    const chosen = await this.routeFor(task.spec);
+    const history = this.options.historyFor?.(context.runId, task.id) ?? [];
+    // A task that already spent its share of the plan stops: no endless escalation.
+    const overspent = overBudget(history);
+    if (overspent) {
+      context.note("task_budget", { reason: overspent });
+      return { status: "failed", reason: overspent };
+    }
+    const chosen = await this.routeFor(task.spec, undefined, history);
     if (chosen.kind === "hold") {
       return {
         status: "quota",
@@ -437,6 +522,20 @@ export class WorkerPool implements TaskRunner {
         ...chosen.suggestion,
         mode: this.options.learning?.mode ?? "rules",
         applied: chosen.suggestion.replace && this.options.learning?.mode === "learned",
+      });
+    }
+    const before = history.filter((h) => h.verdict === "failed").at(-1);
+    const escalatedFrom =
+      before && (before.model !== chosen.model || (before.effort ?? "") !== (chosen.effort ?? ""))
+        ? `${before.model}${before.effort ? ` · ${before.effort}` : ""}`
+        : undefined;
+    if (chosen.decision) {
+      // Every choice is kept with what it was chosen from: the candidates, the
+      // evidence, the expected cost, and why the others were left out.
+      context.note("route_decision", {
+        ...chosen.decision,
+        applied: this.options.sufficient?.mode === "learned",
+        attempt: context.attempt,
       });
     }
     const name = workerName(context.runId, task.id, context.attempt);
@@ -521,9 +620,11 @@ export class WorkerPool implements TaskRunner {
     const quotaUsed = fullest?.used;
     const servedBefore = this.#served.get(provider.id) ?? 0;
     let own = 0;
+    let exactModel: string | undefined;
     let agent = makeAgent();
     const track = (event: ModelEvent) => {
       this.options.onActivity?.({ worker: name, task: task.id, runId: context.runId, event });
+      if (event.type === "model_info") exactModel = event.model;
       if (event.type === "context") {
         seen.used = event.used;
         seen.peak = Math.max(seen.peak, event.used);
@@ -655,6 +756,8 @@ export class WorkerPool implements TaskRunner {
       attempt: context.attempt,
       ...(quotaUsed === undefined ? {} : { quotaUsed }),
       ...(quotaShare === undefined ? {} : { quotaShare }),
+      ...(exactModel === undefined ? {} : { modelVersion: exactModel }),
+      ...(escalatedFrom === undefined ? {} : { escalatedFrom }),
       ...(failure === undefined ? {} : { failure }),
       explored: chosen.explored === true,
     };

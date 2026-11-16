@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **Minimum sufficient model routing** (`economy` and `balanced`, with
+  `AGENT_ROUTER=learned`, the defaults): each attempt runs on the cheapest
+  model and effort likely enough to pass the task's checks, from a stated
+  prior corrected by recorded evidence, counting the cost of retries and
+  escalations. The planner's recommendation is advice only; its prompt now
+  gives complexity a scale. Codex's standard tier no longer starts with a
+  deep model. `quality`, `rules`, `shadow` and models chosen by hand keep
+  their behaviour. See `docs/routing.md`.
+- **Escalation**: a failure of the environment changes nothing; failed
+  checks are retried once on the same arm, then the attempt moves up; a
+  task stops at a quarter of a plan's window.
+- **Objective records**: each attempt keeps whether its checks passed,
+  whose doing a failure was (model, environment or ambiguous, by code),
+  how often a person answered, the task's risk and technology, the model's
+  exact version and the arm it escalated from. `metrics.db` files made
+  before get the new columns, with their rows kept.
+- **`grafeno-agent router`** shows what each model was seen to do, how well
+  the router knows its arms, and warns when deep models take too much of
+  the work that is not hard; `--decisions <run>` prints each decision with
+  its candidates. `npm run eval:routing` compares the old rules and the new
+  router on fixed tasks (simulated).
 - **Permission requests are no longer refused by accident**: Enter does not
   answer them (only y, n or esc do), keys pressed the moment one appears
   are not taken as its answer, and requests from several sub-agents wait

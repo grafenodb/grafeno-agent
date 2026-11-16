@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { classifyFailure, riskOf, techOf, type Fault } from "./capability.js";
 import { SqliteStore, type OperationalStore } from "./store.js";
 
 /**
@@ -43,6 +44,19 @@ export interface AttemptRecord {
   readonly failure?: string;
   /** Tried on purpose to learn (phase C exploration). */
   readonly explored: boolean;
+  /** Whether the attempt's work passed its checks, run by code; absent when none ran. */
+  readonly verified?: boolean;
+  /** Whose doing a failure was, decided by code (see `classifyFailure`). */
+  readonly fault?: Fault;
+  /** Times a person answered a question during the attempt. */
+  readonly human?: number;
+  /** The task's risk and main technology, decided by code from what it touches. */
+  readonly risk?: string;
+  readonly tech?: string;
+  /** The exact model that answered, when the provider said (to notice a new version). */
+  readonly modelVersion?: string;
+  /** The arm of the attempt before, when this one was an escalation from it. */
+  readonly escalatedFrom?: string;
 }
 
 /** What a task came to, over all its attempts. */
@@ -61,6 +75,8 @@ export interface TaskOutcome {
   readonly conflict: boolean;
   /** Whether a person was asked to look at it (the review state), and how it ended. */
   readonly review?: "approved" | "rejected" | "waiting";
+  /** The run's work failed its checks on the user's branch after the merge. */
+  readonly regression?: boolean;
 }
 
 /** The provider and model of a label: `codex/gpt-6-luna`, or `haiku` (one provider). */
@@ -90,8 +106,161 @@ CREATE TABLE IF NOT EXISTS outcomes (
 );
 `;
 
+/** Columns added after the first schema: an older file gets them, with its rows kept. */
+const MIGRATIONS: readonly (readonly [table: string, column: string, type: string])[] = [
+  ["attempts", "quota_share", "REAL"],
+  ["attempts", "verified", "INTEGER"],
+  ["attempts", "fault", "TEXT"],
+  ["attempts", "human", "INTEGER"],
+  ["attempts", "risk", "TEXT"],
+  ["attempts", "tech", "TEXT"],
+  ["attempts", "model_version", "TEXT"],
+  ["attempts", "escalated_from", "TEXT"],
+  ["outcomes", "regression", "INTEGER"],
+];
+
 /** Task states after which nothing more happens to a task. */
 const FINAL = new Set(["completed", "failed", "cancelled"]);
+
+/**
+ * A run's attempts and task outcomes, read from its events: what the
+ * workers measured, and what code observed afterwards of each attempt (its
+ * checks, whose fault a failure was, whether a person had to answer).
+ */
+export function deriveRun(
+  store: OperationalStore,
+  runId: string,
+  project: string,
+): { attempts: AttemptRecord[]; outcomes: TaskOutcome[] } {
+  const run = store.run(runId);
+  if (!run) return { attempts: [], outcomes: [] };
+  const events = store.events(runId);
+  const specs = new Map(run.plan.tasks.map((t) => [t.id, t]));
+  // Attempts without a number (recorded before phase C) are numbered in order.
+  const seen = new Map<string, number>();
+  const attempts: AttemptRecord[] = [];
+  /** The latest attempt of each task, for what is observed after its metrics. */
+  const latest = new Map<string, number>();
+  const asked = new Map<string, number>();
+  const patch = (taskId: string, change: Partial<AttemptRecord>) => {
+    const index = latest.get(taskId);
+    const known = index === undefined ? undefined : attempts[index];
+    if (index !== undefined && known) attempts[index] = { ...known, ...change };
+  };
+  for (const event of events) {
+    const taskId = event.taskId;
+    if (taskId === undefined) continue;
+    const d = event.data;
+    switch (event.kind) {
+      case "attempt_started":
+        asked.set(taskId, 0);
+        break;
+      case "question":
+        // A person answered (yes or no); "nobody" is a refusal with no one there.
+        if (d.answer === true || d.answer === false) {
+          asked.set(taskId, (asked.get(taskId) ?? 0) + 1);
+          patch(taskId, { human: asked.get(taskId) ?? 0 });
+        }
+        break;
+      case "attempt_metrics": {
+        const count = (seen.get(taskId) ?? 0) + 1;
+        seen.set(taskId, count);
+        const label = str(d.model) ?? "unknown";
+        const split = splitModel(label, str(d.provider));
+        const spec = specs.get(taskId);
+        const failure = str(d.failure);
+        const outcome = str(d.outcome) ?? "unknown";
+        const effort = str(d.effort);
+        const quotaUsed = num(d.quotaUsed);
+        const quotaShare = num(d.quotaShare);
+        const modelVersion = str(d.modelVersion);
+        const escalatedFrom = str(d.escalatedFrom);
+        latest.set(taskId, attempts.length);
+        attempts.push({
+          run: runId,
+          task: taskId,
+          attempt: num(d.attempt) ?? count,
+          project,
+          at: event.at,
+          kind: str(d.kind) ?? spec?.kind ?? "unknown",
+          complexity: num(d.complexity) ?? spec?.complexity ?? 0,
+          provider: str(d.provider) ?? split.provider,
+          model: str(d.modelId) ?? split.model,
+          ...(effort ? { effort } : {}),
+          tier: str(d.tier) ?? "unknown",
+          ms: num(d.ms) ?? 0,
+          rounds: num(d.rounds) ?? 0,
+          renewals: num(d.renewals) ?? 0,
+          inputTokens: num(d.inputTokens) ?? 0,
+          outputTokens: num(d.outputTokens) ?? 0,
+          cacheTokens: num(d.cacheTokens) ?? 0,
+          contextPeak: num(d.contextPeak) ?? 0,
+          window: num(d.window) ?? 0,
+          windowEstimated: d.windowEstimated === true,
+          ...(quotaUsed === undefined ? {} : { quotaUsed }),
+          ...(quotaShare === undefined ? {} : { quotaShare }),
+          outcome,
+          ...(failure ? { failure } : {}),
+          explored: d.explored === true,
+          human: asked.get(taskId) ?? 0,
+          ...(spec ? { risk: riskOf(spec), tech: techOf(spec.touches) } : {}),
+          ...(modelVersion ? { modelVersion } : {}),
+          ...(escalatedFrom ? { escalatedFrom } : {}),
+          // A failure inside the attempt itself: classified now; its end may say more.
+          ...(outcome !== "completed" ? { fault: classifyFailure(failure, undefined) } : {}),
+        });
+        break;
+      }
+      case "verified":
+        patch(taskId, { verified: d.ok === true });
+        break;
+      case "attempt_ended": {
+        const index = latest.get(taskId);
+        const known = index === undefined ? undefined : attempts[index];
+        if (!known || d.status === "completed") break;
+        // Not completed: the checks' diagnostic or the error says whose doing it was.
+        const category = known.verified === false ? "checks" : known.failure;
+        patch(taskId, {
+          fault: classifyFailure(category, str(d.reason)),
+          ...(known.failure === undefined && known.verified === false ? { failure: "checks" } : {}),
+        });
+        break;
+      }
+    }
+  }
+  const regression = events.some(
+    (e) => e.kind === "delivery" && (e.data.status === "undone" || e.data.status === "kept"),
+  );
+  const outcomes: TaskOutcome[] = [];
+  for (const task of store.tasks(runId)) {
+    if (!FINAL.has(task.state)) continue;
+    const mine = events.filter((e) => e.taskId === task.id);
+    const reviewed = mine.some((e) => e.kind === "task_state" && e.data.to === "review");
+    const review = !reviewed
+      ? undefined
+      : task.state === "completed"
+        ? ("approved" as const)
+        : task.state === "failed" || task.state === "cancelled"
+          ? ("rejected" as const)
+          : ("waiting" as const);
+    outcomes.push({
+      run: runId,
+      task: task.id,
+      project,
+      at: mine.at(-1)?.at ?? task.updated,
+      kind: task.spec.kind,
+      complexity: task.spec.complexity,
+      state: task.state,
+      attempts: task.attempts,
+      checksFailed: mine.filter((e) => e.kind === "verified" && e.data.ok === false).length,
+      merged: mine.some((e) => e.kind === "merged"),
+      conflict: mine.some((e) => e.kind === "conflict"),
+      ...(review ? { review } : {}),
+      ...(regression && task.state === "completed" ? { regression: true } : {}),
+    });
+  }
+  return { attempts, outcomes };
+}
 
 export class MetricsStore {
   readonly #db: DatabaseSync;
@@ -101,10 +270,11 @@ export class MetricsStore {
     this.#db = new DatabaseSync(file);
     this.#db.exec("PRAGMA journal_mode = WAL;");
     this.#db.exec(SCHEMA);
-    // Added later: what each attempt spent of its provider's window.
-    const columns = this.#db.prepare("PRAGMA table_info(attempts)").all() as { name: string }[];
-    if (!columns.some((c) => c.name === "quota_share")) {
-      this.#db.exec("ALTER TABLE attempts ADD COLUMN quota_share REAL");
+    for (const [table, column, type] of MIGRATIONS) {
+      const columns = this.#db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+      if (!columns.some((c) => c.name === column)) {
+        this.#db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
     }
   }
 
@@ -114,83 +284,71 @@ export class MetricsStore {
    * counted twice.
    */
   recordRun(store: OperationalStore, runId: string, project: string): void {
-    const run = store.run(runId);
-    if (!run) return;
-    const events = store.events(runId);
-    const specs = new Map(run.plan.tasks.map((t) => [t.id, t]));
+    const { attempts, outcomes } = deriveRun(store, runId, project);
     const insertAttempt = this.#db.prepare(
       `INSERT OR REPLACE INTO attempts (run, task, attempt, project, at, kind, complexity,
         provider, model, effort, tier, ms, rounds, renewals, input_tokens, output_tokens,
         cache_tokens, context_peak, window, window_estimated, quota_used, outcome, failure,
-        explored, quota_share) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        explored, quota_share, verified, fault, human, risk, tech, model_version, escalated_from)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     );
     const insertOutcome = this.#db.prepare(
-      `INSERT OR REPLACE INTO outcomes VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT OR REPLACE INTO outcomes (run, task, project, at, kind, complexity, state, attempts,
+        checks_failed, merged, conflict, review, regression) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     );
-    // Attempts without a number (recorded before phase C) are numbered in order.
-    const seen = new Map<string, number>();
     this.#db.exec("BEGIN");
     try {
-      for (const event of events) {
-        if (event.kind !== "attempt_metrics" || event.taskId === undefined) continue;
-        const d = event.data;
-        const count = (seen.get(event.taskId) ?? 0) + 1;
-        seen.set(event.taskId, count);
-        const label = str(d.model) ?? "unknown";
-        const split = splitModel(label, str(d.provider));
+      for (const a of attempts) {
         insertAttempt.run(
-          runId,
-          event.taskId,
-          num(d.attempt) ?? count,
-          project,
-          event.at,
-          str(d.kind) ?? specs.get(event.taskId)?.kind ?? "unknown",
-          num(d.complexity) ?? specs.get(event.taskId)?.complexity ?? 0,
-          str(d.provider) ?? split.provider,
-          str(d.modelId) ?? split.model,
-          str(d.effort) ?? null,
-          str(d.tier) ?? "unknown",
-          num(d.ms) ?? 0,
-          num(d.rounds) ?? 0,
-          num(d.renewals) ?? 0,
-          num(d.inputTokens) ?? 0,
-          num(d.outputTokens) ?? 0,
-          num(d.cacheTokens) ?? 0,
-          num(d.contextPeak) ?? 0,
-          num(d.window) ?? 0,
-          d.windowEstimated === true ? 1 : 0,
-          num(d.quotaUsed) ?? null,
-          str(d.outcome) ?? "unknown",
-          str(d.failure) ?? null,
-          d.explored === true ? 1 : 0,
-          num(d.quotaShare) ?? null,
+          a.run,
+          a.task,
+          a.attempt,
+          a.project,
+          a.at,
+          a.kind,
+          a.complexity,
+          a.provider,
+          a.model,
+          a.effort ?? null,
+          a.tier,
+          a.ms,
+          a.rounds,
+          a.renewals,
+          a.inputTokens,
+          a.outputTokens,
+          a.cacheTokens,
+          a.contextPeak,
+          a.window,
+          a.windowEstimated ? 1 : 0,
+          a.quotaUsed ?? null,
+          a.outcome,
+          a.failure ?? null,
+          a.explored ? 1 : 0,
+          a.quotaShare ?? null,
+          a.verified === undefined ? null : a.verified ? 1 : 0,
+          a.fault ?? null,
+          a.human ?? null,
+          a.risk ?? null,
+          a.tech ?? null,
+          a.modelVersion ?? null,
+          a.escalatedFrom ?? null,
         );
       }
-      for (const task of store.tasks(runId)) {
-        if (!FINAL.has(task.state)) continue;
-        const mine = events.filter((e) => e.taskId === task.id);
-        const reviewed = mine.some((e) => e.kind === "task_state" && e.data.to === "review");
-        const review = !reviewed
-          ? null
-          : task.state === "completed"
-            ? "approved"
-            : task.state === "failed" || task.state === "cancelled"
-              ? "rejected"
-              : "waiting";
-        const last = mine.at(-1)?.at ?? task.updated;
+      for (const o of outcomes) {
         insertOutcome.run(
-          runId,
-          task.id,
-          project,
-          last,
-          task.spec.kind,
-          task.spec.complexity,
-          task.state,
-          task.attempts,
-          mine.filter((e) => e.kind === "verified" && e.data.ok === false).length,
-          mine.some((e) => e.kind === "merged") ? 1 : 0,
-          mine.some((e) => e.kind === "conflict") ? 1 : 0,
-          review,
+          o.run,
+          o.task,
+          o.project,
+          o.at,
+          o.kind,
+          o.complexity,
+          o.state,
+          o.attempts,
+          o.checksFailed,
+          o.merged ? 1 : 0,
+          o.conflict ? 1 : 0,
+          o.review ?? null,
+          o.regression ? 1 : 0,
         );
       }
       this.#db.exec("COMMIT");
@@ -206,6 +364,14 @@ export class MetricsStore {
       .all()
       .map((r) => {
         const row = r as Record<string, unknown>;
+        const text = (value: unknown) =>
+          typeof value === "string" && value !== "" ? value : undefined;
+        const present = (value: unknown) => value !== null && value !== undefined;
+        const fault = text(row.fault) as Fault | undefined;
+        const risk = text(row.risk);
+        const tech = text(row.tech);
+        const modelVersion = text(row.model_version);
+        const escalatedFrom = text(row.escalated_from);
         return {
           run: String(row.run),
           task: String(row.task),
@@ -228,12 +394,17 @@ export class MetricsStore {
           window: Number(row.window),
           windowEstimated: Number(row.window_estimated) === 1,
           ...(row.quota_used === null ? {} : { quotaUsed: Number(row.quota_used) }),
-          ...(row.quota_share === null || row.quota_share === undefined
-            ? {}
-            : { quotaShare: Number(row.quota_share) }),
+          ...(present(row.quota_share) ? { quotaShare: Number(row.quota_share) } : {}),
           outcome: String(row.outcome),
           ...(row.failure === null ? {} : { failure: row.failure as string }),
           explored: Number(row.explored) === 1,
+          ...(present(row.verified) ? { verified: Number(row.verified) === 1 } : {}),
+          ...(fault ? { fault } : {}),
+          ...(present(row.human) ? { human: Number(row.human) } : {}),
+          ...(risk ? { risk } : {}),
+          ...(tech ? { tech } : {}),
+          ...(modelVersion ? { modelVersion } : {}),
+          ...(escalatedFrom ? { escalatedFrom } : {}),
         };
       });
   }
@@ -259,6 +430,7 @@ export class MetricsStore {
           ...(row.review === null
             ? {}
             : { review: row.review as NonNullable<TaskOutcome["review"]> }),
+          ...(Number(row.regression ?? 0) === 1 ? { regression: true } : {}),
         };
       });
   }

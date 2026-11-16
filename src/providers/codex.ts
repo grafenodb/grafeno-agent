@@ -195,7 +195,8 @@ export class CodexAuth implements ProviderAuth {
 export class CodexCatalog implements ModelCatalog {
   readonly tiers = {
     deep: ["gpt-6-astra", "gpt-6.1-sol"],
-    standard: ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol"],
+    // Terra first: Sol 6.1 is a deep model, the last resort of this tier.
+    standard: ["gpt-6.1-terra", "gpt-6-sol", "gpt-6.1-sol"],
     light: ["gpt-6-luna", "gpt-5.6-luna", "gpt-6.1-terra"],
   } as const;
   #catalog: Promise<CodexModelInfo[]> | undefined;

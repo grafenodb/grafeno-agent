@@ -618,6 +618,17 @@ official CLI, signed in with your ChatGPT subscription, and with **Gemini**
   its sign-in is set aside, and its tasks go to another, unless a task has
   a merge in flight. A provider that took most of a run's tasks yields to
   another with room.
+- **The minimum sufficient model.** In `economy` and `balanced`, each
+  attempt runs on the cheapest model and effort likely enough to pass the
+  task's checks: a stated prior per class of model and complexity,
+  corrected by what each model was seen to do (checks run by code, the
+  environment's failures never held against it), with the cost of retries
+  and escalations counted in. A failed attempt is retried once with the
+  checks' diagnostic, then escalated; a task stops at a quarter of a
+  window. Every decision is kept with its candidates and why each was left
+  out: `grafeno-agent router --decisions <run>`. `docs/routing.md` says how
+  it decides, how it was checked (a simulation: `npm run eval:routing`) and
+  what is open.
 - **How eagerly plans are spent** (`AGENT_ROUTING`):
   - `balanced` (the default): the deep tier and high efforts only for hard
     tasks (complexity 4–5), even when the planner asks for more; from half
