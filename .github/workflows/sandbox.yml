@@ -1,0 +1,60 @@
+name: Sandbox
+
+# Grafeno Sandbox: builds the Linux helper on each architecture, attacks it
+# (escape attempts as an unprivileged user) and runs the agent's sandbox
+# tests on Linux and macOS. The release takes the helpers built here into
+# the package.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+          cache: npm
+      - name: Build the helper
+        run: node scripts/sandbox-helper.mjs build
+      - name: What this kernel allows an unprivileged user
+        run: vendor/sandbox/linux-${{ matrix.arch }}/grafeno-sandbox --probe
+      - name: Escape attempts
+        run: sh native/sandbox/escape-test.sh "$PWD/vendor/sandbox/linux-${{ matrix.arch }}/grafeno-sandbox"
+      - run: npm ci
+      - name: The agent's sandbox tests
+        env:
+          GRAFENO_SANDBOX_HELPER: ${{ github.workspace }}/vendor/sandbox/linux-${{ matrix.arch }}/grafeno-sandbox
+        run: npx vitest run test/sandbox
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sandbox-linux-${{ matrix.arch }}
+          path: vendor/sandbox/linux-${{ matrix.arch }}/grafeno-sandbox
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+          cache: npm
+      - run: npm ci
+      - name: The agent's sandbox tests (sandbox-exec)
+        run: npx vitest run test/sandbox

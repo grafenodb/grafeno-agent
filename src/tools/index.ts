@@ -9,6 +9,7 @@ import { readDocumentTool } from "./documents.js";
 import { SEARCH_SECRET_ENV, searchSettings, webSearchTool, type SearchSettings } from "./search.js";
 import { localHttpTool, webFetchTool } from "./web.js";
 import type { Workspace } from "./workspace.js";
+import type { Spawner } from "../sandbox/manager.js";
 
 export interface ProjectToolsOptions {
   /** The shell for commands. Default: `defaultShell()`. */
@@ -21,6 +22,8 @@ export interface ProjectToolsOptions {
   readonly search?: SearchSettings | null;
   /** Offer background processes (start_process and the rest). Default: true. */
   readonly background?: boolean;
+  /** How commands start: in Grafeno Sandbox, or (without one) on the computer. */
+  readonly spawner?: Spawner;
 }
 
 /**
@@ -30,7 +33,10 @@ export interface ProjectToolsOptions {
 export function projectTools(workspace: Workspace, options: ProjectToolsOptions = {}): Tool[] {
   const shell = options.shell ?? defaultShell();
   // A search service's key is never shown to commands either.
-  const hiddenEnv = { hiddenEnv: [...(options.hiddenEnv ?? []), ...SEARCH_SECRET_ENV] };
+  const hiddenEnv = {
+    hiddenEnv: [...(options.hiddenEnv ?? []), ...SEARCH_SECRET_ENV],
+    ...(options.spawner ? { spawner: options.spawner } : {}),
+  };
   const search = options.search === undefined ? searchSettings() : (options.search ?? undefined);
   return [
     currentTimeTool(),
@@ -53,5 +59,5 @@ export function projectTools(workspace: Workspace, options: ProjectToolsOptions 
 export function toolsPrompt(workspace: Workspace): string {
   return `## Your tools
 
-Your file and command tools work in the project folder ${workspace.root}; paths are relative to it. (The folder the model program itself runs in is a private temporary one: ignore it.) Files of secrets (.env, keys, credentials) are never read or written. Writing, editing, moving or deleting a file, running a command that changes anything, starting a background process and fetching a web page all ask the user first; say briefly why before you do them. environment_info says what is installed; start_process runs a dev server or a watcher in the background, and local_http checks what it answers. read_document reads PDF, Word, Excel and PowerPoint files (and OpenDocument ones); read_file also shows you images (PNG, JPEG, GIF, WebP). web_search finds pages, web_fetch reads one (web pages and PDFs).`;
+Your file and command tools work in the project folder ${workspace.root}; paths are relative to it. (The folder the model program itself runs in is a private temporary one: ignore it.) Files of secrets (.env, keys, credentials) are never read or written. Writing, editing, moving or deleting a file, running a command that changes anything, starting a background process and fetching a web page all ask the user first; say briefly why before you do them. environment_info says what is installed; start_process runs a dev server or a watcher in the background, and local_http checks what it answers. read_document reads PDF, Word, Excel and PowerPoint files (and OpenDocument ones); read_file also shows you images (PNG, JPEG, GIF, WebP). web_search finds pages, web_fetch reads one (web pages and PDFs). Commands may run in Grafeno Sandbox: each result says what isolated it; in a sandbox, a command reads only the system, its programs and the project, writes only the project, and has no network unless it installs or fetches.`;
 }

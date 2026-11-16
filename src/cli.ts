@@ -76,6 +76,10 @@ Commands:
                  The skills the agent uses (.agents/skills, ~/.agents/skills,
                  ~/.config/agents/skills): install with the Skills CLI (npx skills),
                  or write your own. grafeno-agent skills help says more.
+  sandbox [status|list|create|inspect|stop|destroy|cleanup]
+                 Grafeno Sandbox: what isolates the agent's commands here (namespaces,
+                 Landlock, seccomp, cgroups on Linux; sandbox-exec on macOS; none yet on
+                 Windows), and the sandboxes kept. AGENT_SANDBOX=auto|required|off.
   local [add|check|model|remove]
                  Local models and self-hosted servers: Ollama, LM Studio, Bionic, any
                  OpenAI-compatible endpoint. add <kind> <url> [--id i] [--model m]
@@ -1108,6 +1112,14 @@ async function main(argv: readonly string[]): Promise<number> {
           console.log(line);
         },
       });
+    }
+    case "sandbox": {
+      const { sandboxCommand } = await import("./app/sandbox-command.js");
+      const { sandboxManager } = await import("./sandbox/manager.js");
+      const said = await sandboxCommand(argv.slice(1), sandboxManager());
+      console.log(said.title);
+      for (const line of said.lines) console.log(line === "" ? "" : `  ${line}`);
+      return said.ok ? 0 : 1;
     }
     case "local": {
       const { localCommand } = await import("./app/local-command.js");

@@ -147,6 +147,9 @@ agent asks again when it starts.
 | `AGENT_ROUTING`             | `balanced`              | `economy`, `balanced` or `quality`: how eagerly runs spend the plans             |
 | `AGENT_LOCAL_ROUTING`       | `light`                 | `light`, `first` or `last`: what goes to your local models (see below)           |
 | `AGENT_LEADER`              | none                    | `provider/model` that leads orchestrated runs (set by `/leader`)                 |
+| `AGENT_SANDBOX`             | `auto`                  | `auto`, `required` or `off`: Grafeno Sandbox for the agent's commands            |
+| `AGENT_SANDBOX_NETWORK`     | `auto`                  | `auto` (only to install or fetch), `always` or `never`                           |
+| `AGENT_SANDBOX_KEEP`        | `never`                 | `never`, `failed` or `always`: whether a sandbox is kept when its work ends      |
 | `AGENT_AUTO_MODELS`         | (all)                   | Each Auto provider's models: `codex:gpt-6-astra,gpt-6.1-sol` (`m` in `/connect`) |
 | `AGENT_DELIVERY`            | `live`                  | `live` (task by task), `end` or `manual`: how runs' work reaches your folder     |
 | `AGENT_MEMORY_BUDGET`       | see [Memory](#memory)   | How much memory may reach the model                                              |
@@ -192,6 +195,7 @@ The panel hides on narrow windows, or with Ctrl+B.
 | `/resume`      | Take up an earlier conversation of this project              |
 | `/models`      | Choose the model, by its exact name (type to search)         |
 | `/leader`      | Choose the leader of orchestrated runs (see below)           |
+| `/sandbox`     | Grafeno Sandbox: status, list, inspect, stop, destroy        |
 | `/effort`      | Choose how hard the model thinks (Low … Max)                 |
 | `/connect`     | Connections: CLI, API key, coding plan, local; manage, list  |
 | `/palace`      | Grafeno: included, or a server you already have              |
@@ -372,6 +376,29 @@ These are never allowed, whatever the answer:
 
 These rules guard against mistakes. They are not a sandbox: a command you
 allow runs with your rights, so read what you allow.
+
+### Grafeno Sandbox
+
+The agent's commands (`run_command`, `start_process`, a run's checks) run
+in **Grafeno Sandbox**, made and destroyed by the agent, installed with it:
+no Docker or other engine, no daemon.
+
+- **Linux**: a native helper in the package (namespaces, Landlock,
+  seccomp, cgroups v2 or resource limits, whatever the kernel allows an
+  unprivileged user). The command reads only the system, its programs and
+  the project; writes only the project and its own home and temp; gets no
+  network unless it installs or fetches.
+- **macOS**: `sandbox-exec`, with a profile per command.
+- **Windows**: no engine yet; commands run on the computer, and each
+  result says `not sandboxed`.
+
+Each command's result says what isolated it (`sandboxed (files closed
+off, no network, own processes, limits)`), never more than was applied.
+`AGENT_SANDBOX=required` refuses a command that cannot be sandboxed;
+`off` turns it off. `/sandbox status` says what this computer has and what
+it lacks; `/sandbox list`, `inspect`, `stop`, `destroy`, `cleanup` manage
+the sandboxes. Details, policies and the limitations of each platform:
+[docs/sandbox.md](docs/sandbox.md).
 
 ### Permissions
 

@@ -1,3 +1,10 @@
+import {
+  sandboxManager,
+  withSpawner,
+  type SandboxManager,
+  type SandboxRecord,
+} from "../sandbox/manager.js";
+import { sandboxMode } from "../sandbox/policy.js";
 import { Agent, type AgentTurn } from "../agent/agent.js";
 import {
   findSkills,
@@ -471,7 +478,28 @@ export class AgentSession {
     return this.send(this.memory.endOfSession(), options);
   }
 
+  /**
+   * The session's sandbox: made by its first command, for the project's
+   * folder; none when the sandbox is off (AGENT_SANDBOX=off).
+   */
+  #spawner: ReturnType<SandboxManager["spawner"]> | undefined;
+  #sandbox(): ReturnType<SandboxManager["spawner"]> | undefined {
+    if (sandboxMode() === "off") return undefined;
+    this.#spawner ??= sandboxManager().spawner(() =>
+      sandboxManager().create({ label: "chat", workspace: this.workspace.root }),
+    );
+    return this.#spawner;
+  }
+
+  /** The session's sandbox, when its first command made one. */
+  get sandbox(): SandboxRecord | undefined {
+    return this.#spawner?.record();
+  }
+
   async close(): Promise<void> {
+    const made = this.#spawner?.record();
+    // Destroyed, or kept as AGENT_SANDBOX_KEEP says.
+    if (made) sandboxManager().finish(made.id, false);
     await this.#dropAgent();
     await this.options.extensions?.close().catch(() => undefined);
   }
@@ -497,6 +525,7 @@ export class AgentSession {
       this.options.tools?.(this.workspace) ??
       projectTools(this.workspace, {
         hiddenEnv: ["GRAFENO_AGENT_KEY", ...PROVIDER_SECRET_ENV],
+        ...withSpawner(this.#sandbox()),
       });
     // Skills: what each is for goes in the instructions; the `skill` tool loads one.
     const skills = findSkills(this.options.skillRoots ?? skillRoots(this.workspace.root)).skills;

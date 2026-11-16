@@ -37,6 +37,8 @@
   },
   "files": [
     "dist",
+    "vendor",
+    "native/sandbox/grafeno-sandbox.c",
     "README.md",
     "CHANGELOG.md",
     "LICENSE-MIT",
@@ -63,7 +65,8 @@
     "eval:orchestration": "tsx test/eval/orchestration.ts",
     "eval:routing": "tsx test/eval/routing-sim.ts",
     "preview:tui": "tsx test/live/preview-tui.tsx",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "build:sandbox": "node scripts/sandbox-helper.mjs build && node scripts/sandbox-helper.mjs manifest"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "2.4.0",

@@ -1026,6 +1026,17 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           if (models.length === 0 && provider) setModels(await provider.models());
           setMode("models");
           break;
+        case "sandbox": {
+          const { sandboxCommand } = await import("../app/sandbox-command.js");
+          const { sandboxManager } = await import("../sandbox/manager.js");
+          const said = await sandboxCommand(
+            command.args.trim().split(/\s+/).filter(Boolean),
+            sandboxManager(),
+            { cwd: session?.workspace.root ?? process.cwd() },
+          );
+          push({ kind: "block", title: said.title, lines: said.lines });
+          break;
+        }
         case "leader": {
           // A model of one of the providers in Auto: the runs' sub-agents come from them.
           const members = services.providers.filter((p) => autoIds.includes(p.id));

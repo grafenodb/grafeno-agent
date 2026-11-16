@@ -1,3 +1,10 @@
+import {
+  sandboxManager,
+  withSpawner,
+  type SandboxManager,
+  type Spawner,
+} from "../sandbox/manager.js";
+import { sandboxMode } from "../sandbox/policy.js";
 import type { PermissionMode } from "../agent/permissions.js";
 import { CostBook } from "./costs.js";
 import { judge } from "./capability.js";
@@ -15,7 +22,7 @@ import type { RoutingMode } from "./router.js";
 import { CapabilityRegistry } from "../providers/registry.js";
 import { PROVIDER_SECRET_ENV } from "../providers/index.js";
 import { assertBillingAllowed } from "../providers/billing.js";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Tool } from "../agent/tools.js";
 import type { Embedder } from "../embed/types.js";
 import type { Project } from "../memory/session.js";
@@ -296,6 +303,7 @@ export class Orchestrator {
         ((workspace) =>
           projectTools(workspace, {
             hiddenEnv: ["GRAFENO_AGENT_KEY", "GRAFENO_OWNER_TOKEN", ...PROVIDER_SECRET_ENV],
+            ...withSpawner(this.#sandboxFor(workspace.root)),
             // A worker's processes would outlive its task: workers run commands that end.
             background: false,
           })),
@@ -332,7 +340,7 @@ export class Orchestrator {
       inner: () => this.pool,
       verify: verifier({
         redact: secrets,
-        runner: options.commandRunner ?? checksRunner(),
+        runner: options.commandRunner ?? checksRunner((cwd) => this.#sandboxFor(cwd)),
       }),
       policy: this.policy,
       ...(options.ask ? { ask: options.ask } : {}),
@@ -657,7 +665,7 @@ export class Orchestrator {
       checks: (root) =>
         verify(unique, new Workspace(root), {
           redact: this.options.secrets ?? [],
-          runner: this.options.commandRunner ?? checksRunner(),
+          runner: this.options.commandRunner ?? checksRunner((cwd) => this.#sandboxFor(cwd)),
         }),
     });
   }
@@ -752,7 +760,42 @@ export class Orchestrator {
     return this.worktrees.integrationBranch(runId);
   }
 
+  /**
+   * The sandbox of a worktree (or the project's folder): one each, made by
+   * its first command, for the worker's commands and the task's checks. A
+   * worktree may write its repository's git folder too (its commits). None
+   * when the sandbox is off, or for a run given its own tools.
+   */
+  readonly #sandboxes = new Map<string, ReturnType<SandboxManager["spawner"]>>();
+  #sandboxFor(folder: string): ReturnType<SandboxManager["spawner"]> | undefined {
+    if (sandboxMode() === "off" || this.options.tools) return undefined;
+    const root = [...this.#sandboxes.keys()].find(
+      (k) => folder === k || folder.startsWith(`${k}/`) || folder.startsWith(`${k}\\`),
+    );
+    if (root) return this.#sandboxes.get(root);
+    const git = join(this.options.projectRoot, ".git");
+    const spawner = sandboxManager().spawner(() =>
+      sandboxManager().create({
+        label: folder === this.options.projectRoot ? "run" : `task ${basename(folder)}`,
+        workspace: folder,
+        ...(folder === this.options.projectRoot ? {} : { writable: [git] }),
+      }),
+    );
+    this.#sandboxes.set(folder, spawner);
+    return spawner;
+  }
+
+  /** Finishes the run's sandboxes (destroyed, or kept as AGENT_SANDBOX_KEEP says). */
+  finishSandboxes(failed: boolean): void {
+    for (const spawner of this.#sandboxes.values()) {
+      const made = spawner.record();
+      if (made) sandboxManager().finish(made.id, failed);
+    }
+    this.#sandboxes.clear();
+  }
+
   close(): void {
+    this.finishSandboxes(false);
     this.store.close();
     if (this.options.metrics === undefined) this.metrics?.close();
   }
@@ -851,9 +894,10 @@ export class Orchestrator {
  * The shell that runs acceptance checks: like the workers' commands, it
  * never sees the agent's or the providers' keys.
  */
-export function checksRunner(): CommandRunner {
+export function checksRunner(spawner?: (cwd: string) => Spawner | undefined): CommandRunner {
   return shellRunner({
     hiddenEnv: ["GRAFENO_AGENT_KEY", "GRAFENO_OWNER_TOKEN", ...PROVIDER_SECRET_ENV],
+    ...(spawner ? { spawner } : {}),
   });
 }
 

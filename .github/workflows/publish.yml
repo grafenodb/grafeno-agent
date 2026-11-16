@@ -18,9 +18,12 @@ jobs:
   pipeline:
     uses: ./.github/workflows/ci.yml
 
+  sandbox:
+    uses: ./.github/workflows/sandbox.yml
+
   publish:
     name: Publish @grafenodb/agent-cli to npm
-    needs: pipeline
+    needs: [pipeline, sandbox]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -47,6 +50,20 @@ jobs:
           fi
       - run: npm ci --no-audit --no-fund
         if: steps.published.outputs.skip != 'true'
+      - if: steps.published.outputs.skip != 'true'
+        name: Grafeno Sandbox's helpers, built and attacked by the Sandbox workflow
+        uses: actions/download-artifact@v7
+        with:
+          pattern: sandbox-linux-*
+          path: vendor-artifacts
+      - if: steps.published.outputs.skip != 'true'
+        name: The helpers in the package, with their manifest
+        run: |
+          for arch in x64 arm64; do
+            mkdir -p "vendor/sandbox/linux-$arch"
+            cp "vendor-artifacts/sandbox-linux-$arch/grafeno-sandbox" "vendor/sandbox/linux-$arch/grafeno-sandbox"
+          done
+          node scripts/sandbox-helper.mjs manifest --require linux-x64,linux-arm64
       - name: Publish
         if: steps.published.outputs.skip != 'true'
         run: npm publish

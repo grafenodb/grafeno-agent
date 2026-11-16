@@ -19,6 +19,10 @@ export const COMMANDS: readonly Command[] = [
   },
   { name: "models", description: "Choose the model", aliases: ["model"] },
   {
+    name: "sandbox",
+    description: "Grafeno Sandbox: status, list, create, inspect, stop, destroy, cleanup",
+  },
+  {
     name: "leader",
     description: "Choose the leader of orchestrated runs: it plans, assigns and audits the tasks",
   },

@@ -72,6 +72,18 @@ cli|api|plans|list|status|manage|disconnect <connection>`. A key is typed
   `/connect`'s sections included, scrolls with the arrows, Page Up/Down
   and the mouse wheel, and says how many rows are above and below. The
   wheel scrolls an open menu, not the conversation behind it.
+- **Grafeno Sandbox**: the agent's commands, background processes and a
+  run's checks run in sandboxes the agent makes and destroys, installed
+  with it (no Docker, no daemon). Linux: a native helper in the package,
+  checked against its SHA-256 (user, PID, mount and network namespaces,
+  Landlock, seccomp, cgroups v2 or rlimits, as the kernel allows without
+  privileges); macOS: `sandbox-exec`; Windows: none yet, said on every
+  command. Each result says what isolated it, never more; `AGENT_SANDBOX`
+  (`auto`, `required`, `off`), `AGENT_SANDBOX_NETWORK`,
+  `AGENT_SANDBOX_KEEP`; `/sandbox status|list|create|inspect|stop|destroy|cleanup`
+  and `grafeno-agent sandbox`. A sandbox has its own home and caches, so
+  installs never change the computer's; no credentials go in. The release
+  builds and attacks the helper on x64 and arm64 before packing it.
 - **Local providers show tokens, not a quota**: the side panel and
   `/usage` show only the tokens a local or self-hosted server used.
 - The OpenAI-compatible adapter streams (for local servers), sends no key

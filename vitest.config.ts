@@ -13,6 +13,8 @@ export default defineConfig({
       GIT_CONFIG_NOSYSTEM: "1",
       // No one's own skills (in their home folder) reach the tests.
       AGENT_SKILLS_HOME: fileURLToPath(new URL("test/fixtures/no-home", import.meta.url)),
+      // No sandboxes in the developer's data folder: the sandbox's own tests make theirs.
+      AGENT_SANDBOX: "off",
     },
   },
 });

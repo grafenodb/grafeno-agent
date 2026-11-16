@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import type { Spawner } from "../sandbox/manager.js";
 import { existsSync } from "node:fs";
 import { commandPermission, defaultShell, killTree } from "../tools/command.js";
 import type { Workspace } from "../tools/workspace.js";
@@ -28,6 +29,8 @@ export interface ShellRunnerOptions {
   readonly shell?: readonly [string, ...string[]];
   /** Environment variables commands must not see (the agent's secrets). */
   readonly hiddenEnv?: readonly string[];
+  /** How checks start: in Grafeno Sandbox (a task's own), or on the computer. */
+  readonly spawner?: (cwd: string) => Spawner | undefined;
 }
 
 /** Runs commands in the user's shell, stopping the whole process tree on timeout or abort. */
@@ -36,23 +39,26 @@ export function shellRunner(options: ShellRunnerOptions = {}): CommandRunner {
   const hidden = new Set(options.hiddenEnv ?? []);
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !hidden.has(name)));
   return {
-    run: (command, { cwd, timeoutMs, signal }) =>
-      new Promise((resolve, reject) => {
-        const child = spawn(shell, [...shellArgs, command], {
-          cwd,
-          env,
-          windowsHide: true,
-          stdio: ["ignore", "pipe", "pipe"],
-          detached: process.platform !== "win32",
-        });
+    run: async (command, { cwd, timeoutMs, signal }) => {
+      const spawner = options.spawner?.(cwd);
+      const child = spawner
+        ? (await spawner.start([shell, ...shellArgs, command], { cwd, env, command })).child
+        : spawn(shell, [...shellArgs, command], {
+            cwd,
+            env,
+            windowsHide: true,
+            stdio: ["ignore", "pipe", "pipe"],
+            detached: process.platform !== "win32",
+          });
+      return new Promise<CommandResult>((resolve, reject) => {
         let output = "";
         let timedOut = false;
         let finished = false;
         const collect = (chunk: Buffer) => {
           output = (output + chunk.toString("utf8")).slice(-200_000);
         };
-        child.stdout.on("data", collect);
-        child.stderr.on("data", collect);
+        child.stdout?.on("data", collect);
+        child.stderr?.on("data", collect);
         const timer = setTimeout(() => {
           timedOut = true;
           killTree(child);
@@ -79,7 +85,8 @@ export function shellRunner(options: ShellRunnerOptions = {}): CommandRunner {
             finish(code);
           }, 1_000).unref();
         });
-      }),
+      });
+    },
   };
 }
 
