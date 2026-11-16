@@ -6,6 +6,7 @@ import {
   openRouterBilling,
 } from "../providers/openrouter.js";
 import type { SecretStore } from "../providers/secrets.js";
+import { CLAUDE_API_ACCOUNT } from "../providers/claude-api.js";
 
 export interface LoginIo {
   /** Asks for a line; `hidden`: what is typed is not shown. */
@@ -170,5 +171,69 @@ export async function openRouterLogout(
   await options.store.delete(OPENROUTER_ACCOUNT).catch(() => undefined);
   options.saveSettings({ OPENROUTER_MODELS: "" });
   options.io.say(`The OpenRouter key was removed from ${options.store.name}.`);
+  return 0;
+}
+
+/** What claude-api's login needs besides the common options: the client SDK, to check the key. */
+export interface ClaudeApiLoginOptions extends ApiKeyLoginOptions {
+  readonly listModels: (key: string) => Promise<readonly { id: string }[]>;
+  /** The providers the person already allowed to bill by consumption (AGENT_ALLOW_BILLING). */
+  readonly allowedBilling: readonly string[];
+}
+
+/**
+ * Sets up claude-api: the person's Anthropic API key, checked by listing
+ * models (which spends nothing) before it is kept in the system's secure
+ * store. The API bills per token: the person is asked, plainly, whether
+ * the agent may use it (AGENT_ALLOW_BILLING); no is the default, and then
+ * claude-api is never used.
+ */
+export async function claudeApiLogin(options: ClaudeApiLoginOptions): Promise<number> {
+  const { io } = options;
+  io.say("claude-api: Claude through the official Agent SDK, with your Anthropic API key.");
+  io.say(
+    "It bills per token to your Anthropic account. It is separate from your Claude subscription.",
+  );
+  const key = (await io.ask("Anthropic API key: ", { hidden: true })).trim();
+  if (!key) {
+    io.say("No key given: nothing changed.");
+    return 1;
+  }
+  let models: readonly { id: string }[];
+  try {
+    models = await options.listModels(key);
+  } catch (error) {
+    const raw = (error as { status?: unknown } | null)?.status;
+    const status = typeof raw === "number" ? raw : undefined;
+    io.say(
+      status === 401 || status === 403
+        ? "Anthropic refused the key: nothing changed."
+        : `The key could not be checked (${status === undefined ? "the API was not reachable" : `HTTP ${String(status)}`}): nothing changed.`,
+    );
+    return 1;
+  }
+  await options.store.set(CLAUDE_API_ACCOUNT, key);
+  io.say(
+    `Anthropic accepted the key (${String(models.length)} models). Saved in ${options.store.name}.`,
+  );
+  if (!options.allowedBilling.includes("claude-api")) {
+    const answer = (await io.ask("Allow the agent to use it, billed per token? [y/N]: ")).trim();
+    if (/^(y|yes|s|si|sí)$/i.test(answer)) {
+      options.saveSettings({
+        AGENT_ALLOW_BILLING: [...options.allowedBilling, "claude-api"].join(","),
+      });
+      io.say("Allowed (AGENT_ALLOW_BILLING includes claude-api).");
+    } else {
+      io.say("Not allowed: claude-api stays unused until AGENT_ALLOW_BILLING includes it.");
+    }
+  }
+  await askAuto(options, "claude-api", "claude-api");
+  return 0;
+}
+
+/** Removes the stored Anthropic API key. */
+export async function claudeApiLogout(options: Omit<ApiKeyLoginOptions, "fetch">): Promise<number> {
+  await options.store.delete(CLAUDE_API_ACCOUNT).catch(() => undefined);
+  options.io.say(`The Anthropic API key was removed from ${options.store.name}.`);
   return 0;
 }

@@ -283,6 +283,11 @@ export interface ProviderEntry {
   readonly id: string;
   readonly catalog: Catalog;
   readonly usage?: ProviderUsage;
+  /**
+   * How it is paid for: a provider billed per token (allowed by the user)
+   * comes after every subscription or free one that can take the task.
+   */
+  readonly billing?: "subscription" | "free-api" | "metered";
   /** What its models were seen to spend. */
   readonly costOf?: (model: string, effort: string | undefined) => QuotaCost | undefined;
 }
@@ -354,6 +359,8 @@ export function routeAcross(
   options: AcrossOptions = {},
 ): ProviderRoute {
   if (providers.length === 0) return { kind: "hold", reason: "no provider is ready" };
+  // Cost first: what bills per token only when no subscription or free quota can take it.
+  providers = byCost(providers);
   const lighter = lighterOf(options);
   const hold = options.holdAbove ?? 0.95;
   const used = (p: ProviderEntry) => mostUsed(p.usage)?.used ?? 0;
@@ -407,6 +414,14 @@ export function routeAcross(
   };
 }
 
+/** The providers in the same order, those billed per token last. */
+export function byCost(providers: readonly ProviderEntry[]): ProviderEntry[] {
+  return [
+    ...providers.filter((p) => p.billing !== "metered"),
+    ...providers.filter((p) => p.billing === "metered"),
+  ];
+}
+
 /**
  * General Auto: one pool of every ready provider's models. The rule, in
  * order, each step logged:
@@ -439,7 +454,10 @@ function routePool(
       : { ...options.profiles, [task.kind]: { ...base, tier: affinity.tier } };
   const assigned = (p: ProviderEntry) => options.assigned?.get(p.id) ?? 0;
   const order = new Map(providers.map((p, index) => [p.id, index]));
+  // Cost first (billed per token last), then room, then how many tasks each took.
+  const metered = (p: ProviderEntry) => (p.billing === "metered" ? 1 : 0);
   const spread = (a: ProviderEntry, b: ProviderEntry) =>
+    metered(a) - metered(b) ||
     used(a) - used(b) ||
     assigned(a) - assigned(b) ||
     (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0);

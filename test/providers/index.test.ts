@@ -33,6 +33,7 @@ describe("choosing providers", () => {
     expect(allProviders({ AGENT_PROVIDERS: "codex" }).map((p) => p.id)).toEqual([
       "codex",
       "claude-code",
+      "claude-api",
       "gemini",
       "openrouter",
     ]);
@@ -40,7 +41,7 @@ describe("choosing providers", () => {
 
   it("lets the user choose what Auto includes; an API-key provider only when named", () => {
     expect(autoMembers({})).toEqual([]);
-    expect(API_KEY_PROVIDERS).toEqual(["gemini", "openrouter"]);
+    expect(API_KEY_PROVIDERS).toEqual(["claude-api", "gemini", "openrouter"]);
     expect(autoMembers({ AGENT_AUTO_PROVIDERS: " claude-code , gemini, gemini " })).toEqual([
       "claude-code",
       "gemini",

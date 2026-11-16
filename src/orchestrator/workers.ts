@@ -435,6 +435,7 @@ export class WorkerPool implements TaskRunner {
           id: c.id,
           catalog: await this.catalog(c.id),
           ...(usage ? { usage } : {}),
+          ...(c.billing ? { billing: c.billing.kind } : {}),
           ...(this.options.costs ? { costOf: this.options.costs.costOf(c.id) } : {}),
         };
       }),

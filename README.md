@@ -122,34 +122,36 @@ agent asks again when it starts.
 
 ### Settings
 
-| Variable               | Default                 | What                                                                             |
-| ---------------------- | ----------------------- | -------------------------------------------------------------------------------- |
-| `GRAFENO_MODE`         | (asked)                 | `included` (the agent's own Grafeno) or `external`; empty: asked at start        |
-| `GRAFENO_URL`          | `http://127.0.0.1:7810` | The Grafeno server, when external                                                |
-| `GRAFENO_AGENT_KEY`    | (required)              | The agent's key                                                                  |
-| `GRAFENO_NAMESPACE`    | `grafeno-agent`         | Where the agent keeps its memory                                                 |
-| `AGENT_MODEL`          | `claude-code`           | The model (`claude-code`: your Claude subscription)                              |
-| `CLAUDE_MODEL`         | Claude Code's own       | `haiku`, `sonnet`, `opus`, `fable` (set by `/models`)                            |
-| `AGENT_EFFORT`         | the model's own         | `low` … `max` (set by `/effort`)                                                 |
-| `AGENT_PROJECT`        | the git repository      | The project whose memory the agent uses                                          |
-| `AGENT_EMBEDDER`       | `e5-small`              | Meaning for memory (a local model), or `none`                                    |
-| `AGENT_PALACE`         | `shared`                | `shared` with other agents, or `own` (see below)                                 |
-| `AGENT_SHELL`          | Git's bash on Windows   | The shell for commands, with its arguments                                       |
-| `AGENT_PROVIDERS`      | `auto`                  | `claude-code`, `codex`, `gemini`, in order, or `auto` (set by `/connect`)        |
-| `AGENT_PERMISSIONS`    | `ask`                   | `ask`, `auto` or `skip`, for the whole agent (set by `/permissions`)             |
-| `AGENT_AUTO_PROVIDERS` | none (you choose)       | The providers Auto includes (set in `/connect` with space)                       |
-| `GEMINI_TIER`          | none                    | `free` or `paid`: your Gemini key's tier (set by `login gemini`)                 |
-| `OPENROUTER_MODELS`    | `free`                  | `free` (never billed) or `all` (set by `login openrouter`)                       |
-| `AGENT_ALLOW_BILLING`  | none                    | Providers allowed to bill by consumption, such as `gemini`                       |
-| `AGENT_AFFINITY`       | the defaults below      | Where each task kind goes first in `auto`                                        |
-| `AGENT_ROUTING`        | `balanced`              | `economy`, `balanced` or `quality`: how eagerly runs spend the plans             |
-| `AGENT_AUTO_MODELS`    | (all)                   | Each Auto provider's models: `codex:gpt-6-astra,gpt-6.1-sol` (`m` in `/connect`) |
-| `AGENT_DELIVERY`       | `live`                  | `live` (task by task), `end` or `manual`: how runs' work reaches your folder     |
-| `AGENT_MEMORY_BUDGET`  | see [Memory](#memory)   | How much memory may reach the model                                              |
-| `WEB_SEARCH`           | the first one set up    | `brave`, `tavily` or `searxng`: the service of `web_search`                      |
-| `BRAVE_SEARCH_API_KEY` | none                    | A Brave Search API key, for `web_search`                                         |
-| `TAVILY_API_KEY`       | none                    | A Tavily API key, for `web_search`                                               |
-| `SEARXNG_URL`          | none                    | Your SearXNG's address, for `web_search`                                         |
+| Variable                    | Default                 | What                                                                             |
+| --------------------------- | ----------------------- | -------------------------------------------------------------------------------- |
+| `GRAFENO_MODE`              | (asked)                 | `included` (the agent's own Grafeno) or `external`; empty: asked at start        |
+| `GRAFENO_URL`               | `http://127.0.0.1:7810` | The Grafeno server, when external                                                |
+| `GRAFENO_AGENT_KEY`         | (required)              | The agent's key                                                                  |
+| `GRAFENO_NAMESPACE`         | `grafeno-agent`         | Where the agent keeps its memory                                                 |
+| `AGENT_MODEL`               | `claude-code`           | The model (`claude-code`: your Claude subscription)                              |
+| `CLAUDE_MODEL`              | Claude Code's own       | `haiku`, `sonnet`, `opus`, `fable` (set by `/models`)                            |
+| `AGENT_EFFORT`              | the model's own         | `low` … `max` (set by `/effort`)                                                 |
+| `AGENT_PROJECT`             | the git repository      | The project whose memory the agent uses                                          |
+| `AGENT_EMBEDDER`            | `e5-small`              | Meaning for memory (a local model), or `none`                                    |
+| `AGENT_PALACE`              | `shared`                | `shared` with other agents, or `own` (see below)                                 |
+| `AGENT_SHELL`               | Git's bash on Windows   | The shell for commands, with its arguments                                       |
+| `AGENT_PROVIDERS`           | `auto`                  | `claude-code`, `codex`, `gemini`, in order, or `auto` (set by `/connect`)        |
+| `AGENT_PERMISSIONS`         | `ask`                   | `ask`, `auto` or `skip`, for the whole agent (set by `/permissions`)             |
+| `AGENT_AUTO_PROVIDERS`      | none (you choose)       | The providers Auto includes (set in `/connect` with space)                       |
+| `GEMINI_TIER`               | none                    | `free` or `paid`: your Gemini key's tier (set by `login gemini`)                 |
+| `OPENROUTER_MODELS`         | `free`                  | `free` (never billed) or `all` (set by `login openrouter`)                       |
+| `AGENT_ALLOW_BILLING`       | none                    | Providers allowed to bill by consumption, such as `claude-api`                   |
+| `PROVIDER_<NAME>_ENABLED`   | on                      | `false` switches a provider off at once (`grafeno-agent providers disable`)      |
+| `CLAUDE_API_MAX_BUDGET_USD` | none                    | The most one claude-api turn may cost                                            |
+| `AGENT_AFFINITY`            | the defaults below      | Where each task kind goes first in `auto`                                        |
+| `AGENT_ROUTING`             | `balanced`              | `economy`, `balanced` or `quality`: how eagerly runs spend the plans             |
+| `AGENT_AUTO_MODELS`         | (all)                   | Each Auto provider's models: `codex:gpt-6-astra,gpt-6.1-sol` (`m` in `/connect`) |
+| `AGENT_DELIVERY`            | `live`                  | `live` (task by task), `end` or `manual`: how runs' work reaches your folder     |
+| `AGENT_MEMORY_BUDGET`       | see [Memory](#memory)   | How much memory may reach the model                                              |
+| `WEB_SEARCH`                | the first one set up    | `brave`, `tavily` or `searxng`: the service of `web_search`                      |
+| `BRAVE_SEARCH_API_KEY`      | none                    | A Brave Search API key, for `web_search`                                         |
+| `TAVILY_API_KEY`            | none                    | A Tavily API key, for `web_search`                                               |
+| `SEARXNG_URL`               | none                    | Your SearXNG's address, for `web_search`                                         |
 
 Variables set in the environment win over the file. The agent never reads
 the `.env` of the folder it runs in: that belongs to your project.
@@ -665,8 +667,55 @@ folder and branch, and the last thing it told the orchestrator.
 ### Several providers
 
 Besides Claude Code, the agent can reason with **Codex CLI**, OpenAI's
-official CLI, signed in with your ChatGPT subscription, and with **Gemini**
-(Google AI Studio) and **OpenRouter**, each with your own API key.
+official CLI, signed in with your ChatGPT subscription; with **claude-api**,
+Claude through the official Claude Agent SDK and an Anthropic API key; and
+with **Gemini** (Google AI Studio) and **OpenRouter**, each with your own API
+key.
+
+| Provider            | Signs in with                                            | Paid by                              |
+| ------------------- | -------------------------------------------------------- | ------------------------------------ |
+| `claude-code-local` | your own `claude` program and its login (`claude login`) | your Claude plan                     |
+| `claude-api`        | an Anthropic API key (Claude Agent SDK)                  | per token: only if you allow it      |
+| `codex`             | your own `codex` program and Sign in with ChatGPT        | your ChatGPT plan                    |
+| `gemini`            | a Google AI Studio key                                   | free tier, or per token if allowed   |
+| `openrouter`        | an OpenRouter key                                        | free models, or per token if allowed |
+
+```bash
+grafeno-agent providers                       # each: sign-in, on/off, ready or why not
+grafeno-agent providers disable claude-code-local
+grafeno-agent providers enable claude-code-local
+grafeno-agent providers install claude-api    # the Claude Agent SDK, pinned (about 335 MB unpacked)
+grafeno-agent login claude-api                # its API key, checked; asks before allowing billing
+```
+
+- **claude-code-local** (`claude-code` in older settings) runs the official,
+  unmodified `claude` program with documented options (`claude -p`), signed
+  in its own way. The agent never reads, keeps or reuses its credentials,
+  and it starts it without `ANTHROPIC_API_KEY`, so it can never switch to
+  per-token billing on its own. **Using a Pro or Max subscription this way,
+  inside a third-party orchestrator, awaits clarification from Anthropic.**
+  It is on for now as a project setting. That is not an approval or a
+  certification by Anthropic. Do not use it as a shared backend or a hosted
+  service for others. `grafeno-agent providers disable claude-code-local`
+  (`PROVIDER_CLAUDE_CODE_LOCAL_ENABLED=false`) turns it off at once,
+  without touching the other providers.
+- **claude-api** uses the official Claude Agent SDK with an Anthropic API
+  key only, never a Claude subscription's sign-in. Each turn checks that
+  the SDK signed in with the key, and stops otherwise.
+  - Its process gets a private configuration folder, and none of your other
+    keys. Its built-in tools are off: only the agent's tools reach it, over
+    MCP, with the agent's permissions.
+  - It bills per token. It runs only when `AGENT_ALLOW_BILLING` includes
+    it, which `login claude-api` asks about.
+  - It reports each turn's cost, and `CLAUDE_API_MAX_BUDGET_USD` caps it.
+  - Without the SDK or a valid key it says it is not available, and the
+    other providers go on.
+- **codex** runs the official `codex exec --json`, OpenAI's documented
+  non-interactive mode, which reuses the CLI's own Sign in with ChatGPT.
+  It is started without `CODEX_API_KEY` or `OPENAI_API_KEY`, so it never
+  switches to the API. Its plan's usage is read through the documented
+  app-server (`account/rateLimits/read`). A rate-limit reset credit is
+  never spent.
 
 - **Auto is always the first row of `/connect`**, above every provider.
   The panel opens on what is in use.

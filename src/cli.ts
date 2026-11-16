@@ -76,7 +76,11 @@ Commands:
                  The skills the agent uses (.agents/skills, ~/.agents/skills,
                  ~/.config/agents/skills): install with the Skills CLI (npx skills),
                  or write your own. grafeno-agent skills help says more.
-  login gemini | login openrouter
+  providers [enable|disable|install] <name>
+                 Each provider: how it signs in, switched on or off, ready or why not.
+                 disable switches one off at once (claude-code-local, for example);
+                 install claude-api installs the Claude Agent SDK it needs.
+  login claude-api | login gemini | login openrouter
                  A provider reached with your own API key: the key is checked with the
                  provider before it is kept, in the system's secure store (never in
                  Grafeno). Gemini: its tier (free or paid). OpenRouter: free models only
@@ -849,14 +853,20 @@ async function replanCommand(argv: readonly string[]): Promise<number> {
 /** `login gemini|openrouter` / `logout …`: a provider's key, checked, kept in the system's secure store. */
 async function loginCommand(command: "login" | "logout", args: readonly string[]): Promise<number> {
   const which = args[0];
-  if (which !== "gemini" && which !== "openrouter") {
+  if (which !== "gemini" && which !== "openrouter" && which !== "claude-api") {
     console.error(
-      "Providers with an API key sign in here: login gemini, login openrouter. Claude and Codex sign in with their own programs (claude /login, codex login).",
+      "Providers with an API key sign in here: login claude-api, login gemini, login openrouter. Claude Code and Codex sign in with their own programs (claude login, codex login).",
     );
     return 2;
   }
-  const { geminiLogin, geminiLogout, openRouterLogin, openRouterLogout } =
-    await import("./app/login.js");
+  const {
+    claudeApiLogin,
+    claudeApiLogout,
+    geminiLogin,
+    geminiLogout,
+    openRouterLogin,
+    openRouterLogout,
+  } = await import("./app/login.js");
   const { geminiStore } = await import("./providers/gemini.js");
   const { autoMembers } = await import("./providers/index.js");
   const { updateSettings } = await import("./settings-file.js");
@@ -877,6 +887,27 @@ async function loginCommand(command: "login" | "logout", args: readonly string[]
   };
   if (which === "openrouter") {
     return command === "login" ? openRouterLogin(options) : openRouterLogout(options);
+  }
+  if (which === "claude-api") {
+    if (command === "logout") return claudeApiLogout(options);
+    const { defaultClientSdk } = await import("./providers/claude-api.js");
+    let client: Awaited<ReturnType<ReturnType<typeof defaultClientSdk>>>;
+    try {
+      client = await defaultClientSdk(process.env)();
+    } catch {
+      console.error(
+        "The Claude Agent SDK is not installed yet: grafeno-agent providers install claude-api",
+      );
+      return 1;
+    }
+    return claudeApiLogin({
+      ...options,
+      listModels: (key) => client.listModels(key),
+      allowedBilling: (process.env.AGENT_ALLOW_BILLING ?? "")
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean),
+    });
   }
   return command === "login" ? geminiLogin(options) : geminiLogout(options);
 }
@@ -1050,6 +1081,19 @@ async function main(argv: readonly string[]): Promise<number> {
         cwd: process.cwd(),
         say: (line) => {
           console.log(line);
+        },
+      });
+    }
+    case "providers": {
+      const { providersCommand } = await import("./app/providers-command.js");
+      const { updateSettings } = await import("./settings-file.js");
+      return providersCommand(argv.slice(1), {
+        say: (line) => {
+          console.log(line);
+        },
+        saveSettings: (values) => {
+          updateSettings(values);
+          for (const [name, value] of Object.entries(values)) process.env[name] = value;
         },
       });
     }

@@ -1,4 +1,5 @@
 import {
+  addUsage,
   ModelError,
   NO_USAGE,
   type Conversation,
@@ -200,10 +201,5 @@ function tokens(usage: Usage): number {
 }
 
 function add(a: Usage, b: Usage): Usage {
-  return {
-    inputTokens: a.inputTokens + b.inputTokens,
-    outputTokens: a.outputTokens + b.outputTokens,
-    cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
-    cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens,
-  };
+  return addUsage(a, b);
 }

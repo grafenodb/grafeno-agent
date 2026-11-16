@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { providerEnabled } from "../providers/profiles.js";
 import { connectAll } from "../mcp/client.js";
 import { loadMcpConfig, mcpConfigPath } from "../mcp/config.js";
 import { connectPlugins } from "../plugins/index.js";
@@ -296,13 +297,16 @@ export function realServices(version: string): AppServices {
       embedder ??= embedderFor(config.embedder, () => undefined);
       const chosen = await embedder;
       // A provider that bills by consumption is not used without the user's express say.
-      await assertBillingAllowed(providers[0] as Provider, env);
+      // The chat uses the first provider that is switched on.
+      const chat = providers.find((p) => providerEnabled(p.id, env)) ?? providers[0];
+      if (!chat) throw new Error("No provider is known.");
+      await assertBillingAllowed(chat, env);
       // External MCP servers and plugins: their tools join the agent's; one not reached is said.
       const extensions = await connectExtensions(env, version, process.cwd());
       const tools = [...(extra?.tools ?? []), ...extensions.tools];
       return AgentSession.start({
         config,
-        provider: providers[0] as Provider,
+        provider: chat,
         ...(tools.length > 0 ? { extraTools: tools } : {}),
         extensions: extensions.session,
         ...(report.identity ? { identity: report.identity } : {}),

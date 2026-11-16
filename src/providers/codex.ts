@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { childEnv } from "../model/env.js";
 import { tmpdir } from "node:os";
 import { createInterface } from "node:readline";
 import { CodexModel, codexCommand } from "../model/codex.js";
@@ -31,8 +32,14 @@ function runCodex(): RunCodex {
       execFile(
         command,
         [...prefix, ...args],
-        // A neutral folder: no project's settings apply.
-        { cwd: tmpdir(), timeout: timeoutMs, windowsHide: true, maxBuffer: 16 * 1024 * 1024 },
+        // A neutral folder: no project's settings apply. No API key: ChatGPT's sign-in only.
+        {
+          cwd: tmpdir(),
+          env: childEnv(),
+          timeout: timeoutMs,
+          windowsHide: true,
+          maxBuffer: 16 * 1024 * 1024,
+        },
         // Some answers (`login status`) come on stderr: both are given.
         (error, stdout, stderr) => {
           if (error) reject(new Error(`${error.message}\n${stderr}`, { cause: error }));
@@ -48,6 +55,7 @@ function askAppServer(): AskAppServer {
     new Promise((resolve, reject) => {
       const child = spawn(command, [...prefix, "app-server"], {
         cwd: tmpdir(),
+        env: childEnv(),
         stdio: ["pipe", "pipe", "ignore"],
         windowsHide: true,
       });

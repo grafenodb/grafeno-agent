@@ -155,10 +155,100 @@ it is added, not only when it is first used.
   key from the environment is checked whenever the status is read (once a
   minute at most, with the cache).
 
+## claude-api, the switches, and Codex audited (2026-11-16)
+
+Asked by the user:
+
+- a `claude-api` provider on the official Claude Agent SDK, with an API
+  key;
+- `claude-code-local` kept on for now, with a switch that turns it off at
+  once;
+- Codex audited against OpenAI's documentation;
+- per-provider settings, and routing aware of cost.
+
+**What was there:**
+
+- **claude-code-local:** `claude --print`, with stream-json and the
+  agent's tools over a local MCP server. Every flag used is in the CLI
+  reference: `--input-format`, `--output-format`, `--tools`,
+  `--mcp-config`, `--strict-mcp-config`, `--allowedTools`,
+  `--permission-prompts`, `--system-prompt-file`, `--setting-sources`,
+  `--disable-slash-commands`, `--no-session-persistence`, `--no-chrome`,
+  `--model`, `--effort` and `claude auth status`.
+  - **Gap, fixed:** it inherited the environment. `ANTHROPIC_API_KEY`
+    there would have made Claude Code bill per token instead of using its
+    sign-in.
+- **codex:** `codex exec --json` and `exec resume`, every flag in
+  `codex exec --help`; the app-server only for `account/read` and
+  `account/rateLimits/read` (documented).
+  - **Gap, fixed:** it inherited `CODEX_API_KEY` and `OPENAI_API_KEY`,
+    either of which switches Codex to the API.
+
+**Decisions:**
+
+- **`claude-code` stays the id** (the user chose this):
+  `claude-code-local` is an alias everywhere (settings, `--providers`,
+  the switch, the table). Nothing to migrate, and the router's metrics are
+  kept.
+- **claude-api runs on the Agent SDK's `query()`.** The SDK is not
+  installed with the agent: it carries a native program of about 335 MB.
+  `grafeno-agent providers install claude-api` installs it, pinned
+  (`@anthropic-ai/claude-agent-sdk` 0.3.316 and `@anthropic-ai/sdk`
+  1.3.0), into the data folder; the user chose this. It is a
+  devDependency only in the repository.
+  - **Configuration:** built-in tools off (`tools: []`); the agent's tools
+    through its own MCP server (`allowedTools: mcp__agent`), with
+    `canUseTool` refusing anything else; `settingSources: []`; streaming
+    (`includePartialMessages`); cancellation (`abortController`); turns
+    resumed by session id; `maxTurns` and `maxBudgetUsd`.
+  - **Environment:** only what a process needs to run, the key, and its own
+    `CLAUDE_CONFIG_DIR`.
+  - **The guard:** the SDK's init message says where its sign-in came from
+    (`apiKeySource`); anything but `ANTHROPIC_API_KEY` stops the turn.
+  - **Errors** (`rate_limit`, `authentication_failed`, `billing_error`,
+    `overloaded`, the budget, the step limit) map to the agent's kinds.
+    The cost (`total_cost_usd`) goes into `Usage.costUsd`.
+  - **Key check:** the key is checked with the client SDK's model list,
+    which spends nothing.
+  - **Branding:** it is named "Claude Agent (API key)", as the SDK's
+    guidelines allow, never "Claude Code".
+- **Codex keeps `codex exec`.** OpenAI documents it for automation, and
+  it reuses the CLI's ChatGPT sign-in.
+  - The app-server is for rich clients that run their own sign-in,
+    approvals and history: not needed here, where the agent owns approvals
+    and history.
+  - The TypeScript Codex SDK would add a dependency without a capability
+    the agent lacks.
+- **Switches:** every provider has `PROVIDER_<NAME>_ENABLED`, read on
+  every call, ahead of the cache. Switched off, a provider is never asked
+  or started, and is left out of the choice. The chat starts with the
+  first one that is on.
+- **Isolation:** `childEnv()` starts the official programs without any
+  key variable (the agent's and the providers'). Commands the agent runs
+  never see `ANTHROPIC_API_KEY`, `CODEX_API_KEY` or `OPENAI_API_KEY`
+  either.
+- **Cost-aware routing:** at equal fit, a provider billed per token comes
+  after every subscription or free one, in Auto and in a list. It is used
+  when nothing else can take the task. Tiers still follow the task, so
+  light work stays on light models.
+
+**Sources:**
+
+- [Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview).
+  It says third-party products may not offer claude.ai login, and use API
+  keys instead; it also gives the branding rules.
+- [Agent SDK TypeScript reference](https://code.claude.com/docs/en/agent-sdk/typescript).
+- [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference).
+- [Codex SDK](https://learn.chatgpt.com/docs/codex-sdk),
+  [app-server](https://learn.chatgpt.com/docs/app-server) and
+  [non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode).
+
 ## Open
 
 - A Codex sign-in of the agent's own, through OpenAI's documented flow
   above, if the user wants it.
-- Gemini and OpenRouter have not been run for real yet: no key is set up
-  on this machine. OpenRouter's public model list was checked for real.
+- Gemini, OpenRouter and claude-api have not been run for real yet: no
+  key is set up on this machine.
+- claude-code-local's standing awaits Anthropic's answer; if it is no,
+  `providers disable claude-code-local` (or the setting) turns it off. OpenRouter's public model list was checked for real.
   `login gemini`, then a short real turn on the free tier, will show it.

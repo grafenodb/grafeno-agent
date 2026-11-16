@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { childEnv } from "../model/env.js";
 import { tmpdir } from "node:os";
 import { createModel } from "../model/index.js";
 import { ComposedProvider } from "./compose.js";
@@ -33,8 +34,14 @@ function runClaude(command: string): RunClaude {
       execFile(
         command,
         args,
-        // A neutral folder: no project's settings apply.
-        { cwd: tmpdir(), timeout: timeoutMs, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+        // A neutral folder: no project's settings apply. No API key: its own sign-in only.
+        {
+          cwd: tmpdir(),
+          env: childEnv(),
+          timeout: timeoutMs,
+          windowsHide: true,
+          maxBuffer: 4 * 1024 * 1024,
+        },
         (error, stdout) => {
           if (error) reject(new Error(error.message, { cause: error }));
           else resolve(stdout);

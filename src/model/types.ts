@@ -64,6 +64,23 @@ export interface Usage {
   readonly outputTokens: number;
   readonly cacheReadTokens: number;
   readonly cacheWriteTokens: number;
+  /** What it cost in US dollars, when the provider bills per token and says. */
+  readonly costUsd?: number;
+}
+
+/** Two usages added up; the cost when either has one. */
+export function addUsage(a: Usage, b: Usage): Usage {
+  const cost =
+    a.costUsd === undefined && b.costUsd === undefined
+      ? undefined
+      : (a.costUsd ?? 0) + (b.costUsd ?? 0);
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
+    cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens,
+    ...(cost === undefined ? {} : { costUsd: cost }),
+  };
 }
 
 export const NO_USAGE: Usage = {

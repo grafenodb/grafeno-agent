@@ -18,6 +18,7 @@ import { grafenoVault, type Vault } from "../memory/vault.js";
 import { ClaudeCodeProvider } from "../providers/claude-code.js";
 import type { ModelChoice, Provider } from "../providers/types.js";
 import {
+  addUsage,
   ModelError,
   NO_USAGE,
   type ModelErrorKind,
@@ -284,12 +285,7 @@ export class AgentSession {
 
   get usage(): Usage {
     const now = this.#agent?.usage ?? NO_USAGE;
-    return {
-      inputTokens: this.#spentBefore.inputTokens + now.inputTokens,
-      outputTokens: this.#spentBefore.outputTokens + now.outputTokens,
-      cacheReadTokens: this.#spentBefore.cacheReadTokens + now.cacheReadTokens,
-      cacheWriteTokens: this.#spentBefore.cacheWriteTokens + now.cacheWriteTokens,
-    };
+    return addUsage(this.#spentBefore, now);
   }
 
   get windows(): readonly UsageWindow[] {
@@ -540,12 +536,7 @@ export class AgentSession {
     const agent = this.#agent;
     if (!agent) return;
     this.#agent = undefined;
-    this.#spentBefore = {
-      inputTokens: this.#spentBefore.inputTokens + agent.usage.inputTokens,
-      outputTokens: this.#spentBefore.outputTokens + agent.usage.outputTokens,
-      cacheReadTokens: this.#spentBefore.cacheReadTokens + agent.usage.cacheReadTokens,
-      cacheWriteTokens: this.#spentBefore.cacheWriteTokens + agent.usage.cacheWriteTokens,
-    };
+    this.#spentBefore = addUsage(this.#spentBefore, agent.usage);
     this.#turnsBefore += agent.turns;
     if (agent.windows.length > 0) this.#windows = agent.windows;
     await agent.close();

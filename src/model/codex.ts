@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
+import { childEnv } from "./env.js";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -183,10 +184,10 @@ class CodexConversation implements Conversation {
     const prefix = this.options.commandPrefix ?? found?.prefix ?? [];
     const child = spawn(command, [...prefix, ...this.#args()], {
       cwd: this.#dir,
-      env: {
-        ...process.env,
+      // Without CODEX_API_KEY or OPENAI_API_KEY: Codex signs in with ChatGPT, as its login says.
+      env: childEnv(process.env, {
         [TOKEN_VARIABLE]: (tools.headers.Authorization ?? "").replace(/^Bearer /, ""),
-      },
+      }),
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });

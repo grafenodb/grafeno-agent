@@ -1,4 +1,6 @@
+import { ClaudeApiProvider } from "./claude-api.js";
 import { ClaudeCodeProvider } from "./claude-code.js";
+import { canonicalProvider, providerEnabled, withSwitch } from "./profiles.js";
 import { CodexProvider } from "./codex.js";
 import { GeminiProvider } from "./gemini.js";
 import { OpenRouterProvider } from "./openrouter.js";
@@ -29,16 +31,24 @@ export function withCache<P extends Provider>(provider: P): P | ComposedProvider
     : provider;
 }
 
-/** The providers the agent knows, by the id `AGENT_PROVIDERS` names them with. */
+/**
+ * The providers the agent knows, by the id `AGENT_PROVIDERS` names them
+ * with (or an alias: `claude-code-local` is `claude-code`). Each is behind
+ * its switch (PROVIDER_<NAME>_ENABLED), read on every call, then its cache.
+ */
 export const KNOWN_PROVIDERS: Readonly<Record<string, () => Provider>> = {
-  "claude-code": () => withCache(new ClaudeCodeProvider()),
-  codex: () => withCache(new CodexProvider()),
-  gemini: () => withCache(new GeminiProvider()),
-  openrouter: () => withCache(new OpenRouterProvider()),
+  "claude-code": () => withSwitch(withCache(new ClaudeCodeProvider())),
+  "claude-api": () => withSwitch(withCache(new ClaudeApiProvider())),
+  codex: () => withSwitch(withCache(new CodexProvider())),
+  gemini: () => withSwitch(withCache(new GeminiProvider())),
+  openrouter: () => withSwitch(withCache(new OpenRouterProvider())),
 };
 
 /** Environment variables that hold the providers' keys: commands the agent runs never see them. */
 export const PROVIDER_SECRET_ENV = [
+  "ANTHROPIC_API_KEY",
+  "CODEX_API_KEY",
+  "OPENAI_API_KEY",
   "GEMINI_API_KEY",
   "GOOGLE_API_KEY",
   "OPENROUTER_API_KEY",
@@ -49,7 +59,7 @@ export const PROVIDER_SECRET_ENV = [
  * this computer): they may bill per token, so General Auto uses them only
  * when the user includes them (AGENT_AUTO_PROVIDERS).
  */
-export const API_KEY_PROVIDERS: readonly string[] = ["gemini", "openrouter"];
+export const API_KEY_PROVIDERS: readonly string[] = ["claude-api", "gemini", "openrouter"];
 
 /** The setting's word for General Auto: the providers it includes, as one pool. */
 export const AUTO = "auto";
@@ -62,7 +72,7 @@ export const AUTO = "auto";
 export function autoMembers(env: Record<string, string | undefined> = process.env): string[] {
   const listed = (env.AGENT_AUTO_PROVIDERS ?? "")
     .split(",")
-    .map((id) => id.trim())
+    .map((id) => canonicalProvider(id))
     .filter(Boolean);
   if (listed.length === 0) return [];
   const unknown = listed.filter((id) => !(id in KNOWN_PROVIDERS));
@@ -132,7 +142,7 @@ export function providerIds(
   if (isAuto(setting)) return autoMembers(env);
   const ids = (setting ?? "")
     .split(",")
-    .map((id) => id.trim())
+    .map((id) => canonicalProvider(id))
     .filter(Boolean);
   const chosen = [...new Set(ids)];
   const unknown = chosen.filter((id) => !(id in KNOWN_PROVIDERS));
@@ -150,9 +160,10 @@ export function providerIds(
  * task to one of them.
  */
 export function chosenProviders(env: Record<string, string | undefined> = process.env): Provider[] {
-  return providerIds(env.AGENT_PROVIDERS, env).map((id) =>
-    (KNOWN_PROVIDERS[id] as () => Provider)(),
-  );
+  // A provider switched off is left out of the choice (it stays listed in /connect).
+  return providerIds(env.AGENT_PROVIDERS, env)
+    .filter((id) => providerEnabled(id, env))
+    .map((id) => (KNOWN_PROVIDERS[id] as () => Provider)());
 }
 
 /**
@@ -168,7 +179,8 @@ export function providerForKinds(
     .split(",")
     .map((p) => p.trim())
     .filter(Boolean)) {
-    const [kind, provider] = pair.split("=").map((p) => p.trim());
+    const [kind, named] = pair.split("=").map((p) => p.trim());
+    const provider = named === undefined ? undefined : canonicalProvider(named);
     if (!kind || !provider || !kinds.includes(kind) || !(provider in KNOWN_PROVIDERS)) {
       throw new Error(
         `--provider-for takes kind=provider pairs (kinds: ${kinds.join(", ")}): ${pair}`,
@@ -201,7 +213,8 @@ export function affinityFor(
     .map((p) => p.trim())
     .filter(Boolean)) {
     const [kind, target] = pair.split("=").map((p) => p.trim());
-    const [provider, tier] = (target ?? "").split(":").map((p) => p.trim());
+    const [named, tier] = (target ?? "").split(":").map((p) => p.trim());
+    const provider = named === undefined || named === "none" ? named : canonicalProvider(named);
     const tierOk = tier === undefined || (TIERS as readonly string[]).includes(tier);
     if (!kind || !kinds.includes(kind) || !provider || !tierOk) {
       throw new Error(

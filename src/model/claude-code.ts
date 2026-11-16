@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
+import { childEnv } from "./env.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -128,6 +129,8 @@ class ClaudeCodeConversation implements Conversation {
     const spawn = this.options.spawn ?? nodeSpawn;
     const child = spawn(this.options.command ?? "claude", args, {
       cwd: this.#dir,
+      // Without ANTHROPIC_API_KEY: Claude Code uses its own sign-in (claude login), never the API.
+      env: childEnv(),
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });

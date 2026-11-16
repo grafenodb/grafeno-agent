@@ -271,3 +271,29 @@ describe("the orchestrator with two providers", { timeout: 60_000 }, () => {
     orchestrator.close();
   });
 });
+
+describe("routing by cost", () => {
+  const metered = (id: string, used?: number): ProviderEntry => ({
+    ...entry(id, used),
+    billing: "metered",
+  });
+
+  it("gives a task to a subscription before a provider billed per token, even one with more room", () => {
+    const route = routeAcross(spec(), [metered("claude-api", 0), entry("claude", 0.6)]);
+    expect(route).toMatchObject({ kind: "run", provider: "claude" });
+    const pooled = routeAcross(spec(), [metered("claude-api", 0), entry("codex", 0.5)], {
+      auto: true,
+    });
+    expect(pooled).toMatchObject({ kind: "run", provider: "codex" });
+  });
+
+  it("uses a provider billed per token only when nothing else can take the task", () => {
+    const route = routeAcross(spec(), [metered("claude-api", 0), entry("claude", 0.99)]);
+    expect(route).toMatchObject({ kind: "run", provider: "claude-api" });
+  });
+
+  it("keeps a task light when it is light: the cheapest tier that fits, not the deepest", () => {
+    const route = routeAcross(spec({ kind: "docs", complexity: 1 }), [entry("claude", 0)]);
+    expect(route).toMatchObject({ kind: "run", tier: "light" });
+  });
+});
