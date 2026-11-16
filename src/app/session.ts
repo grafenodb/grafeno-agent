@@ -83,6 +83,10 @@ export interface AgentSessionOptions {
   readonly now?: () => Date;
 }
 
+/** Model requests in one round of a chat turn, and the rounds a turn goes on by itself. */
+export const CHAT_STEPS = 40;
+export const CHAT_CONTINUE_ROUNDS = 9;
+
 /** What the model is told on each message while the session is unattended. */
 export const UNATTENDED_NOTE =
   "[Unattended: nobody is watching this session. Do not ask the user questions or wait for confirmations: decide sensibly, keep working until the task is done (plan it, run it, check it, retry what fails a few times, then try another way), and report what you did at the end. Tools run without asking, except what is never allowed.]";
@@ -505,6 +509,8 @@ export class AgentSession {
         (call, tool, decision) => this.#decide(call, tool, decision),
         { redact: [config.agentKey] },
       ),
+      // Long work goes on by itself past the step limit, up to ~10 rounds of 40 steps.
+      limits: { maxSteps: CHAT_STEPS, continueRounds: CHAT_CONTINUE_ROUNDS },
       prepare: async (message) => {
         const prepared = await this.memory.beforeTurn(message);
         this.#onMemory?.(this.memory.lastRecall);

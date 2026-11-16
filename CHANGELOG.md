@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- **No more "Stopped at the step limit"**: a chat turn carries on by itself
+  past its step limit (40 requests a round, up to ten rounds), and says so
+  only if it still is not done. Sub-agents get six rounds per attempt.
+- **Hot downgrade**: a sub-agent that spends 8% or more of its provider's
+  window and is not done moves, between rounds, to a lighter model that
+  takes over from its progress (economy and balanced; never for models
+  chosen by hand nor the hardest tasks).
+- **Menus**: Esc closes the menu open (or goes back to the orchestrator)
+  without interrupting work; a second click on a menu button closes it,
+  another button moves to its menu; the open one shows pressed; buttons
+  that only look stay on while the agent works.
+- **A clearer conversation**: each action as a verb, its target and what
+  came of it; answers under ◆ Grafeno Agent; framed code, diffs coloured.
+- **Sub-agents as a tree** under the orchestrator: task as title, model
+  under it, then what it is doing.
+- **Projects**: `/projects` and `[Projects]` list, add and make projects
+  (a folder with git); opening one starts a session in its folder.
+  `grafeno-agent projects` does the same from the shell.
+
 ## 0.1.4 (2026-11-16)
 
 - **The interface takes clicks**: a menu bar of the main commands under the

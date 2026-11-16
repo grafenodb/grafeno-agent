@@ -33,6 +33,7 @@ import { grafenoVault, type Vault } from "./memory/vault.js";
 import { createModel } from "./model/index.js";
 import { StartupError, checkGrafeno, type AgentIdentity } from "./startup.js";
 import { embedderFor, prepareGrafeno, realServices } from "./app/services.js";
+import { CHAT_CONTINUE_ROUNDS, CHAT_STEPS } from "./app/session.js";
 import { runTui } from "./tui/run.js";
 import { createInterface } from "node:readline/promises";
 import { createOrchestrator, describePlan, type OrchestrateSettings } from "./app/orchestrate.js";
@@ -57,6 +58,9 @@ Commands:
                  External MCP servers (mcp.json next to the settings): their tools reach
                  the agent, asking you before they change anything. A server is checked
                  when it is added. grafeno-agent mcp help says more.
+  projects [add|new|remove]
+                 Your projects (a name and a folder each): /projects in the interface opens
+                 one, a session in its folder, with its own conversations, runs and memory.
   plugins [enable|disable] <id>
                  Services the agent works with, as you: github, gitlab. Off until you turn
                  one on; each is checked first, with the service's own documented sign-in
@@ -270,6 +274,7 @@ async function chat(plain: boolean): Promise<number> {
         model,
         system,
         // AGENT_PERMISSIONS decides first; what it leaves to the user is asked here.
+        limits: { maxSteps: CHAT_STEPS, continueRounds: CHAT_CONTINUE_ROUNDS },
         tools: new ToolRegistry(
           [...ownTools, ...memoryTools],
           async (call, tool, decision) => {
@@ -933,6 +938,41 @@ async function main(argv: readonly string[]): Promise<number> {
           console.log(line);
         },
       });
+    }
+    case "projects": {
+      const { addProject, loadProjects, removeProject } = await import("./projects.js");
+      const sub = argv[1] ?? "list";
+      if (sub === "list" || sub === "ls") {
+        const projects = loadProjects();
+        if (projects.length === 0) console.log("No projects yet: grafeno-agent projects add .");
+        for (const p of projects) console.log(`  ${p.name.padEnd(24)} ${p.path}`);
+        return 0;
+      }
+      if (sub === "add" || sub === "new") {
+        const folder = argv[2];
+        if (!folder) {
+          console.error("Which folder? grafeno-agent projects add <folder> [--name <name>]");
+          return 2;
+        }
+        const entry = addProject(folder, flag(argv, "--name"), { create: sub === "new" });
+        console.log(
+          `Project ${entry.name}: ${entry.path}. Open a session in it: cd there, then grafeno-agent.`,
+        );
+        return 0;
+      }
+      if (sub === "remove" || sub === "rm") {
+        const removed = removeProject(argv[2] ?? "");
+        console.log(
+          removed
+            ? `Removed ${argv[2] ?? ""} from the list (its folder is as it was).`
+            : `No project is named ${argv[2] ?? ""}.`,
+        );
+        return removed ? 0 : 1;
+      }
+      console.log(
+        "grafeno-agent projects                       your projects\ngrafeno-agent projects add <folder> [--name n]  a folder you have\ngrafeno-agent projects new <folder> [--name n]  a new folder, with git\ngrafeno-agent projects remove <name>",
+      );
+      return 2;
     }
     case "plugins": {
       const { pluginsCommand } = await import("./app/plugins-command.js");

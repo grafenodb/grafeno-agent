@@ -208,10 +208,14 @@ Esc interrupts the answer; Ctrl+C interrupts, or leaves.
 **The mouse does what the commands do.** Every click has a command or a
 key that does the same, so nothing needs the mouse:
 
-- the **menu bar** under the header: `[New]` `[Sessions]` `[Model]`
-  `[Effort]` `[Provider]` `[Permissions]` `[Memory]` `[Runs]` `[Agents]`
-  `[Usage]` `[Help]`, each the command of its name (dimmed while the agent
-  answers or a question is open);
+- the **menu bar** under the header: `[Projects]` `[New]` `[Sessions]`
+  `[Model]` `[Effort]` `[Provider]` `[Permissions]` `[Memory]` `[Runs]`
+  `[Agents]` `[Usage]` `[Help]`, each the command of its name. The menu
+  open shows pressed: click it again to close it, or another one to move to
+  it. While the agent works, the buttons that only look (Agents, Runs,
+  Usage, Permissions, Help) stay on;
+- **Esc** closes the menu open, or goes back from a sub-agent to the
+  orchestrator; it interrupts the work only from the conversation;
 - **lists** (models, efforts, sessions to resume, runs, permissions, the
   plan to run): click a row to choose it, `esc cancel` to leave;
 - the **commands offered** as you type `/`: click one to run it;
@@ -225,6 +229,33 @@ key that does the same, so nothing needs the mouse:
 It needs a terminal that reports the mouse (most do).
 `GRAFENO_AGENT_MOUSE=off` leaves the mouse to the terminal: then clicks and
 the wheel do nothing here, and selecting text needs no Shift.
+
+**Projects.** `[Projects]` (or `/projects`) lists your projects, each a
+name and a folder: open one, and a new session starts in its folder, with
+its own conversations (`/resume`), runs and memory. **+ New project** asks
+a name and a folder (made when it does not exist, with a git repository);
+**+ Add this folder** lists the folder you are in. Without the interface:
+`grafeno-agent projects`, `projects add <folder> [--name n]`,
+`projects new <folder>`, `projects remove <name>`. The list is
+`projects.json`, next to the settings.
+
+**Long work goes on by itself.** A turn that reaches its step limit (40
+model requests) carries on in the same conversation, up to ten rounds,
+instead of stopping; only then does it pause and say so. A sub-agent has
+six rounds per attempt, and one that spends 8% or more of its provider's
+window and is not done moves, between rounds, to a lighter model, which
+takes over from its progress so far (in economy and balanced; never for
+models you chose, nor for the hardest tasks).
+
+**The conversation** shows each action on its own line: what it does (Read,
+Edit, Run, Search, Recall…), on what, and what came of it (120 lines, ok,
+exit 1, 3 matches, not allowed: …). The agent's answers come under
+◆ Grafeno Agent; code comes framed, with its language, and diffs in their
+colours.
+
+**The agents panel** draws the sub-agents as a tree under the orchestrator:
+each one's task as its title, the model it uses under it, and what it is
+doing (waiting, thinking, the tool it runs, done).
 
 Under each message, a line shows what memory brought to it: how many
 memories and facts, and their names.

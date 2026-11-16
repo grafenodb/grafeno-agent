@@ -47,6 +47,8 @@ import {
 } from "./agents.js";
 import { AgentsPanel, AgentView, agentKey } from "./agents-panel.js";
 import { ClickArea, Clickable } from "./clicks.js";
+import { ProjectsPanel } from "./projects.js";
+import { ActionLine, describeAction, summarizeOutcome, type Action } from "./activity.js";
 import {
   PERMISSION_LABELS,
   settingsPermissionMode,
@@ -94,6 +96,8 @@ type Item =
       readonly label: string;
       readonly failed: boolean;
       readonly detail?: string;
+      /** How it reads: a verb, a target, what came of it (absent for restored ones). */
+      readonly action?: Action;
     }
   | { readonly id: number; readonly kind: "notice"; readonly text: string; readonly tone: Tone }
   | { readonly id: number; readonly kind: "memory"; readonly recall: Recall }
@@ -115,6 +119,7 @@ type Mode =
   | "connect"
   | "palace"
   | "permissions"
+  | "projects"
   | "plan"
   | "runs"
   | "agents"
@@ -135,6 +140,7 @@ interface Approval {
 }
 
 interface LiveTool {
+  readonly action?: Action;
   readonly id: string;
   readonly label: string;
 }
@@ -391,6 +397,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       abort.current = controller;
       setBusy(label);
       const labels = new Map<string, string>();
+      const calls = new Map<string, { name: string; input: Record<string, unknown> }>();
       let buffer = "";
       const flush = () => {
         if (buffer.trim() !== "") push({ kind: "assistant", text: buffer });
@@ -418,17 +425,35 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                 flush();
                 const callLabel = describeCall(event.call);
                 labels.set(event.call.id, callLabel);
-                setTools((current) => [...current, { id: event.call.id, label: callLabel }]);
+                calls.set(event.call.id, event.call);
+                setTools((current) => [
+                  ...current,
+                  {
+                    id: event.call.id,
+                    label: callLabel,
+                    action: describeAction(event.call.name, event.call.input),
+                  },
+                ]);
                 break;
               }
               case "tool_result": {
                 setTools((current) => current.filter((t) => t.id !== event.callId));
                 const first = event.outcome.content.split("\n", 1)[0] ?? "";
+                const call = calls.get(event.callId);
+                const failed = event.outcome.isError === true;
                 push({
                   kind: "tool",
                   label: labels.get(event.callId) ?? "tool",
-                  failed: event.outcome.isError === true,
-                  ...(event.outcome.isError === true ? { detail: first.slice(0, 160) } : {}),
+                  failed,
+                  ...(failed ? { detail: first.slice(0, 160) } : {}),
+                  ...(call
+                    ? {
+                        action: {
+                          ...describeAction(call.name, call.input),
+                          summary: summarizeOutcome(call.name, event.outcome.content, failed),
+                        },
+                      }
+                    : {}),
                 });
                 break;
               }
@@ -446,7 +471,10 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           notice("The conversation with the model had ended and was started again.", "warning");
         }
         if (turn.result.stopReason === "max_steps")
-          notice("Stopped at the step limit for one turn.", "warning");
+          notice(
+            `It worked through ${String(turn.result.steps)} steps without finishing and paused: say "continue" to go on.`,
+            "warning",
+          );
         else if (turn.result.stopReason === "max_tokens")
           notice("The answer reached its length limit.", "warning");
         else if (turn.result.stopReason === "refusal")
@@ -808,6 +836,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       }
       const free = [
         "help",
+        "projects",
         "connect",
         "palace",
         "clear",
@@ -862,6 +891,9 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           break;
         case "palace":
           setMode("palace");
+          break;
+        case "projects":
+          setMode("projects");
           break;
         case "permissions":
           setPermissionChoice(undefined);
@@ -1110,6 +1142,17 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       else if (input === "n" || input === "N" || key.escape) answerApproval(false);
       return;
     }
+    // Esc closes the menu that is open (each closes itself too), or goes back to
+    // the main agent from a sub-agent: it stops work only from the conversation.
+    if (key.escape && mode !== "chat" && mode !== "exiting") {
+      setMode("chat");
+      return;
+    }
+    if (key.escape && viewed) {
+      setViewing(undefined);
+      setScroll(0);
+      return;
+    }
     if (key.escape && orchestration.current?.running) {
       orchestration.current.orchestrator.pause();
       notice("Pausing the run: what runs now finishes, nothing new starts.", "warning");
@@ -1201,9 +1244,18 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
         narrow={!showSidebar}
       />
       <MenuBar
-        enabled={mode === "chat" && !approval && busy === undefined && phase !== "starting"}
-        onCommand={(command) => {
-          setViewing(undefined);
+        open={mode}
+        busy={busy !== undefined || phase === "starting"}
+        blocked={approval !== undefined}
+        onCommand={(command, close) => {
+          // The same menu again closes it; another one takes its place.
+          if (close) {
+            setMode("chat");
+            return;
+          }
+          setPermissionChoice(undefined);
+          if (mode !== "chat") setMode("chat");
+          if (command !== "agents") setViewing(undefined);
           void submit(`/${command}`);
         }}
       />
@@ -1247,12 +1299,16 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                   <Markdown text={live} />
                 </Box>
               )}
-              {tools.map((tool) => (
-                <Box key={tool.id} paddingLeft={2}>
-                  <Spinner />
-                  <Text color={theme.accent}> {tool.label}</Text>
-                </Box>
-              ))}
+              {tools.map((tool) =>
+                tool.action ? (
+                  <ActionLine key={tool.id} action={tool.action} state="running" />
+                ) : (
+                  <Box key={tool.id} paddingLeft={2}>
+                    <Spinner />
+                    <Text color={theme.accent}> {tool.label}</Text>
+                  </Box>
+                ),
+              )}
               {watched && (
                 <RunView
                   runId={watched.runId}
@@ -1300,6 +1356,30 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                     notice(`Model: ${item.label}. The conversation goes on with it.`, "success");
                     setTick((t) => t + 1);
                   });
+                }}
+              />
+            )}
+            {mode === "projects" && (
+              <ProjectsPanel
+                current={session?.workspace.root ?? process.cwd()}
+                onDone={(project, message) => {
+                  setMode("chat");
+                  if (message) notice(message, "success");
+                  if (!project) return;
+                  if (session && project.path === session.workspace.root) {
+                    notice(`${project.name} is the project already open.`, "info");
+                    return;
+                  }
+                  // A new session in the project's folder: its conversations, runs and memory.
+                  void (async () => {
+                    await session?.close().catch(() => undefined);
+                    process.chdir(project.path);
+                    setSession(undefined);
+                    setAgents([]);
+                    setViewing(undefined);
+                    notice(`Opening ${project.name} (${project.path})…`, "info");
+                    setPhase("starting");
+                  })();
                 }}
               />
             )}
@@ -1889,11 +1969,19 @@ function ItemView({ item }: { readonly item: Item }): ReactNode {
       );
     case "assistant":
       return (
-        <Box marginTop={1} paddingLeft={2}>
-          <Markdown text={item.text} />
+        <Box marginTop={1} flexDirection="column">
+          <Text color={theme.brand} bold>
+            ◆ Grafeno Agent
+          </Text>
+          <Box paddingLeft={2}>
+            <Markdown text={item.text} />
+          </Box>
         </Box>
       );
     case "tool":
+      if (item.action) {
+        return <ActionLine action={item.action} state={item.failed ? "failed" : "done"} />;
+      }
       return (
         <Box paddingLeft={2} flexDirection="column">
           <Text>
@@ -2052,6 +2140,7 @@ function ApprovalBox({
 
 /** The commands the menu bar offers, in order: each button does what its command does. */
 const MENU: readonly (readonly [label: string, command: string])[] = [
+  ["Projects", "projects"],
   ["New", "new"],
   ["Sessions", "resume"],
   ["Model", "models"],
@@ -2065,31 +2154,67 @@ const MENU: readonly (readonly [label: string, command: string])[] = [
   ["Help", "help"],
 ];
 
-/** A row of buttons under the header: the main commands, one click each. */
+/** The menu each button opens, when it opens one: a second click on it closes it. */
+const MENU_MODE: Readonly<Record<string, Mode>> = {
+  projects: "projects",
+  resume: "resume",
+  models: "models",
+  effort: "effort",
+  connect: "connect",
+  permissions: "permissions",
+  palace: "palace",
+  runs: "runs",
+  agents: "agents",
+};
+
+/** Buttons that only look, so they stay on while the agent works. */
+const WHILE_BUSY = new Set(["agents", "usage", "help", "runs", "permissions"]);
+
+/**
+ * A row of buttons under the header: the main commands, one click each.
+ * The menu open now shows pressed; clicking it again closes it, clicking
+ * another one moves to it.
+ */
 function MenuBar({
-  enabled,
+  open,
+  busy,
+  blocked,
   onCommand,
 }: {
-  readonly enabled: boolean;
-  readonly onCommand: (command: string) => void;
+  /** The menu open now, if any. */
+  readonly open: Mode;
+  readonly busy: boolean;
+  /** A question waits for an answer: nothing else may be clicked. */
+  readonly blocked: boolean;
+  readonly onCommand: (command: string, close: boolean) => void;
 }): ReactNode {
   return (
     <Box paddingX={1} gap={1} flexShrink={0} height={1} overflow="hidden">
-      {MENU.map(([label, command]) => (
-        <Clickable
-          key={command}
-          flexShrink={0}
-          {...(enabled
-            ? {
-                onClick: () => {
-                  onCommand(command);
-                },
-              }
-            : {})}
-        >
-          <Text {...(enabled ? { color: theme.brand } : { dimColor: true })}>[{label}]</Text>
-        </Clickable>
-      ))}
+      {MENU.map(([label, command]) => {
+        const pressed = MENU_MODE[command] === open;
+        const enabled = !blocked && (!busy || WHILE_BUSY.has(command) || pressed);
+        return (
+          <Clickable
+            key={command}
+            flexShrink={0}
+            {...(enabled
+              ? {
+                  onClick: () => {
+                    onCommand(command, pressed);
+                  },
+                }
+              : {})}
+          >
+            {pressed ? (
+              <Text inverse bold color={theme.brand}>
+                [{label}]
+              </Text>
+            ) : (
+              <Text {...(enabled ? { color: theme.brand } : { dimColor: true })}>[{label}]</Text>
+            )}
+          </Clickable>
+        );
+      })}
     </Box>
   );
 }

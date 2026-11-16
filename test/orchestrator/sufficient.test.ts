@@ -571,3 +571,93 @@ describe("escalation in a run", { timeout: 60_000 }, () => {
     }
   });
 });
+
+describe("a hot downgrade", { timeout: 60_000 }, () => {
+  it("moves an attempt that spends too much of the plan to a lighter model, keeping its work", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ga-downgrade-"));
+    const plan: Plan = {
+      goal: "Write the api",
+      risks: [],
+      tasks: [
+        spec({ id: "api", complexity: 4, acceptance: [{ check: "files", exist: ["api.txt"] }] }),
+      ],
+    };
+    let used = 0.1;
+    const models: string[] = [];
+    const provider: Provider = {
+      id: "codex",
+      name: "Codex",
+      signIn: "",
+      tiers: catalog.tiers,
+      status: () => Promise.resolve({ installed: true, signedIn: true, detail: "ok" }),
+      models: () => Promise.resolve(catalog.models),
+      efforts: () => catalog.efforts,
+      // Every reading finds the window fuller: the attempt is spending a lot.
+      usage: () => {
+        used += 0.1;
+        return Promise.resolve({ limits: [{ label: "5 hours", used }], at: new Date() });
+      },
+      modelName: (m) => m,
+      create: (choice) => {
+        models.push(`${choice.model ?? ""}·${choice.effort ?? ""}`);
+        return new FakeModel({
+          turns: [
+            (context) => {
+              if (context.system.includes("You are the planner")) {
+                return [{ say: `\`\`\`json\n${JSON.stringify(plan)}\n\`\`\`` }];
+              }
+              // A renewed session finishes; the first one works past its round of steps.
+              if (context.message.includes("Continue the task from here")) {
+                return [
+                  { call: "write_file", input: { path: "api.txt", content: "api\n" } },
+                  { say: "Done." },
+                ];
+              }
+              if (/renewed to free context/.test(context.message)) {
+                return [{ say: "Read the code; the API is next." }];
+              }
+              return [
+                { call: "list_files", input: {} },
+                { say: "looking" },
+                { call: "list_files", input: {} },
+                { say: "still looking" },
+                { call: "list_files", input: {} },
+              ];
+            },
+          ],
+        });
+      },
+    };
+    const orchestrator = new Orchestrator({
+      provider,
+      project: { name: "shop", path: dir },
+      projectRoot: dir,
+      dataDir: join(dir, "data"),
+      metrics: false,
+      mode: "extended",
+      routing: "balanced",
+      delivery: "manual",
+      context: { roundSteps: 2 },
+    });
+    try {
+      const planned = await orchestrator.plan("Write the api");
+      const { run } = await orchestrator.start("Write the api", planned);
+      const state = await orchestrator.run(run.id);
+      expect(state).toBe("completed");
+      const downgraded = orchestrator.store.events(run.id).filter((e) => e.kind === "downgraded");
+      expect(downgraded).toHaveLength(1);
+      const from = String(downgraded[0]?.data.from);
+      const to = String(downgraded[0]?.data.to);
+      const order = ["light", "standard", "deep"];
+      const classOfArm = (arm: string) =>
+        order.indexOf(classOf(arm.split(" · ")[0] ?? "", catalog) ?? "");
+      expect(classOfArm(to)).toBeLessThan(classOfArm(from));
+      expect(Number(downgraded[0]?.data.share)).toBeGreaterThanOrEqual(0.08);
+      // The lighter model took over in the same attempt, from the progress so far.
+      expect(models.at(-1)).toBe(to.replace(" · ", "·"));
+    } finally {
+      orchestrator.close();
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+});

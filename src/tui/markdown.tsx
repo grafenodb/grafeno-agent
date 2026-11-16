@@ -218,26 +218,38 @@ export function Markdown({ text }: { readonly text: string }): ReactNode {
                 </Text>
               </Box>
             );
-          case "code":
+          case "code": {
+            // A frame of its own, the language on top, and diffs in their colours.
+            const diff = block.lang === "diff" || block.lang === "patch";
             return (
               <Box
                 key={index}
                 flexDirection="column"
-                borderStyle="single"
-                borderTop={false}
-                borderRight={false}
-                borderBottom={false}
+                borderStyle="round"
                 borderColor={theme.border}
-                paddingLeft={1}
+                paddingX={1}
+                marginY={0}
               >
-                {block.lang !== "" && <Text dimColor>{block.lang}</Text>}
-                {block.lines.map((line, n) => (
-                  <Text key={n} color={theme.code}>
-                    {line === "" ? " " : line}
-                  </Text>
-                ))}
+                <Text dimColor>{block.lang !== "" ? block.lang : "code"}</Text>
+                {block.lines.map((line, n) => {
+                  const color = diff
+                    ? line.startsWith("+")
+                      ? theme.success
+                      : line.startsWith("-")
+                        ? theme.error
+                        : line.startsWith("@@")
+                          ? theme.accent
+                          : theme.code
+                    : theme.code;
+                  return (
+                    <Text key={n} color={color}>
+                      {line === "" ? " " : line}
+                    </Text>
+                  );
+                })}
               </Box>
             );
+          }
           case "table":
             return <Table key={index} header={block.header} rows={block.rows} />;
           case "rule":

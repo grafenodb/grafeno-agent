@@ -675,6 +675,29 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.unmount();
   });
 
+  it("menus: the same button closes its menu, another moves to it, and Esc only closes", async () => {
+    const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
+    await ready(app);
+    clickOn(app, "[Model]");
+    await until(() => now(app).includes("Haiku 5.5"), "the models");
+    // Another button: its menu takes the place of the one open.
+    clickOn(app, "[Effort]");
+    await until(
+      () => now(app).includes("Effort ·") && !now(app).includes("Haiku 5.5"),
+      "the efforts",
+    );
+    // The same button again: the menu closes.
+    clickOn(app, "[Effort]");
+    await until(() => now(app).includes("Ask anything"), "the menu closed");
+    // Esc closes a menu and does nothing else.
+    clickOn(app, "[Model]");
+    await until(() => now(app).includes("Haiku 5.5"), "the models again");
+    app.stdin.write("");
+    await until(() => now(app).includes("Ask anything"), "closed by esc");
+    expect(seen(app)).not.toContain("Pausing the run");
+    app.unmount();
+  });
+
   it("guides the first run: memory, then the provider", async () => {
     const app = render(<App services={services({ turns: [[{ say: "hi" }]], needsSetup: true })} />);
     await until(() => now(app).includes("The agent's own Grafeno"), "the memory choice");
@@ -926,7 +949,10 @@ describe("sub-agents in the interface", { timeout: 90_000 }, () => {
       () => `the agents panel; the screen was:\n${now(app)}`,
       45_000,
     );
-    expect(now(app)).toContain("Main");
+    expect(now(app)).toContain("Orchestrator");
+    // Sub-agents hang from it as a tree, titled by their task.
+    expect(now(app)).toMatch(/[├└]─/);
+    expect(now(app)).toContain("Write alpha");
     // The main agent gets the report as its tool's answer.
     await until(
       () => now(app).includes("Report: The sub-agents' run ended: completed."),

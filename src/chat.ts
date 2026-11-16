@@ -109,7 +109,9 @@ export async function runChat(options: ChatOptions): Promise<void> {
         );
       }
       if (turn.result.stopReason === "max_steps") {
-        write("\n  (Stopped at the step limit for one turn.)\n");
+        write(
+          `\n  (It worked through ${String(turn.result.steps)} steps without finishing and paused: say "continue" to go on.)\n`,
+        );
       } else if (turn.result.stopReason === "max_tokens") {
         write("\n  (The answer reached its length limit.)\n");
       } else if (turn.result.stopReason === "refusal") {

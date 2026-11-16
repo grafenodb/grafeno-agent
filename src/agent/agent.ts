@@ -18,7 +18,17 @@ export interface AgentLimits {
    * new turn starts. Default: no limit beyond the plan's own.
    */
   readonly maxSessionTokens?: number;
+  /**
+   * Times a turn that reached its step limit goes on by itself, in the same
+   * conversation, before it stops: the person asked for the work, not for a
+   * pause every so many tool calls. Default: 0 (workers handle their own rounds).
+   */
+  readonly continueRounds?: number;
 }
+
+/** What the model is told when its turn goes on after the step limit. */
+export const CONTINUE_TURN =
+  "Continue from where you stopped: finish the task, then answer. Do not repeat what is done.";
 
 export interface AgentOptions {
   readonly model: Model;
@@ -106,9 +116,24 @@ export class Agent {
         const conversation = await this.#open();
         const progress = { seen: false };
         try {
-          const result = await this.#run(conversation, prepared, options, () => {
+          let result = await this.#run(conversation, prepared, options, () => {
             progress.seen = true;
           });
+          // At the step limit, the turn goes on by itself, a bounded number of times.
+          const rounds = this.options.limits?.continueRounds ?? 0;
+          for (
+            let round = 0;
+            round < rounds && result.stopReason === "max_steps" && options.signal?.aborted !== true;
+            round++
+          ) {
+            const more = await this.#run(conversation, CONTINUE_TURN, options, () => undefined);
+            result = {
+              text: [result.text, more.text].filter((t) => t.trim() !== "").join("\n\n"),
+              stopReason: more.stopReason,
+              usage: add(result.usage, more.usage),
+              steps: result.steps + more.steps,
+            };
+          }
           this.#turns++;
           return { result, restarted };
         } catch (error) {

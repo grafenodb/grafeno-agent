@@ -65,10 +65,11 @@ export function AgentsPanel({
         <Entry
           selected={viewing === undefined}
           mark={main.busy ? <Spinner /> : <Text color={theme.success}>◆</Text>}
-          name="Main"
-          detail={main.model}
-          doing={main.doing}
+          title="Orchestrator"
+          subtitle={main.model}
+          state={main.doing}
           width={width}
+          depth={0}
           {...(onSelect
             ? {
                 onClick: () => {
@@ -77,8 +78,9 @@ export function AgentsPanel({
               }
             : {})}
         />
-        {agents.map((agent) => {
+        {agents.map((agent, index) => {
           const look = MARK[agent.state];
+          const model = [agent.model, agent.effort].filter(Boolean).join(" · ");
           return (
             <Entry
               key={agentKey(agent)}
@@ -90,10 +92,12 @@ export function AgentsPanel({
                   <Text color={look.color}>{look.mark}</Text>
                 )
               }
-              name={agent.id}
-              detail={[agent.model, agent.effort].filter(Boolean).join(" · ") || agent.title}
-              doing={agent.doing ?? agent.state}
+              title={agent.title || agent.id}
+              subtitle={model || "no model yet"}
+              state={agent.doing ?? agent.state}
               width={width}
+              depth={1}
+              last={index === agents.length - 1}
               {...(onSelect
                 ? {
                     onClick: () => {
@@ -117,47 +121,61 @@ export function AgentsPanel({
 function Entry({
   selected,
   mark,
-  name,
-  detail,
-  doing,
+  title,
+  subtitle,
+  state,
   width,
+  depth,
+  last = false,
   onClick,
 }: {
   readonly onClick?: () => void;
   readonly selected: boolean;
   readonly mark: ReactNode;
-  readonly name: string;
-  readonly detail: string;
-  readonly doing: string;
+  /** The orchestrator, or a sub-agent's task. */
+  readonly title: string;
+  /** The model it uses. */
+  readonly subtitle: string;
+  /** What it is doing now: waiting, thinking, a tool, done. */
+  readonly state: string;
   readonly width: number;
+  /** 0 for the orchestrator, 1 for its sub-agents: drawn as a tree under it. */
+  readonly depth: 0 | 1;
+  readonly last?: boolean;
 }): ReactNode {
-  // The one being viewed is drawn as a selection: a bar on its left and its
-  // name on an inverted band, so it is plain which agent is on screen.
+  // Sub-agents hang from the orchestrator: a branch for the title, a stem
+  // beside the lines under it (none under the last one).
+  const branch = depth === 0 ? "" : last ? "└─" : "├─";
+  const stem = depth === 0 ? "" : last ? "  " : "│ ";
   const bar = selected ? "▌" : " ";
-  const label = ` ${name}`;
+  const room = Math.max(4, width - 4 - branch.length);
   return (
-    <Clickable flexDirection="column" marginBottom={1} onClick={onClick}>
+    <Clickable flexDirection="column" marginBottom={depth === 0 ? 1 : 0} onClick={onClick}>
       <Text wrap="truncate-end">
         <Text color={selected ? theme.brand : theme.muted}>{bar}</Text>
+        <Text color={theme.muted}>{branch}</Text>
         {mark}
         {selected ? (
           <Text inverse bold color={theme.brand}>
-            {label.padEnd(Math.max(label.length, width - 4))}
+            {` ${title}`.padEnd(room)}
           </Text>
         ) : (
-          <Text>{label}</Text>
+          <Text bold={depth === 0}> {title}</Text>
         )}
       </Text>
       <Text wrap="truncate-end" {...(selected ? { color: theme.brand } : { dimColor: true })}>
         <Text color={selected ? theme.brand : theme.muted}>{bar}</Text>
-        {"   "}
-        {detail}
+        <Text color={theme.muted}>{stem}</Text>
+        {"  "}
+        {subtitle}
       </Text>
       <Text color={theme.accent} wrap="truncate-end">
         <Text color={selected ? theme.brand : theme.muted}>{bar}</Text>
-        {"   "}
-        {doing}
+        <Text color={theme.muted}>{stem}</Text>
+        {"  "}
+        {state}
       </Text>
+      {depth === 1 && !last ? <Text color={theme.muted}> {stem}</Text> : null}
     </Clickable>
   );
 }
@@ -170,17 +188,14 @@ export function AgentView({ agent }: { readonly agent: SubAgent }): ReactNode {
   return (
     <Box flexDirection="column">
       <Box marginTop={1} flexDirection="column">
-        <Text>
-          <Text bold color={theme.brand}>
-            {agent.id}
-          </Text>
-          <Text dimColor>
-            {" "}
-            · {agent.title}
-            {agent.model ? ` · ${agent.model}` : ""}
-            {agent.effort ? ` · ${agent.effort}` : ""} · {agent.state}
-          </Text>
+        <Text bold color={theme.brand}>
+          {agent.title || agent.id}
         </Text>
+        <Text dimColor>
+          {[agent.model, agent.effort].filter(Boolean).join(" · ") || "no model yet"} · task{" "}
+          {agent.id}
+        </Text>
+        <Text color={theme.accent}>{agent.doing ?? agent.state}</Text>
         {agent.reason && ["review", "failed", "blocked"].includes(agent.state) && (
           <Text color={theme.warning} wrap="wrap">
             {agent.reason.split("\n", 1)[0]}

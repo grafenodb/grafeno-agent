@@ -20,7 +20,10 @@ import { explore, suggest } from "./learned.js";
 import { attemptShare, weightedTokens, type CostBook } from "./costs.js";
 import { computeEvidence, type CellEvidence } from "./capability.js";
 import type { AttemptRecord } from "./metrics.js";
-import { chooseSufficient, overBudget, type PriorAttempt } from "./sufficient.js";
+import { chooseSufficient, ladder, overBudget, type PriorAttempt } from "./sufficient.js";
+
+/** An attempt that took this share of a window and is not done moves to a lighter model. */
+export const HOT_DOWNGRADE_SHARE = 0.08;
 import type { CellStats } from "./stats.js";
 import type { AttemptContext, AttemptOutcome, TaskRunner } from "./scheduler.js";
 import type { TaskRecord } from "./store.js";
@@ -71,7 +74,7 @@ export interface ContextPolicy {
   readonly renewAt?: number;
   /** Model steps in one round. Default: 40. */
   readonly roundSteps?: number;
-  /** Rounds in one attempt; then the attempt is retried. Default: 3. */
+  /** Rounds in one attempt; then the attempt is retried. Default: 6. */
   readonly maxRounds?: number;
   /** The window assumed when the provider does not say it (an estimate, recorded as such). Default: 200 000. */
   readonly assumedWindow?: number;
@@ -450,6 +453,52 @@ export class WorkerPool implements TaskRunner {
   }
 
   /**
+   * A lighter arm for an attempt that is spending too much of its provider's
+   * window (in economy and balanced, never for models the person chose nor
+   * for the hardest tasks): the next class down, at medium effort, or the
+   * same model at a lower effort when it is the lightest class already.
+   */
+  async #downgradeFor(
+    task: TaskSpec,
+    providerId: string,
+    running: { model: string; tier: Tier; effort?: string | undefined },
+    done: number,
+    spend: { before: { label: string; used: number } | undefined; own: number; served: number },
+  ): Promise<
+    { model: string; tier: Tier; effort?: string | undefined; share: number } | undefined
+  > {
+    const mode = this.options.routing;
+    if ((mode !== "economy" && mode !== "balanced") || done >= 2 || task.complexity >= 5) {
+      return undefined;
+    }
+    if (!spend.before) return undefined;
+    const catalog = await this.catalog(providerId);
+    if (catalog.pinned === true) return undefined;
+    // Read anew: what this attempt spent is what is being judged.
+    const now = (await this.usage(providerId, true))?.limits.find(
+      (l) => l.label === spend.before?.label,
+    )?.used;
+    const share = attemptShare(spend.before.used, now, spend.own, spend.served);
+    if (share === undefined || share < HOT_DOWNGRADE_SHARE) return undefined;
+    const rungs = ladder(catalog);
+    const at = rungs.findIndex(
+      (r) => r.model === running.model && (r.effort ?? "") === (running.effort ?? ""),
+    );
+    if (at <= 0) return undefined;
+    const below = rungs.slice(0, at);
+    const order = ["light", "standard", "deep"] as const;
+    const lowerClass = order[Math.max(0, order.indexOf(running.tier) - 1)];
+    const target =
+      running.tier !== "light"
+        ? (below.filter((r) => r.tier === lowerClass && r.effort === "medium").at(-1) ??
+          below.filter((r) => r.tier === lowerClass).at(-1))
+        : below.filter((r) => r.model === running.model).at(-1);
+    return target
+      ? { model: target.model, tier: target.tier, effort: target.effort, share }
+      : undefined;
+  }
+
+  /**
    * The outcome of a failed attempt. With several providers, one that
    * cannot take the task now (its limit, its sign-in) is set aside, and the
    * task goes back to be given to another without spending an attempt:
@@ -568,13 +617,16 @@ export class WorkerPool implements TaskRunner {
         reason: error instanceof Error ? error.message : String(error),
       });
     }
-    const choice: ModelChoice = {
+    let choice: ModelChoice = {
       ...(chosen.model === "default" ? {} : { model: chosen.model }),
       ...(chosen.effort === undefined ? {} : { effort: chosen.effort }),
     };
+    /** The arm running now: a hot downgrade may move the attempt to a lighter one. */
+    let running = { model: chosen.model, tier: chosen.tier, effort: chosen.effort };
+    let downgrades = 0;
     const policy = this.options.context ?? {};
     const roundSteps = policy.roundSteps ?? this.options.maxSteps ?? 40;
-    const maxRounds = policy.maxRounds ?? 3;
+    const maxRounds = policy.maxRounds ?? 6;
     const budget = this.options.attemptTokens?.(task.spec);
     const approver =
       this.options.approverFor?.(task, name, context) ?? this.options.approve ?? (() => false);
@@ -677,10 +729,16 @@ export class WorkerPool implements TaskRunner {
           };
           break;
         }
+        // Between rounds: is this attempt spending too much of the plan on its model?
+        const lighter = await this.#downgradeFor(task.spec, provider.id, running, downgrades, {
+          before: fullest,
+          own,
+          served: (this.#served.get(provider.id) ?? 0) - servedBefore,
+        });
         // Between rounds, never in the middle of a tool call: is the context too full?
         const window = seen.window ?? policy.assumedWindow ?? 200_000;
         const share = seen.used / window;
-        if (share >= (policy.renewAt ?? 0.8)) {
+        if (lighter || share >= (policy.renewAt ?? 0.8)) {
           const progress = await agent.turn(PROGRESS_REQUEST, {
             signal: context.signal,
             onEvent: track,
@@ -697,6 +755,31 @@ export class WorkerPool implements TaskRunner {
             files: files.length,
           });
           await agent.close();
+          if (lighter) {
+            // Hot: the work so far is kept, a lighter model goes on with it.
+            context.note("downgraded", {
+              from: `${running.model}${running.effort ? ` · ${running.effort}` : ""}`,
+              to: `${lighter.model}${lighter.effort ? ` · ${lighter.effort}` : ""}`,
+              share: lighter.share,
+              round: rounds,
+            });
+            running = { model: lighter.model, tier: lighter.tier, effort: lighter.effort };
+            choice = {
+              model: lighter.model,
+              ...(lighter.effort === undefined ? {} : { effort: lighter.effort }),
+            };
+            downgrades++;
+            const label = this.multiple ? `${provider.id}/${lighter.model}` : lighter.model;
+            this.#active.set(name, {
+              name,
+              task: task.id,
+              model: label,
+              tier: lighter.tier,
+              started: new Date(),
+              ...(lighter.effort ? { effort: lighter.effort } : {}),
+            });
+            this.options.onChange?.(this.active);
+          }
           agent = makeAgent();
           renewals++;
           seen.used = 0;
