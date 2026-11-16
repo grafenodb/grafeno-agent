@@ -307,6 +307,9 @@ export class LocalRuntime implements ProviderRuntime {
                 keyOptional: LOCAL_KIND_INFO[connection.kind].key !== "required",
                 noKey: `${connection.name} needs a key: set it in /connect.`,
                 stream: true,
+                ...(model.contextLength === undefined
+                  ? {}
+                  : { contextWindow: model.contextLength }),
                 noTools,
                 timeoutMs,
                 inference: {

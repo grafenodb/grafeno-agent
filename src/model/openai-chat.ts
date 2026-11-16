@@ -43,6 +43,8 @@ export interface ChatCompletionsOptions {
   readonly timeoutMs?: number;
   /** The model takes no tools: none are offered, and the model only answers. */
   readonly noTools?: boolean;
+  /** The context the model runs with, when the server said (a local one): shown against what is used. */
+  readonly contextWindow?: number;
 }
 
 /** A message of an OpenAI-style chat. */
@@ -135,7 +137,11 @@ class ChatConversation implements Conversation {
         };
         if (answer.model) yield { type: "model_info", model: answer.model };
         if (answer.usage?.prompt_tokens)
-          yield { type: "context", used: answer.usage.prompt_tokens };
+          yield {
+            type: "context",
+            used: answer.usage.prompt_tokens,
+            ...(this.model.contextWindow === undefined ? {} : { window: this.model.contextWindow }),
+          };
         const choice = answer.choices?.[0];
         const content = choice?.message?.content ?? "";
         const calls = choice?.message?.tool_calls ?? [];

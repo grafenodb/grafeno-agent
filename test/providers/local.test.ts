@@ -511,16 +511,24 @@ describe("the OpenAI-compatible adapter, streamed", () => {
       noKey: "no key",
       stream: true,
       inference: { temperature: 0.1 },
+      contextWindow: 32768,
       fetch: fetcher,
     });
     const events: string[] = [];
     const conversation = await model.open({ system: "s", tools });
     for await (const event of conversation.send("look at b.ts")) {
       if (event.type === "text") events.push(`text:${event.text}`);
+      if (event.type === "context")
+        events.push(`context:${String(event.used)}/${String(event.window)}`);
       if (event.type === "tool_call")
         events.push(`call:${event.call.name}:${JSON.stringify(event.call.input)}`);
     }
-    expect(events).toEqual(["text:Reading", 'call:read_file:{"path":"b.ts"}', "text:Done."]);
+    expect(events).toEqual([
+      "text:Reading",
+      'call:read_file:{"path":"b.ts"}',
+      "text:Done.",
+      "context:50/32768",
+    ]);
     expect(seen[0]?.headers.authorization).toBeUndefined();
     expect(seen[0]?.body).toMatchObject({ stream: true, temperature: 0.1 });
   });
