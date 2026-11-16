@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **The interface takes clicks**: a menu bar of the main commands under the
+  header, rows of every list, the commands offered as you type `/`, the
+  agents panel, the side panel's sections, `/connect` (a provider, its
+  place in Auto, its models) and the permission buttons. Every click has a
+  command or a key that does the same.
 - **Minimum sufficient model routing** (`economy` and `balanced`, with
   `AGENT_ROUTER=learned`, the defaults): each attempt runs on the cheapest
   model and effort likely enough to pass the task's checks, from a stated

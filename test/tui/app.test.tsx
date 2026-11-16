@@ -175,6 +175,19 @@ async function type(app: App, text: string): Promise<void> {
   }
 }
 
+/** A left click on the first place `text` shows on the screen, as the terminal reports it. */
+function clickOn(app: App, text: string): void {
+  const lines = now(app)
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001B\[[0-9;?]*[A-Za-z]/g, "")
+    .split("\n");
+  const row = lines.findIndex((line) => line.includes(text));
+  if (row < 0) throw new Error(`"${text}" is not on the screen:\n${lines.join("\n")}`);
+  const column = (lines[row] ?? "").indexOf(text) + 1;
+  app.stdin.write(`\u001B[<0;${String(column + 1)};${String(row + 1)}M`);
+  app.stdin.write(`\u001B[<0;${String(column + 1)};${String(row + 1)}m`);
+}
+
 async function ready(app: App): Promise<void> {
   await until(() => now(app).includes("Ask anything"), "the prompt");
   // The box listens to keys from the moment after it is drawn active.
@@ -605,6 +618,60 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     await type(app, "keep going with the task");
     app.stdin.write(ENTER);
     await until(() => seen(app).includes("Alone-OK"), "the model told it is unattended");
+    app.unmount();
+  });
+
+  it("does with a click what the commands do: the menu bar, a list's rows, the permission buttons", async () => {
+    const note: Tool = {
+      name: "write_note",
+      description: "Writes a note.",
+      inputSchema: { type: "object", properties: { text: { type: "string" } } },
+      writes: true,
+      describe: () => "write a note",
+      run: () => "written",
+    };
+    const chosen: ModelChoice[] = [];
+    const app = render(
+      <App
+        services={services({
+          turns: [
+            [
+              { call: "write_note", input: { text: "x" } },
+              { say: (c) => `result: ${c.results[0]?.content ?? ""}` },
+            ],
+          ],
+          tools: [note],
+          chosen,
+        })}
+      />,
+    );
+    await ready(app);
+    // The menu bar: [Model] opens the list of models, as /models does.
+    expect(now(app)).toContain("[New]");
+    clickOn(app, "[Model]");
+    await until(
+      () => now(app).includes("Haiku 5.5") && now(app).includes("click choose"),
+      "the models",
+    );
+    // A row of the list: chosen with a click.
+    clickOn(app, "Haiku 5.5");
+    await until(() => seen(app).includes("Model: Haiku 5.5"), "the model chosen by a click");
+    // The list's own cancel, and the help button.
+    await ready(app);
+    clickOn(app, "[Effort]");
+    await until(() => now(app).includes("esc cancel"), "the efforts");
+    clickOn(app, "esc cancel");
+    await ready(app);
+    clickOn(app, "[Help]");
+    await until(() => seen(app).includes("/permissions"), "the help");
+    // A permission request: answered with its button, after the moment it takes no answer.
+    await type(app, "write it");
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("Permission needed"), "the question");
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    clickOn(app, "y allow");
+    await until(() => seen(app).includes("result: written"), "the answer");
+    expect(seen(app)).toContain("Allowed: write a note");
     app.unmount();
   });
 

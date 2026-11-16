@@ -230,3 +230,14 @@ describe("a permission request, in a line", () => {
     expect(approvalSummary(`run in the project:\n${"x".repeat(300)}`)).toHaveLength(160);
   });
 });
+
+describe("clicks", () => {
+  it("reads left presses from the terminal's mouse reports, and nothing else", async () => {
+    const { clicksIn } = await import("../../src/tui/clicks.js");
+    const ESC = String.fromCharCode(27);
+    // A press at column 10, row 5 (1-based) is the cell (9, 4).
+    expect(clicksIn(`${ESC}[<0;10;5M${ESC}[<0;10;5m`)).toEqual([{ x: 9, y: 4 }]);
+    // The wheel, a drag, the right button and typed text are not clicks.
+    expect(clicksIn(`${ESC}[<64;10;5M${ESC}[<32;10;5M${ESC}[<2;10;5Mhello`)).toEqual([]);
+  });
+});

@@ -46,6 +46,7 @@ import {
   withReport,
 } from "./agents.js";
 import { AgentsPanel, AgentView, agentKey } from "./agents-panel.js";
+import { ClickArea, Clickable } from "./clicks.js";
 import {
   PERMISSION_LABELS,
   settingsPermissionMode,
@@ -138,7 +139,19 @@ interface LiveTool {
   readonly label: string;
 }
 
+/**
+ * The interface, clickable: what a command or a key does, a click on the
+ * menu, a list, a panel or a button does too.
+ */
 export function App({ services }: { readonly services: AppServices }): ReactNode {
+  return (
+    <ClickArea>
+      <AppBody services={services} />
+    </ClickArea>
+  );
+}
+
+function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   const { exit } = useApp();
   const { columns, rows } = useWindowSize();
   const [phase, setPhase] = useState<Phase>(() =>
@@ -1071,6 +1084,21 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
     ],
   );
 
+  /**
+   * Answers the permission request on screen, by a key or a click. A request
+   * that just appeared takes no answer for a moment: a key typed for a
+   * message, or a click aimed at what was there before, is not an answer.
+   */
+  const answerApproval = (allowed: boolean) => {
+    if (!approval || Date.now() - approvalShown.current < APPROVAL_GRACE_MS) return;
+    approval.resolve(allowed);
+    setApproval(undefined);
+    notice(
+      `${allowed ? "Allowed" : "Not allowed"}: ${approvalSummary(approval.what)}`,
+      allowed ? "success" : "warning",
+    );
+  };
+
   const onWheel = useCallback((direction: number) => {
     setScroll((s) => Math.max(0, s + direction * 3));
   }, []);
@@ -1078,18 +1106,8 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
 
   useInput((input, key) => {
     if (approval) {
-      // A request that just appeared does not take keys typed for something else
-      // (a message being written): only y, n or esc answer it, a moment after it shows.
-      if (Date.now() - approvalShown.current < APPROVAL_GRACE_MS) return;
-      if (input === "y" || input === "Y" || input === "s") {
-        approval.resolve(true);
-        setApproval(undefined);
-        notice(`Allowed: ${approvalSummary(approval.what)}`, "success");
-      } else if (input === "n" || input === "N" || key.escape) {
-        approval.resolve(false);
-        setApproval(undefined);
-        notice(`Not allowed: ${approvalSummary(approval.what)}`, "warning");
-      }
+      if (input === "y" || input === "Y" || input === "s") answerApproval(true);
+      else if (input === "n" || input === "N" || key.escape) answerApproval(false);
       return;
     }
     if (key.escape && orchestration.current?.running) {
@@ -1182,6 +1200,13 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
         busy={busy !== undefined}
         narrow={!showSidebar}
       />
+      <MenuBar
+        enabled={mode === "chat" && !approval && busy === undefined && phase !== "starting"}
+        onCommand={(command) => {
+          setViewing(undefined);
+          void submit(`/${command}`);
+        }}
+      />
       <Box flexDirection="row" flexGrow={1}>
         {showAgents && (
           <AgentsPanel
@@ -1193,6 +1218,10 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
             }}
             agents={agents}
             viewing={viewed ? viewing : undefined}
+            onSelect={(key) => {
+              setViewing(key);
+              setScroll(0);
+            }}
           />
         )}
         <Box flexDirection="column" flexGrow={1} paddingX={1}>
@@ -1242,7 +1271,13 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
           )}
           {scroll > 0 && <Text dimColor> ↓ {String(scroll)} lines below · pgdn</Text>}
           <Box flexDirection="column" flexShrink={0}>
-            {approval && <ApprovalBox approval={approval} waiting={approvals.length - 1} />}
+            {approval && (
+              <ApprovalBox
+                approval={approval}
+                waiting={approvals.length - 1}
+                onAnswer={answerApproval}
+              />
+            )}
             {mode === "models" && session && (
               <Picker
                 title="Model"
@@ -1647,6 +1682,13 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
             recall={recall}
             {...(auto ? { autoUsage } : {})}
             {...(viewed ? { agent: viewed } : {})}
+            {...(mode === "chat" && !approval && busy === undefined
+              ? {
+                  onCommand: (command: string) => {
+                    void submit(`/${command}`);
+                  },
+                }
+              : {})}
           />
         )}
       </Box>
@@ -1970,9 +2012,11 @@ export function approvalSummary(what: string): string {
 function ApprovalBox({
   approval,
   waiting,
+  onAnswer,
 }: {
   readonly approval: Approval;
   readonly waiting: number;
+  readonly onAnswer: (allowed: boolean) => void;
 }): ReactNode {
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.warning} paddingX={1}>
@@ -1981,17 +2025,71 @@ function ApprovalBox({
       </Text>
       <Text>The agent wants to {approval.what}</Text>
       {approval.reason !== undefined && <Text dimColor>{approval.reason}</Text>}
-      <Text>
-        <Text color={theme.success} bold>
-          y
-        </Text>
-        <Text> allow · </Text>
-        <Text color={theme.error} bold>
-          n
-        </Text>
-        <Text> or esc don’t allow</Text>
-        <Text dimColor> · enter does not answer</Text>
-      </Text>
+      <Box gap={2}>
+        <Clickable
+          onClick={() => {
+            onAnswer(true);
+          }}
+        >
+          <Text color={theme.success} bold inverse>
+            {" y allow "}
+          </Text>
+        </Clickable>
+        <Clickable
+          onClick={() => {
+            onAnswer(false);
+          }}
+        >
+          <Text color={theme.error} bold inverse>
+            {" n don’t allow "}
+          </Text>
+        </Clickable>
+        <Text dimColor>click, or y / n / esc · enter does not answer</Text>
+      </Box>
+    </Box>
+  );
+}
+
+/** The commands the menu bar offers, in order: each button does what its command does. */
+const MENU: readonly (readonly [label: string, command: string])[] = [
+  ["New", "new"],
+  ["Sessions", "resume"],
+  ["Model", "models"],
+  ["Effort", "effort"],
+  ["Provider", "connect"],
+  ["Permissions", "permissions"],
+  ["Memory", "palace"],
+  ["Runs", "runs"],
+  ["Agents", "agents"],
+  ["Usage", "usage"],
+  ["Help", "help"],
+];
+
+/** A row of buttons under the header: the main commands, one click each. */
+function MenuBar({
+  enabled,
+  onCommand,
+}: {
+  readonly enabled: boolean;
+  readonly onCommand: (command: string) => void;
+}): ReactNode {
+  return (
+    <Box paddingX={1} gap={1} flexShrink={0} height={1} overflow="hidden">
+      {MENU.map(([label, command]) => (
+        <Clickable
+          key={command}
+          flexShrink={0}
+          {...(enabled
+            ? {
+                onClick: () => {
+                  onCommand(command);
+                },
+              }
+            : {})}
+        >
+          <Text {...(enabled ? { color: theme.brand } : { dimColor: true })}>[{label}]</Text>
+        </Clickable>
+      ))}
     </Box>
   );
 }

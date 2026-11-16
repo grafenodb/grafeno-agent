@@ -205,6 +205,27 @@ mouse, or set `GRAFENO_AGENT_MOUSE=off`); Ctrl+B shows or hides the panel;
 Ctrl+N and Ctrl+P go through the main agent and its sub-agents;
 Esc interrupts the answer; Ctrl+C interrupts, or leaves.
 
+**The mouse does what the commands do.** Every click has a command or a
+key that does the same, so nothing needs the mouse:
+
+- the **menu bar** under the header: `[New]` `[Sessions]` `[Model]`
+  `[Effort]` `[Provider]` `[Permissions]` `[Memory]` `[Runs]` `[Agents]`
+  `[Usage]` `[Help]`, each the command of its name (dimmed while the agent
+  answers or a question is open);
+- **lists** (models, efforts, sessions to resume, runs, permissions, the
+  plan to run): click a row to choose it, `esc cancel` to leave;
+- the **commands offered** as you type `/`: click one to run it;
+- the **agents panel**: click the main agent or a sub-agent to see it;
+- the **side panel**: click Model, the plan's usage or Memory to open
+  `/models`, `/usage refresh` or `/palace`;
+- **`/connect`**: click a provider to use it, its `[in Auto]` mark to
+  include it or leave it out, its `models:` to choose them, and Auto;
+- a **permission request**: its `y allow` and `n don't allow` buttons.
+
+It needs a terminal that reports the mouse (most do).
+`GRAFENO_AGENT_MOUSE=off` leaves the mouse to the terminal: then clicks and
+the wheel do nothing here, and selecting text needs no Shift.
+
 Under each message, a line shows what memory brought to it: how many
 memories and facts, and their names.
 

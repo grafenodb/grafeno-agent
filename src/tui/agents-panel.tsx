@@ -4,6 +4,7 @@ import type { SubAgent } from "./agents.js";
 import { Markdown } from "./markdown.js";
 import { Spinner } from "./spinner.js";
 import { theme } from "./theme.js";
+import { Clickable } from "./clicks.js";
 
 /** The key of a sub-agent in the panel: its run and task. */
 export function agentKey(agent: Pick<SubAgent, "runId" | "id">): string {
@@ -31,12 +32,15 @@ export function AgentsPanel({
   main,
   agents,
   viewing,
+  onSelect,
 }: {
   readonly width: number;
   readonly main: { readonly model: string; readonly doing: string; readonly busy: boolean };
   readonly agents: readonly SubAgent[];
   /** The key of the agent shown, or undefined for the main one. */
   readonly viewing: string | undefined;
+  /** Called with the agent clicked (undefined: the main one). */
+  readonly onSelect?: (key: string | undefined) => void;
 }): ReactNode {
   const running = agents.filter((a) => a.state === "running").length;
   return (
@@ -65,6 +69,13 @@ export function AgentsPanel({
           detail={main.model}
           doing={main.doing}
           width={width}
+          {...(onSelect
+            ? {
+                onClick: () => {
+                  onSelect(undefined);
+                },
+              }
+            : {})}
         />
         {agents.map((agent) => {
           const look = MARK[agent.state];
@@ -83,13 +94,20 @@ export function AgentsPanel({
               detail={[agent.model, agent.effort].filter(Boolean).join(" · ") || agent.title}
               doing={agent.doing ?? agent.state}
               width={width}
+              {...(onSelect
+                ? {
+                    onClick: () => {
+                      onSelect(agentKey(agent));
+                    },
+                  }
+                : {})}
             />
           );
         })}
       </Box>
       <Box marginTop={1}>
         <Text dimColor wrap="wrap">
-          ctrl+n / ctrl+p switch (▌ the one on screen) · /agents picks one
+          click one, or ctrl+n / ctrl+p (▌ the one on screen) · /agents
         </Text>
       </Box>
     </Box>
@@ -103,7 +121,9 @@ function Entry({
   detail,
   doing,
   width,
+  onClick,
 }: {
+  readonly onClick?: () => void;
   readonly selected: boolean;
   readonly mark: ReactNode;
   readonly name: string;
@@ -116,7 +136,7 @@ function Entry({
   const bar = selected ? "▌" : " ";
   const label = ` ${name}`;
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Clickable flexDirection="column" marginBottom={1} onClick={onClick}>
       <Text wrap="truncate-end">
         <Text color={selected ? theme.brand : theme.muted}>{bar}</Text>
         {mark}
@@ -138,7 +158,7 @@ function Entry({
         {"   "}
         {doing}
       </Text>
-    </Box>
+    </Clickable>
   );
 }
 

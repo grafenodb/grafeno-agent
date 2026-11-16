@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { ModelOption, Provider } from "../providers/types.js";
 import { Spinner } from "./spinner.js";
 import { theme } from "./theme.js";
+import { Clickable } from "./clicks.js";
 
 export interface AutoModelsPanelProps {
   readonly provider: Provider;
@@ -40,6 +41,17 @@ export function AutoModelsPanel(props: AutoModelsPanelProps): ReactNode {
   }, [props.provider]);
 
   const rows = (models?.length ?? 0) + 1;
+  const toggle = (id: string) => {
+    setMarked((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const save = () => {
+    props.onDone(models?.filter((m) => marked.has(m.id)).map((m) => m.id) ?? []);
+  };
   useInput((input, key) => {
     if (key.escape) props.onDone(undefined);
     else if (key.upArrow) setAt((a) => Math.max(0, a - 1));
@@ -48,17 +60,9 @@ export function AutoModelsPanel(props: AutoModelsPanelProps): ReactNode {
       if (at === 0) setMarked(new Set());
       else {
         const id = models?.[at - 1]?.id;
-        if (id === undefined) return;
-        setMarked((current) => {
-          const next = new Set(current);
-          if (next.has(id)) next.delete(id);
-          else next.add(id);
-          return next;
-        });
+        if (id !== undefined) toggle(id);
       }
-    } else if (key.return) {
-      props.onDone(models?.filter((m) => marked.has(m.id)).map((m) => m.id) ?? []);
-    }
+    } else if (key.return) save();
   });
 
   const auto = marked.size === 0;
@@ -74,19 +78,34 @@ export function AutoModelsPanel(props: AutoModelsPanelProps): ReactNode {
         </Box>
       ) : (
         <Box flexDirection="column" marginTop={1}>
-          <Text {...(at === 0 ? { color: theme.accent } : {})} bold={at === 0}>
-            {at === 0 ? "▸ " : "  "}
-            {auto ? "[✓]" : "[ ]"} Auto
-            <Text dimColor> every model, chosen by the task and by what each spends</Text>
-          </Text>
+          <Clickable
+            onClick={() => {
+              setAt(0);
+              setMarked(new Set());
+            }}
+          >
+            <Text {...(at === 0 ? { color: theme.accent } : {})} bold={at === 0}>
+              {at === 0 ? "▸ " : "  "}
+              {auto ? "[✓]" : "[ ]"} Auto
+              <Text dimColor> every model, chosen by the task and by what each spends</Text>
+            </Text>
+          </Clickable>
           {models.map((model, index) => {
             const on = index + 1 === at;
             return (
-              <Text key={model.id} {...(on ? { color: theme.accent } : {})} bold={on}>
-                {on ? "▸ " : "  "}
-                {marked.has(model.id) ? "[✓]" : "[ ]"} {model.name}
-                {model.hint ? <Text dimColor> {model.hint}</Text> : null}
-              </Text>
+              <Clickable
+                key={model.id}
+                onClick={() => {
+                  setAt(index + 1);
+                  toggle(model.id);
+                }}
+              >
+                <Text {...(on ? { color: theme.accent } : {})} bold={on}>
+                  {on ? "▸ " : "  "}
+                  {marked.has(model.id) ? "[✓]" : "[ ]"} {model.name}
+                  {model.hint ? <Text dimColor> {model.hint}</Text> : null}
+                </Text>
+              </Clickable>
             );
           })}
           {models.length === 0 && (
@@ -102,7 +121,23 @@ export function AutoModelsPanel(props: AutoModelsPanelProps): ReactNode {
           ones to the lightest, never swapped by usage or cost.
         </Text>
       </Box>
-      <Text dimColor>space mark · enter save · esc back</Text>
+      <Box gap={2}>
+        <Text dimColor>space or click mark ·</Text>
+        <Clickable onClick={save}>
+          <Text color={theme.accent} underline>
+            enter save
+          </Text>
+        </Clickable>
+        <Clickable
+          onClick={() => {
+            props.onDone(undefined);
+          }}
+        >
+          <Text dimColor underline>
+            esc back
+          </Text>
+        </Clickable>
+      </Box>
     </Box>
   );
 }

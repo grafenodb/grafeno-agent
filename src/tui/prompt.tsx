@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 import { suggest, type Command } from "./commands.js";
 import { edit, EMPTY, insert, type EditorState } from "./editor.js";
 import { theme } from "./theme.js";
+import { Clickable } from "./clicks.js";
 
 export interface PromptProps {
   /** Whether it takes keys now. */
@@ -111,7 +112,15 @@ export function Prompt(props: PromptProps): ReactNode {
 
   return (
     <Box flexDirection="column">
-      {open && <Menu commands={menu} selected={choice} />}
+      {open && (
+        <Menu
+          commands={menu}
+          selected={choice}
+          onPick={(command) => {
+            submit(`/${command.name}`);
+          }}
+        />
+      )}
       <Box
         borderStyle="round"
         borderColor={props.active ? theme.accent : theme.border}
@@ -135,9 +144,11 @@ export function Prompt(props: PromptProps): ReactNode {
 function Menu({
   commands,
   selected,
+  onPick,
 }: {
   readonly commands: readonly Command[];
   readonly selected: number;
+  readonly onPick: (command: Command) => void;
 }): ReactNode {
   const start = Math.max(0, Math.min(selected - MENU + 1, commands.length - MENU));
   const visible = commands.slice(start, start + MENU);
@@ -146,14 +157,19 @@ function Menu({
       {visible.map((command, index) => {
         const on = start + index === selected;
         return (
-          <Box key={command.name}>
+          <Clickable
+            key={command.name}
+            onClick={() => {
+              onPick(command);
+            }}
+          >
             <Box width={14}>
               <Text color={on ? theme.accent : theme.brand} bold={on}>
                 {on ? "▸ " : "  "}/{command.name}
               </Text>
             </Box>
             <Text dimColor={!on}>{command.description}</Text>
-          </Box>
+          </Clickable>
         );
       })}
     </Box>

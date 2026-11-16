@@ -4,6 +4,7 @@ import type { Provider, ProviderStatus } from "../providers/types.js";
 import { AutoModelsPanel } from "./auto-models.js";
 import { Spinner } from "./spinner.js";
 import { theme } from "./theme.js";
+import { Clickable } from "./clicks.js";
 
 export interface ProviderPanelProps {
   readonly providers: readonly Provider[];
@@ -137,7 +138,7 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
         <Text color={theme.accent}>{query === "" ? "type a name" : query}</Text>
       </Text>
       {offerAuto && (
-        <Box flexDirection="column" marginTop={1}>
+        <Clickable flexDirection="column" marginTop={1} onClick={props.onAuto}>
           <Text {...(onAuto ? { color: theme.accent } : {})} bold={onAuto}>
             {onAuto ? "▸ " : "  "}
             Auto{props.auto ? " · in use" : ""}
@@ -155,7 +156,7 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
               </Text>
             )}
           </Box>
-        </Box>
+        </Clickable>
       )}
       {shown.length === 0 && (
         <Text color={theme.warning}>No provider matches “{query}”. esc clears the search.</Text>
@@ -165,23 +166,51 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
         const on = index + first === at;
         return (
           <Box key={provider.id} flexDirection="column" marginTop={1}>
-            <Text {...(on ? { color: theme.accent } : {})} bold={on}>
-              {on ? "▸ " : "  "}
-              {provider.name}
-              {provider.id === props.current ? " · in use" : ""}
-              {props.autoMembers ? (
-                <Text color={props.autoMembers.includes(provider.id) ? theme.success : theme.muted}>
-                  {props.autoMembers.includes(provider.id) ? "  [✓ in Auto]" : "  [  not in Auto]"}
+            <Box>
+              <Clickable
+                onClick={() => {
+                  props.onDone(statuses.get(provider.id), provider);
+                }}
+              >
+                <Text {...(on ? { color: theme.accent } : {})} bold={on}>
+                  {on ? "▸ " : "  "}
+                  {provider.name}
+                  {provider.id === props.current ? " · in use" : ""}
                 </Text>
+              </Clickable>
+              {props.autoMembers ? (
+                <Clickable
+                  {...(props.onToggleAuto
+                    ? {
+                        onClick: () => {
+                          props.onToggleAuto?.(provider.id);
+                        },
+                      }
+                    : {})}
+                >
+                  <Text
+                    color={props.autoMembers.includes(provider.id) ? theme.success : theme.muted}
+                  >
+                    {props.autoMembers.includes(provider.id)
+                      ? "  [✓ in Auto]"
+                      : "  [  not in Auto]"}
+                  </Text>
+                </Clickable>
               ) : null}
               {props.autoMembers?.includes(provider.id) && props.onAutoModels ? (
-                <Text dimColor>
-                  {(props.autoModels?.[provider.id]?.length ?? 0) > 0
-                    ? ` models: ${(props.autoModels?.[provider.id] ?? []).join(", ")}`
-                    : " models: auto"}
-                </Text>
+                <Clickable
+                  onClick={() => {
+                    setChoosingModels(provider);
+                  }}
+                >
+                  <Text dimColor>
+                    {(props.autoModels?.[provider.id]?.length ?? 0) > 0
+                      ? ` models: ${(props.autoModels?.[provider.id] ?? []).join(", ")}`
+                      : " models: auto"}
+                  </Text>
+                </Clickable>
               ) : null}
-            </Text>
+            </Box>
             {props.apiKeyProviders?.includes(provider.id) && (
               <Box paddingLeft={4}>
                 <Text dimColor>API key: may bill per token; in Auto only if you include it.</Text>

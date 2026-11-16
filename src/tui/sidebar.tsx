@@ -8,6 +8,7 @@ import type { ModelOption, ProviderStatus, ProviderUsage } from "../providers/ty
 import { ago, bar, compact, modelLine, shortPath, shortResets, usageTone } from "./labels.js";
 import { Glyph } from "./logo.js";
 import { theme } from "./theme.js";
+import { Clickable } from "./clicks.js";
 import type { SubAgent } from "./agents.js";
 
 export interface SidebarProps {
@@ -30,6 +31,8 @@ export interface SidebarProps {
   readonly autoUsage?: readonly AutoUsage[];
   /** The sub-agent on screen: the panel shows its own details instead of the main agent's. */
   readonly agent?: SubAgent;
+  /** Runs a command when a section is clicked (models, usage, palace). */
+  readonly onCommand?: (name: string) => void;
 }
 
 /** One of Auto's providers in the panel. */
@@ -73,7 +76,7 @@ export function Sidebar(props: SidebarProps): ReactNode {
         <AgentDetails agent={props.agent} width={inner} />
       ) : (
         <>
-          <Section title="Model">
+          <Section title="Model" {...click(props, "models")}>
             {session ? (
               <>
                 <Text bold>{modelLine(session, props.models)}</Text>
@@ -105,7 +108,7 @@ export function Sidebar(props: SidebarProps): ReactNode {
           </Section>
 
           {props.autoUsage && props.autoUsage.length > 0 ? (
-            <Section title="Usage · Auto">
+            <Section title="Usage · Auto" {...click(props, "usage refresh")}>
               {props.autoUsage.map((member) => (
                 <Box key={member.id} flexDirection="column">
                   <Text wrap="truncate-end">
@@ -137,7 +140,11 @@ export function Sidebar(props: SidebarProps): ReactNode {
               ))}
             </Section>
           ) : (
-            <Section title="Plan usage" note={props.usage ? ago(props.usage.at) : undefined}>
+            <Section
+              title="Plan usage"
+              note={props.usage ? ago(props.usage.at) : undefined}
+              {...click(props, "usage refresh")}
+            >
               {props.usage ? (
                 props.usage.limits
                   .filter((limit) => !/fable/i.test(limit.label) || limit.used > 0)
@@ -204,7 +211,7 @@ export function Sidebar(props: SidebarProps): ReactNode {
         )}
       </Section>
 
-      <Section title="Memory">
+      <Section title="Memory" {...click(props, "palace")}>
         <Text>
           {props.grafeno.mode === "included" ? "Grafeno included" : "Grafeno server"}
           <Text dimColor> · {props.grafeno.url.replace(/^https?:\/\//, "")}</Text>
@@ -237,17 +244,31 @@ export function Sidebar(props: SidebarProps): ReactNode {
   );
 }
 
+/** The click of a section that opens a command, when the panel was given one. */
+function click(props: SidebarProps, command: string): { onClick?: () => void } {
+  const run = props.onCommand;
+  return run
+    ? {
+        onClick: () => {
+          run(command);
+        },
+      }
+    : {};
+}
+
 function Section({
   title,
   note,
   children,
+  onClick,
 }: {
   readonly title: string;
   readonly note?: string | undefined;
   readonly children: ReactNode;
+  readonly onClick?: () => void;
 }): ReactNode {
   return (
-    <Box flexDirection="column" marginTop={1} flexShrink={0}>
+    <Clickable flexDirection="column" marginTop={1} flexShrink={0} onClick={onClick}>
       <Text>
         <Text bold color={theme.accent}>
           {title.toUpperCase()}
@@ -255,7 +276,7 @@ function Section({
         {note !== undefined && <Text dimColor> · {note}</Text>}
       </Text>
       {children}
-    </Box>
+    </Clickable>
   );
 }
 

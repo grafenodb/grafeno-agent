@@ -1,6 +1,7 @@
 import { Box, Text, useInput } from "ink";
 import { useState, type ReactNode } from "react";
 import { theme } from "./theme.js";
+import { Clickable } from "./clicks.js";
 
 export interface PickerItem {
   readonly id: string;
@@ -54,7 +55,12 @@ export function Picker(props: PickerProps): ReactNode {
       {props.items.slice(first, first + rows).map((item, index) => {
         const on = first + index === selected;
         return (
-          <Box key={item.id}>
+          <Clickable
+            key={item.id}
+            onClick={() => {
+              props.onSelect(item);
+            }}
+          >
             <Box flexShrink={0}>
               <Text {...(on ? { color: theme.accent } : {})} bold={on}>
                 {on ? "▸ " : "  "}
@@ -63,10 +69,17 @@ export function Picker(props: PickerProps): ReactNode {
               {item.current === true && <Text color={theme.success}> ●</Text>}
             </Box>
             {item.hint !== undefined && <Text dimColor> {item.hint}</Text>}
-          </Box>
+          </Clickable>
         );
       })}
-      <Text dimColor>↑↓ move · enter choose · esc cancel</Text>
+      <Box>
+        <Text dimColor>↑↓ move · enter or click choose · </Text>
+        <Clickable onClick={props.onCancel}>
+          <Text dimColor underline>
+            esc cancel
+          </Text>
+        </Clickable>
+      </Box>
     </Box>
   );
 }
