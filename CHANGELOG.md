@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.3 (2026-11-15)
 
 - **The right panel follows the agent on screen**: on a sub-agent, its own
   task, state, model, tier and effort, tokens, context, time working,
