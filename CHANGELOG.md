@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.5 (2026-11-16)
 
 - **Delete conversations**: in `/resume` (or `[Sessions]`), **d** or a
   row's `[delete]`, after a confirmation; `grafeno-agent sessions` lists
