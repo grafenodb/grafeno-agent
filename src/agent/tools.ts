@@ -1,4 +1,11 @@
-import type { JsonSchema, ToolCall, ToolHost, ToolOutcome, ToolSpec } from "../model/index.js";
+import type {
+  JsonSchema,
+  ToolCall,
+  ToolHost,
+  ToolImage,
+  ToolOutcome,
+  ToolSpec,
+} from "../model/index.js";
 import { validate } from "./validate.js";
 
 /** What a tool sees when it runs. */
@@ -34,8 +41,11 @@ export interface Tool {
   permission?(input: Record<string, unknown>): PermissionDecision;
   /** The call in a few lines, for the user deciding whether to allow it. */
   describe?(input: Record<string, unknown>): string;
-  run(input: Record<string, unknown>, context: ToolContext): Promise<string> | string;
+  run(input: Record<string, unknown>, context: ToolContext): Promise<ToolReply> | ToolReply;
 }
+
+/** What a tool returns: text, or text with images for the model to see. */
+export type ToolReply = string | { readonly text: string; readonly images: readonly ToolImage[] };
 
 /**
  * Decides whether a call that needs permission may run. It is asked before
@@ -140,7 +150,12 @@ export class ToolRegistry implements ToolHost {
 
     if (signal.aborted) return { content: "The turn was cancelled.", isError: true };
     try {
-      return { content: this.#clean(await tool.run(call.input, { signal })) };
+      const reply = await tool.run(call.input, { signal });
+      if (typeof reply === "string") return { content: this.#clean(reply) };
+      return {
+        content: this.#clean(reply.text),
+        ...(reply.images.length > 0 ? { images: reply.images } : {}),
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { content: this.#clean(`${call.name} failed: ${message}`), isError: true };

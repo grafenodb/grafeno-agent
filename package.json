@@ -68,8 +68,10 @@
   "dependencies": {
     "@grafenodb/client": "^0.2.2",
     "@modelcontextprotocol/sdk": "^1.32.2",
+    "fflate": "0.8.2",
     "ink": "^8.0.0",
     "react": "^19.3.1",
+    "unpdf": "2.1.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {

@@ -58,7 +58,14 @@ export async function serveTools(
       try {
         const outcome = await handle(name, request.params.arguments ?? {});
         return {
-          content: [{ type: "text", text: outcome.content }],
+          content: [
+            { type: "text" as const, text: outcome.content },
+            ...(outcome.images ?? []).map((image) => ({
+              type: "image" as const,
+              data: image.data,
+              mimeType: image.mediaType,
+            })),
+          ],
           isError: outcome.isError ?? false,
         };
       } catch (error) {

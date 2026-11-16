@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Documents**: `read_document` reads PDF, Word, Excel, PowerPoint and
+  OpenDocument files (by page, slide or sheet), on this computer, with no
+  other programs. `web_fetch` reads PDFs on the web too.
+- **Images**: `read_file` shows the model PNG, JPEG, GIF and WebP images
+  (up to 5 MB), over MCP to Claude Code and Codex, and to Gemini and
+  OpenRouter's vision models.
+- **Web search**: `web_search`, with your Brave Search or Tavily key or
+  your own SearXNG (`BRAVE_SEARCH_API_KEY`, `TAVILY_API_KEY`,
+  `SEARXNG_URL`, `WEB_SEARCH`); it asks first, and its keys are hidden from
+  commands. `grafeno-agent check` says which service is in use.
+
 ## 0.1.5 (2026-11-16)
 
 - **Delete conversations**: in `/resume` (or `[Sessions]`), **d** or a

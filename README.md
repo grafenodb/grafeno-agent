@@ -146,6 +146,10 @@ agent asks again when it starts.
 | `AGENT_AUTO_MODELS`    | (all)                   | Each Auto provider's models: `codex:gpt-6-astra,gpt-6.1-sol` (`m` in `/connect`) |
 | `AGENT_DELIVERY`       | `live`                  | `live` (task by task), `end` or `manual`: how runs' work reaches your folder     |
 | `AGENT_MEMORY_BUDGET`  | see [Memory](#memory)   | How much memory may reach the model                                              |
+| `WEB_SEARCH`           | the first one set up    | `brave`, `tavily` or `searxng`: the service of `web_search`                      |
+| `BRAVE_SEARCH_API_KEY` | none                    | A Brave Search API key, for `web_search`                                         |
+| `TAVILY_API_KEY`       | none                    | A Tavily API key, for `web_search`                                               |
+| `SEARXNG_URL`          | none                    | Your SearXNG's address, for `web_search`                                         |
 
 Variables set in the environment win over the file. The agent never reads
 the `.env` of the folder it runs in: that belongs to your project.
@@ -300,6 +304,7 @@ in):
 | Tool                                                           | Permission                                                    |
 | -------------------------------------------------------------- | ------------------------------------------------------------- |
 | `read_file`, `list_files`, `search_files`, `file_info`         | runs freely                                                   |
+| `read_document` (PDF, Word, Excel, PowerPoint, OpenDocument)   | runs freely                                                   |
 | `environment_info` (system, shell, branch, programs installed) | runs freely                                                   |
 | `write_file`, `edit_file`, `multi_edit`                        | asks you, showing the change                                  |
 | `move_file`, `delete_file` (a file or an empty folder)         | asks you                                                      |
@@ -307,9 +312,31 @@ in):
 | `start_process` (a dev server or a watcher, in the background) | asks you                                                      |
 | `process_output`, `list_processes`, `stop_process`             | run freely (only the agent's own processes)                   |
 | `local_http` (a server on this computer: localhost)            | GET and HEAD run freely; other methods ask you                |
-| `web_fetch`                                                    | asks you                                                      |
+| `web_fetch` (a web page, or a PDF on the web)                  | asks you                                                      |
+| `web_search` (with your search service: see below)             | asks you                                                      |
 | memory tools (from Grafeno's MCP server)                       | run freely (the memory is the agent's own)                    |
 | plugin tools (GitHub, GitLab: see below)                       | reading runs freely; anything that changes something asks you |
+
+**Documents.** `read_document` reads the text of PDF, Word (`.docx`),
+Excel (`.xlsx`), PowerPoint (`.pptx`) and OpenDocument (`.odt`, `.ods`,
+`.odp`) files, on this computer, without other programs: PDFs by page,
+decks by slide (with their notes), workbooks by sheet (cell values, tab
+separated); `pages` reads a part of a long one. Scanned PDFs (images of
+text) and the old `.doc`, `.xls`, `.ppt` formats are not read.
+
+**Images.** `read_file` shows the model an image of the project (PNG,
+JPEG, GIF, WebP, up to 5 MB): a screenshot, a diagram, a mock-up. Claude
+(through Claude Code), Gemini and the vision models of OpenRouter see it;
+whether Codex does depends on its version; a model that cannot see images
+gets only the line about it, and says so.
+
+**Web search.** `web_search` searches with a service you set up in the
+settings file: a Brave Search API key (`BRAVE_SEARCH_API_KEY`), a Tavily
+API key (`TAVILY_API_KEY`), or the address of your own SearXNG
+(`SEARXNG_URL`, with its json format allowed). With more than one,
+`WEB_SEARCH` chooses. Without one, the agent tells you it cannot search.
+`grafeno-agent check` shows which is in use. It returns titles, addresses
+and snippets; `web_fetch` then reads a page.
 
 Background processes stop when the agent ends; at most eight run at once.
 Workers of a run (`/orchestrate`) get the same tools except background

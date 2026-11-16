@@ -129,6 +129,7 @@ class GeminiConversation implements Conversation {
           return;
         }
         const responses: Part[] = [];
+        const images: Part[] = [];
         for (const [index, part] of calls.entries()) {
           const fc = part.functionCall ?? {};
           const call = {
@@ -147,8 +148,11 @@ class GeminiConversation implements Conversation {
               response: outcome.isError ? { error: outcome.content } : { content: outcome.content },
             },
           });
+          for (const image of outcome.images ?? []) {
+            images.push({ inlineData: { mimeType: image.mediaType, data: image.data } });
+          }
         }
-        this.#history.push({ role: "user", parts: responses });
+        this.#history.push({ role: "user", parts: [...responses, ...images] });
       }
     } catch (error) {
       // A turn that did not end leaves the conversation as it was before it.

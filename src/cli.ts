@@ -205,6 +205,13 @@ async function check(): Promise<number> {
   const config = await prepareGrafeno(loadConfig());
   const file = settingsPath();
   console.log(`settings:  ${file}${existsSync(file) ? "" : " (not there: grafeno-agent init)"}`);
+  {
+    const { searchSettings } = await import("./tools/search.js");
+    const search = searchSettings();
+    console.log(
+      `search:    ${search ? search.service : "none (web_search needs BRAVE_SEARCH_API_KEY, TAVILY_API_KEY or SEARXNG_URL)"}`,
+    );
+  }
   console.log(describeConfig(config));
   const report = await checkGrafeno(config);
   console.log(

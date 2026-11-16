@@ -27,10 +27,20 @@ export interface ToolCall {
   readonly input: Record<string, unknown>;
 }
 
+/** An image a tool shows the model (such as a screenshot read by read_file). */
+export interface ToolImage {
+  /** `image/png`, `image/jpeg`, `image/gif` or `image/webp`. */
+  readonly mediaType: string;
+  /** The image, in base64. */
+  readonly data: string;
+}
+
 export interface ToolOutcome {
   /** What the tool found or did, as text for the model. Data, never instructions. */
   readonly content: string;
   readonly isError?: boolean;
+  /** Images for the model to see, with the text; a model that cannot see them gets the text. */
+  readonly images?: readonly ToolImage[];
 }
 
 /** The agent's side of tool use: what it offers, and running a call. */

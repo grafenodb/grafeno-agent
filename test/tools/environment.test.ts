@@ -172,7 +172,7 @@ describe("background processes", { timeout: 30_000 }, () => {
     const started = await start.run({ command, wait_ms: 1500 }, { signal });
     expect(started).toMatch(/Process p1 \(running\)/);
     expect(started).toContain("ready");
-    const first = await output.run({ id: "p1" }, { signal });
+    const first = (await output.run({ id: "p1" }, { signal })) as string;
     const offset = Number(/offset now (\d+)/.exec(first)?.[1]);
     await new Promise((resolve) => setTimeout(resolve, 400));
     const later = await output.run({ id: "p1", since: offset }, { signal });

@@ -137,7 +137,7 @@ describe("an MCP server's tools", { timeout: 60_000 }, () => {
     try {
       const env = connection.tools.find((t) => t.name === "mcp_notes_env");
       const seen = JSON.parse(
-        String(await env?.run({}, { signal: new AbortController().signal })),
+        (await env?.run({}, { signal: new AbortController().signal })) as string,
       ) as Record<string, unknown>;
       expect(seen).toEqual({ agentKey: null, gemini: null, token: "from-env" });
     } finally {

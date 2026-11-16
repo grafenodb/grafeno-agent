@@ -34,7 +34,9 @@ afterEach(async () => {
 const run = (name: string, input: Record<string, unknown>) => {
   const tool = tools[name];
   if (!tool) throw new Error(`no tool ${name}`);
-  return tool.run(input, { signal });
+  return Promise.resolve(tool.run(input, { signal })).then((reply) =>
+    typeof reply === "string" ? reply : reply.text,
+  );
 };
 const permission = (name: string, input: Record<string, unknown>) =>
   permissionOf(tools[name] as Tool, input).permission;
