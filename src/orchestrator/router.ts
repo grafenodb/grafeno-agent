@@ -287,12 +287,77 @@ export interface ProviderEntry {
    * How it is paid for: a provider billed per token (allowed by the user)
    * comes after every subscription or free one that can take the task.
    */
-  readonly billing?: "subscription" | "free-api" | "metered";
+  readonly billing?: "subscription" | "free-api" | "metered" | "local";
+  /**
+   * For a model server of the person's own: what its model can do, as the
+   * server said. A task done with tools goes to it only when the model
+   * takes tools and runs with enough context; unknown is not enough.
+   */
+  readonly local?: {
+    readonly tools?: boolean;
+    readonly contextLength?: number;
+    /** It answered slowly last time: a hard task does not wait on it. */
+    readonly latencyMs?: number;
+  };
   /** What its models were seen to spend. */
   readonly costOf?: (model: string, effort: string | undefined) => QuotaCost | undefined;
 }
 
+/**
+ * How tasks go to the person's own model servers (`AGENT_LOCAL_ROUTING`):
+ * - `light` (the default): simple tasks (light tier, or complexity 1–2)
+ *   first, others after every subscription and free quota;
+ * - `first`: every task it can take, first;
+ * - `last`: only when nothing else can take the task (still before
+ *   anything billed per token).
+ */
+export const LOCAL_ROUTING = ["light", "first", "last"] as const;
+export type LocalRouting = (typeof LOCAL_ROUTING)[number];
+
+export function localRouting(setting: string | undefined): LocalRouting {
+  const value = (setting ?? "").trim().toLowerCase();
+  return (LOCAL_ROUTING as readonly string[]).includes(value) ? (value as LocalRouting) : "light";
+}
+
+/** The context a local model needs to work with the agent's tools and a file or two. */
+export const LOCAL_MIN_CONTEXT = 16_384;
+
+/** Whether a local server's model can take a task done with tools. */
+export function localCanTake(entry: ProviderEntry): boolean {
+  if (entry.billing !== "local") return true;
+  const context = entry.local?.contextLength;
+  return entry.local?.tools === true && (context === undefined || context >= LOCAL_MIN_CONTEXT);
+}
+
+/** Whether a task is simple: a light tier, or complexity 1–2. */
+export function simpleTask(task: TaskSpec, options: RouterOptions = {}): boolean {
+  const tier =
+    task.recommended?.tier ?? (options.profiles?.[task.kind] ?? DEFAULT_PROFILES[task.kind]).tier;
+  return tier === "light" || task.complexity <= 2;
+}
+
+/**
+ * Where a provider stands by cost for a task, lowest first: a capable local
+ * server first for simple tasks (`light`) or any (`first`); then
+ * subscriptions and free quotas; then local servers otherwise; billed per
+ * token always last. A slow local server (over 30 s) never comes first.
+ */
+export function costRank(
+  entry: ProviderEntry,
+  task: TaskSpec,
+  options: RouterOptions & { readonly localRouting?: LocalRouting } = {},
+): number {
+  if (entry.billing === "metered") return 3;
+  if (entry.billing !== "local") return 1;
+  const mode = options.localRouting ?? "light";
+  const slow = (entry.local?.latencyMs ?? 0) > 30_000;
+  if (!slow && (mode === "first" || (mode === "light" && simpleTask(task, options)))) return 0;
+  return 2;
+}
+
 export interface AcrossOptions extends RouterOptions {
+  /** How tasks go to the person's own model servers. Default: `light`. */
+  readonly localRouting?: LocalRouting;
   /** A provider for some task kinds (when it is ready), before the order of preference. */
   readonly providerFor?: Partial<Record<TaskKind, string>>;
   /**
@@ -359,8 +424,17 @@ export function routeAcross(
   options: AcrossOptions = {},
 ): ProviderRoute {
   if (providers.length === 0) return { kind: "hold", reason: "no provider is ready" };
-  // Cost first: what bills per token only when no subscription or free quota can take it.
-  providers = byCost(providers);
+  // A local server whose model cannot work with tools takes no task.
+  const capable = providers.filter(localCanTake);
+  if (capable.length === 0) {
+    return {
+      kind: "hold",
+      reason:
+        "no provider is ready (the local models here do not take tools, or run with too short a context)",
+    };
+  }
+  // Cost first: a capable local server for simple tasks, what bills per token only when nothing else can.
+  providers = byCost(capable, task, options);
   const lighter = lighterOf(options);
   const hold = options.holdAbove ?? 0.95;
   const used = (p: ProviderEntry) => mostUsed(p.usage)?.used ?? 0;
@@ -414,12 +488,22 @@ export function routeAcross(
   };
 }
 
-/** The providers in the same order, those billed per token last. */
-export function byCost(providers: readonly ProviderEntry[]): ProviderEntry[] {
-  return [
-    ...providers.filter((p) => p.billing !== "metered"),
-    ...providers.filter((p) => p.billing === "metered"),
-  ];
+/**
+ * The providers by cost for a task (`costRank`), in their order on a tie:
+ * those billed per token last. Without a task, local servers go after
+ * subscriptions and free quotas.
+ */
+export function byCost(
+  providers: readonly ProviderEntry[],
+  task?: TaskSpec,
+  options: RouterOptions & { readonly localRouting?: LocalRouting } = {},
+): ProviderEntry[] {
+  const rank = (p: ProviderEntry) =>
+    task ? costRank(p, task, options) : p.billing === "metered" ? 3 : p.billing === "local" ? 2 : 1;
+  return providers
+    .map((p, index) => ({ p, index }))
+    .sort((a, b) => rank(a.p) - rank(b.p) || a.index - b.index)
+    .map(({ p }) => p);
 }
 
 /**
@@ -454,10 +538,10 @@ function routePool(
       : { ...options.profiles, [task.kind]: { ...base, tier: affinity.tier } };
   const assigned = (p: ProviderEntry) => options.assigned?.get(p.id) ?? 0;
   const order = new Map(providers.map((p, index) => [p.id, index]));
-  // Cost first (billed per token last), then room, then how many tasks each took.
-  const metered = (p: ProviderEntry) => (p.billing === "metered" ? 1 : 0);
+  // Cost first (a capable local server for simple tasks, billed per token last), then room, then how many tasks each took.
+  const cost = (p: ProviderEntry) => costRank(p, task, options);
   const spread = (a: ProviderEntry, b: ProviderEntry) =>
-    metered(a) - metered(b) ||
+    cost(a) - cost(b) ||
     used(a) - used(b) ||
     assigned(a) - assigned(b) ||
     (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0);

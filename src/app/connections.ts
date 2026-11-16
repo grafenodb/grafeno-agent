@@ -1,7 +1,36 @@
 import { dataDir } from "../data-dir.js";
 import { apiKeySpec, checkKey, keyAccount } from "../providers/api-key.js";
 import { billingAllowed } from "../providers/billing.js";
-import { autoMembers } from "../providers/index.js";
+import {
+  KNOWN_PROVIDERS,
+  autoMembers,
+  isLocalProvider,
+  localState,
+  registerLocalConnections,
+} from "../providers/index.js";
+import {
+  describeModel,
+  discover,
+  type Discovery,
+  type LocalModel,
+} from "../providers/local/discover.js";
+import {
+  checkEndpoint,
+  localityText,
+  resolveEndpoint,
+  type Locality,
+} from "../providers/local/endpoint.js";
+import { localKeyAccount } from "../providers/local/provider.js";
+import {
+  LOCAL_KIND_INFO,
+  freeConnectionId,
+  loadLocalConnections,
+  localConnectionsFile,
+  removeLocalConnection,
+  saveLocalConnection,
+  type LocalConnection,
+  type LocalKind,
+} from "../providers/local/store.js";
 import {
   PROVIDER_PROFILES,
   providerEnabled,
@@ -36,6 +65,16 @@ export interface ConnectionRecord {
   readonly complianceStatus: string;
   readonly inAuto: boolean;
   readonly detail: string;
+  /** A local or self-hosted server: its address, where it is, and its models with what each can do. */
+  readonly server?: {
+    readonly url: string;
+    readonly locality?: Locality;
+    readonly version?: string;
+    readonly defaultModel?: string;
+    readonly models: readonly LocalModel[];
+    readonly timeoutMs?: number;
+    readonly inference?: LocalConnection["inference"];
+  };
 }
 
 /** A connection's record, from its profile and its live status. */
@@ -83,15 +122,52 @@ export function connectionRecord(
   };
 }
 
+/** A local connection's record, with what its server says now (its models and their capabilities). */
+export async function localConnectionRecord(
+  provider: Provider,
+  status: ProviderStatus,
+  env: Record<string, string | undefined> = process.env,
+): Promise<ConnectionRecord> {
+  const record = connectionRecord(provider, status, env);
+  const state = localState(provider.id);
+  if (!state) return record;
+  const found = await state.discovery();
+  const where = await state.locality();
+  const models = found.models;
+  return {
+    ...record,
+    supportedModels: models.map((m) => m.id),
+    // What the server says of its models: tools only when a model is known to take them.
+    supportsTools: models.some((m) => m.tools === true),
+    costModel: where === "local" ? "local" : "self-hosted",
+    server: {
+      url: state.connection.url,
+      ...(typeof where === "string" ? { locality: where } : {}),
+      ...(found.version ? { version: found.version } : {}),
+      ...(state.connection.defaultModel ? { defaultModel: state.connection.defaultModel } : {}),
+      models,
+      ...(state.connection.timeoutMs ? { timeoutMs: state.connection.timeoutMs } : {}),
+      ...(state.connection.inference ? { inference: state.connection.inference } : {}),
+    },
+  };
+}
+
 const TYPE_LABEL: Record<ConnectionType, string> = {
   cli: "CLI",
   "api-key": "API Key",
   "coding-plan": "Coding Plan",
+  local: "Local",
 };
 
 /** A connection's state in a word or three: never "connected" for a program only installed. */
 export function stateOf(record: ConnectionRecord): string {
   if (!record.enabled) return "Switched off";
+  if (record.connectionType === "local") {
+    if (!record.installed) return "Not running";
+    if (!record.authenticated)
+      return record.supportedModels.length === 0 ? "No model" : "Needs a key";
+    return "Connected";
+  }
   if (!record.installed)
     return record.connectionType === "cli" ? "Not installed" : "Not configured";
   if (!record.authenticated) {
@@ -115,6 +191,16 @@ export function describeConnections(
     );
     if (detailed) {
       lines.push(`${" ".repeat(27)}${r.detail}`);
+      if (r.server) {
+        for (const m of r.server.models.slice(0, 12)) {
+          lines.push(
+            `${" ".repeat(29)}${m.id === r.server.defaultModel ? "★ " : "· "}${m.id}  ${describeModel(m)}`,
+          );
+        }
+        if (r.server.models.length > 12) {
+          lines.push(`${" ".repeat(29)}… ${String(r.server.models.length - 12)} more`);
+        }
+      }
       if (r.complianceStatus !== "documented") {
         lines.push(`${" ".repeat(27)}Terms: ${complianceText(r.complianceStatus)}`);
       }
@@ -139,6 +225,12 @@ export function complianceText(status: string): string {
 
 export interface ConnectionActions {
   readonly env: Record<string, string | undefined>;
+  /** The interface's list of providers: a local connection added or removed is changed in it too. */
+  readonly providers?: Provider[];
+  /** Where the local connections are kept. Default: next to the settings. */
+  readonly localFile?: string;
+  /** Resolves a server's name; for tests. */
+  readonly resolve?: (host: string) => Promise<string[]>;
   /** Saves settings to the settings file and to this run. */
   readonly save: (values: Record<string, string>) => void;
   readonly store?: SecretStore;
@@ -193,6 +285,133 @@ export function connectionActions(options: ConnectionActions) {
       return on
         ? `${shown} is switched on.`
         : `${shown} is switched off: nothing uses it, starting now.`;
+    },
+    /**
+     * Checks a model server before it is kept: its address (never a
+     * link-local one, a key only over https off this computer), where it
+     * leads, and what it answers (its version and models, spending nothing).
+     */
+    async checkServer(
+      kind: LocalKind,
+      url: string,
+      key?: string,
+    ): Promise<
+      | { ok: true; url: string; locality: Locality; found: Discovery }
+      | { ok: false; message: string; needsKey?: boolean }
+    > {
+      const withKey = key !== undefined && key.trim() !== "";
+      const checked = checkEndpoint(url, { withKey });
+      if (!checked.ok) return { ok: false, message: `${url}: ${checked.reason}.` };
+      const resolved = await resolveEndpoint(checked, options.resolve);
+      if (!resolved.ok) return { ok: false, message: `${url}: ${resolved.reason}.` };
+      const found = await discover(
+        { id: "check", kind, name: LOCAL_KIND_INFO[kind].name, url: resolved.url },
+        {
+          ...(withKey ? { key: key.trim() } : {}),
+          ...(options.fetch ? { fetch: options.fetch } : {}),
+        },
+      );
+      if (!found.reachable) {
+        return {
+          ok: false,
+          message: `${LOCAL_KIND_INFO[kind].name} at ${resolved.url}: ${found.error ?? "no answer"}.`,
+        };
+      }
+      if (found.needsKey) {
+        return {
+          ok: false,
+          needsKey: true,
+          message: `${LOCAL_KIND_INFO[kind].name} at ${resolved.url}: ${found.error ?? "asks for a key"}.`,
+        };
+      }
+      return { ok: true, url: resolved.url, locality: resolved.locality, found };
+    },
+    /**
+     * Keeps a model server: its address and default model in the
+     * connections' list, its key (when it has one) in the system's secure
+     * store; it is a provider at once. Returns what to say.
+     */
+    async saveServer(server: {
+      readonly kind: LocalKind;
+      readonly url: string;
+      readonly id?: string;
+      readonly key?: string;
+      readonly defaultModel?: string;
+      readonly locality?: Locality;
+    }): Promise<{ id: string; message: string }> {
+      const file = options.localFile ?? localConnectionsFile(options.env);
+      const all = loadLocalConnections(file);
+      const taken = [
+        ...all.map((c) => c.id),
+        ...Object.keys(KNOWN_PROVIDERS).filter((id) => !isLocalProvider(id)),
+      ];
+      // The same server added again (same kind and address) is the connection it was, not a second one.
+      const same = all.find(
+        (c) => c.kind === server.kind && c.url === server.url.replace(/\/+$/, ""),
+      );
+      const id = server.id ?? same?.id ?? freeConnectionId(server.kind, taken);
+      const before = all.find((c) => c.id === id);
+      const withKey = server.key !== undefined && server.key.trim() !== "";
+      const info = LOCAL_KIND_INFO[server.kind];
+      const entry = saveLocalConnection(
+        {
+          ...before,
+          id,
+          kind: server.kind,
+          name: id === server.kind || id === "custom" ? info.name : `${info.name} (${id})`,
+          url: server.url,
+          ...(server.defaultModel ? { defaultModel: server.defaultModel } : {}),
+          ...(withKey || before?.hasKey ? { hasKey: true } : {}),
+        },
+        file,
+      );
+      if (withKey) await store().set(localKeyAccount(id), (server.key ?? "").trim());
+      this.refreshLocal(file);
+      return {
+        id,
+        message: `${entry.name} is connected at ${entry.url}${server.locality ? ` (${localityText(server.locality)})` : ""}${
+          entry.defaultModel ? `, default model ${entry.defaultModel}` : ""
+        }${withKey ? `; its key is in ${store().name}` : ""}. /connect local uses it for the chat or in Auto.`,
+      };
+    },
+    /** Sets the model a local connection uses when none is chosen. */
+    setServerModel(id: string, model: string): string {
+      const file = options.localFile ?? localConnectionsFile(options.env);
+      const found = loadLocalConnections(file).find((c) => c.id === id);
+      if (!found) return `No local connection is named ${id}.`;
+      saveLocalConnection({ ...found, defaultModel: model }, file);
+      this.refreshLocal(file);
+      return `${found.name} uses ${model} by default.`;
+    },
+    /** Removes a local connection and its key; a built-in one goes back to its documented address. */
+    async removeServer(id: string): Promise<string> {
+      const file = options.localFile ?? localConnectionsFile(options.env);
+      const found = loadLocalConnections(file).find((c) => c.id === id);
+      if (!found || !removeLocalConnection(id, file)) return `No local connection is named ${id}.`;
+      await store()
+        .delete(localKeyAccount(id))
+        .catch(() => undefined);
+      this.refreshLocal(file);
+      return id === "ollama" || id === "lmstudio"
+        ? `${found.name} is back at its documented address (${String(LOCAL_KIND_INFO[found.kind].defaultUrl)}), with no default model or key.`
+        : `${found.name} is removed${found.hasKey ? `, its key too` : ""}.`;
+    },
+    /** Registers the local connections again, and changes them in the interface's list of providers. */
+    refreshLocal(file = options.localFile ?? localConnectionsFile(options.env)): void {
+      const before = new Set(
+        (options.providers ?? []).filter((p) => isLocalProvider(p.id)).map((p) => p.id),
+      );
+      const ids = registerLocalConnections(loadLocalConnections(file));
+      if (!options.providers) return;
+      const list = options.providers;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const p = list[i];
+        if (p && before.has(p.id)) list.splice(i, 1);
+      }
+      for (const id of ids) {
+        const make = KNOWN_PROVIDERS[id];
+        if (make) list.push(make());
+      }
     },
     /** Allows or forbids a connection to bill per token (AGENT_ALLOW_BILLING). */
     setBilling(id: string, allow: boolean): string {

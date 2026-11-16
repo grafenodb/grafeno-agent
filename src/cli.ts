@@ -76,6 +76,11 @@ Commands:
                  The skills the agent uses (.agents/skills, ~/.agents/skills,
                  ~/.config/agents/skills): install with the Skills CLI (npx skills),
                  or write your own. grafeno-agent skills help says more.
+  local [add|check|model|remove]
+                 Local models and self-hosted servers: Ollama, LM Studio, Bionic, any
+                 OpenAI-compatible endpoint. add <kind> <url> [--id i] [--model m]
+                 [--key-env VAR] checks the server first; check <id> shows its models and
+                 what each can do. /connect local does the same in the interface.
   providers [enable|disable|install] <name>
                  Each provider: how it signs in, switched on or off, ready or why not.
                  disable switches one off at once (claude-code-local, for example);
@@ -1097,6 +1102,15 @@ async function main(argv: readonly string[]): Promise<number> {
         say: (line) => {
           console.log(line);
         },
+      });
+    }
+    case "local": {
+      const { localCommand } = await import("./app/local-command.js");
+      return localCommand(argv.slice(1), {
+        say: (line) => {
+          console.log(line);
+        },
+        confirm,
       });
     }
     case "providers": {

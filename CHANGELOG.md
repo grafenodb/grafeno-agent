@@ -44,6 +44,24 @@ cli|api|plans|list|status|manage|disconnect <connection>`. A key is typed
   subscription into a billed API; a reset credit is never spent.
 - **Cost routing**: at equal fit, providers billed per token come after
   subscriptions and free quotas.
+- **Local models and self-hosted servers**: Ollama (its own `/api/chat`,
+  streamed, with the context it runs with), LM Studio (its
+  OpenAI-compatible API, also headless), Bionic and any OpenAI-compatible
+  endpoint, in `/connect` → **4. Local models / Self-hosted** and
+  `grafeno-agent local`. Each is checked before it is kept (no link-local
+  addresses, a key only over https off this computer, names resolved),
+  takes a key only when it asks, and lists its models with what each can
+  do (tools, vision, context, loaded), read from the server, never assumed.
+  Several per kind; kept in `local-connections.json`, keys in the secure
+  store.
+- **Routing to local models**: in Auto, simple tasks and sorting requests
+  go first to a local model that takes tools with enough context; harder
+  ones after subscriptions and free quotas, and before anything billed per
+  token. A model not known to take tools takes no tool work.
+  `AGENT_LOCAL_ROUTING` (`light`, `first`, `last`).
+- The OpenAI-compatible adapter streams (for local servers), sends no key
+  when a server needs none, takes inference settings and a timeout, and
+  never follows a redirect.
 
 ## 0.1.6 (2026-11-16)
 

@@ -25,6 +25,7 @@ import {
 import { describeUpkeep, upkeep } from "../memory/upkeep.js";
 import {
   allProviders,
+  isLocalProvider,
   AUTO_MODELS_SETTING,
   autoMembers,
   autoModels,
@@ -35,6 +36,7 @@ import type { ModelChoice, Provider } from "../providers/types.js";
 import { settingsPath, updateSettings } from "../settings-file.js";
 import { Grafeno } from "@grafenodb/client";
 import { checkGrafeno } from "../startup.js";
+import { localRouting } from "../orchestrator/router.js";
 import { AgentSession, type SessionExtensions } from "./session.js";
 import type { Orchestrator, OrchestratorOptions } from "../orchestrator/orchestrator.js";
 
@@ -269,7 +271,7 @@ export function realServices(version: string): AppServices {
   };
 
   return {
-    connections: connectionActions({ env, save }),
+    connections: connectionActions({ env, save, providers }),
     version,
     settingsPath: settingsPath(),
     providers,
@@ -417,9 +419,17 @@ export function realServices(version: string): AppServices {
     },
     pool: () => readyPool(inAuto()),
     async triage(message, signal) {
-      const chosen = mostRoom(await readyPool(inAuto()));
+      const members = await readyPool(inAuto());
+      // Sorting a request is a light job: a local model in Auto does it, unless told to come last.
+      const local =
+        localRouting(env.AGENT_LOCAL_ROUTING) === "last"
+          ? undefined
+          : members.find((m) => isLocalProvider(m.provider.id));
+      const chosen = local ?? mostRoom(members);
       if (!chosen) return { route: "direct", reason: "no provider has room to triage" };
-      const model = lightModel(chosen.provider, autoModels(env)[chosen.provider.id]);
+      const model = local
+        ? undefined
+        : lightModel(chosen.provider, autoModels(env)[chosen.provider.id]);
       return triage(
         message,
         chosen.provider.create({ ...(model ? { model } : {}), effort: "low" }),

@@ -1,3 +1,4 @@
+import { localState } from "../providers/index.js";
 import { Agent, AgentError } from "../agent/agent.js";
 import { findSkills, skillCatalog, skillRoots, skillTool } from "../skills/skills.js";
 import { ToolRegistry, type Approver, type Tool } from "../agent/tools.js";
@@ -15,6 +16,7 @@ import {
   type ProviderEntry,
   type ProviderRoute,
   type RoutingMode,
+  localRouting,
 } from "./router.js";
 import { explore, suggest } from "./learned.js";
 import { attemptShare, weightedTokens, type CostBook } from "./costs.js";
@@ -436,12 +438,14 @@ export class WorkerPool implements TaskRunner {
           catalog: await this.catalog(c.id),
           ...(usage ? { usage } : {}),
           ...(c.billing ? { billing: c.billing.kind } : {}),
+          ...(c.billing?.kind === "local" ? { local: await localFacts(c.id) } : {}),
           ...(this.options.costs ? { costOf: this.options.costs.costOf(c.id) } : {}),
         };
       }),
     );
     return routeAcross(task, entries, {
       ...profiles,
+      localRouting: localRouting(process.env.AGENT_LOCAL_ROUTING),
       ...(this.options.providerFor ? { providerFor: this.options.providerFor } : {}),
       ...(this.options.auto === true
         ? {
@@ -1040,4 +1044,28 @@ export function pinnedCatalog(
       light: order("light", [...strongest].reverse()),
     },
   };
+}
+
+/**
+ * What a model server of the person's own can do with the model it would
+ * use: whether it takes tools, its context, and how fast the server
+ * answered; nothing known when it cannot be read.
+ */
+async function localFacts(
+  id: string,
+): Promise<{ tools?: boolean; contextLength?: number; latencyMs?: number }> {
+  const state = localState(id);
+  if (!state) return {};
+  try {
+    const model = await state.defaultModel();
+    const found = await state.discovery();
+    const context = state.connection.inference?.contextLength ?? model.contextLength;
+    return {
+      ...(model.tools === undefined ? {} : { tools: model.tools }),
+      ...(context === undefined ? {} : { contextLength: context }),
+      ...(found.latencyMs === undefined ? {} : { latencyMs: found.latencyMs }),
+    };
+  } catch {
+    return {};
+  }
 }

@@ -2,7 +2,22 @@ import { ACP_CLI_SPECS, AcpCliProvider } from "./acp-cli.js";
 import { API_KEY_SPECS, ApiKeyProvider } from "./api-key.js";
 import { ClaudeApiProvider } from "./claude-api.js";
 import { ClaudeCodeProvider } from "./claude-code.js";
-import { canonicalProvider, providerEnabled, withSwitch } from "./profiles.js";
+import {
+  canonicalProvider,
+  local as localProfile,
+  providerEnabled,
+  registerProfile,
+  unregisterProfile,
+  withSwitch,
+} from "./profiles.js";
+import { LocalProvider, type LocalSettings, type LocalState } from "./local/provider.js";
+import {
+  LOCAL_KIND_INFO,
+  builtInConnections,
+  loadLocalConnections,
+  localConnectionsFile,
+  type LocalConnection,
+} from "./local/store.js";
 import { CodexProvider } from "./codex.js";
 import { GeminiProvider } from "./gemini.js";
 import { OpenRouterProvider } from "./openrouter.js";
@@ -53,6 +68,64 @@ export const KNOWN_PROVIDERS: Readonly<Record<string, () => Provider>> = {
     API_KEY_SPECS.map((spec) => [spec.id, () => withSwitch(withCache(new ApiKeyProvider(spec)))]),
   ),
 };
+
+/** The connections to the person's own model servers registered now, and each one's state. */
+const localIds = new Set<string>();
+const localStates = new Map<string, LocalState>();
+
+/** What a local connection knows now (its server's models and their capabilities), once it was made. */
+export function localState(id: string): LocalState | undefined {
+  return localStates.get(id);
+}
+
+/** Whether a provider is one of the person's own model servers (local or self-hosted). */
+export function isLocalProvider(id: string): boolean {
+  return localIds.has(id);
+}
+
+/**
+ * Registers the person's model servers (local-connections.json, with the
+ * built-in Ollama and LM Studio) as providers, replacing those registered
+ * before: called at start, and again when /connect adds or removes one.
+ * An id taken by another kind of provider is left out. Returns the ids.
+ */
+export function registerLocalConnections(
+  connections: readonly LocalConnection[] = loadLocalConnections(localConnectionsFile()),
+  settings: LocalSettings = {},
+): string[] {
+  const known = KNOWN_PROVIDERS as Record<string, () => Provider>;
+  for (const id of localIds) {
+    Reflect.deleteProperty(known, id);
+    unregisterProfile(id);
+    localStates.delete(id);
+  }
+  localIds.clear();
+  for (const connection of connections) {
+    // An id another kind of provider has is left to it.
+    const taken = connection.id in known;
+    if (taken) continue;
+    const info = LOCAL_KIND_INFO[connection.kind];
+    if (connection.id !== "ollama" && connection.id !== "lmstudio") {
+      registerProfile(
+        localProfile(connection.id, connection.kind, info.name, {
+          costModel:
+            connection.kind === "ollama" || connection.kind === "lmstudio"
+              ? "local"
+              : "self-hosted",
+          docs: info.docs,
+          note: `${connection.name} at ${connection.url}.`,
+        }),
+      );
+    }
+    known[connection.id] = () => {
+      const provider = new LocalProvider(connection, settings);
+      localStates.set(connection.id, provider.state);
+      return withSwitch(withCache(provider));
+    };
+    localIds.add(connection.id);
+  }
+  return [...localIds];
+}
 
 /** Environment variables that hold the providers' keys: commands the agent runs never see them. */
 export const PROVIDER_SECRET_ENV = [
@@ -247,4 +320,12 @@ export function affinityFor(
     out[kind as TaskKind] = { provider, ...(tier ? { tier: tier as Tier } : {}) };
   }
   return out;
+}
+
+// The person's own model servers, from their list (and the built-in Ollama and LM Studio).
+try {
+  registerLocalConnections();
+} catch {
+  // An unreadable list: the built-in ones only, at their documented addresses.
+  registerLocalConnections(builtInConnections());
 }

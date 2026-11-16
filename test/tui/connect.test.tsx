@@ -11,7 +11,7 @@ const wait = (ms = 60) => new Promise((resolve) => setTimeout(resolve, ms));
 const KEY = "sk-secret-0123456789abcdef";
 
 describe("/connect", () => {
-  it("opens on five ways to connect, chosen by number, arrows or click", async () => {
+  it("opens on six ways to connect, chosen by number, arrows or click", async () => {
     const chosen: ConnectSection[] = [];
     const app = render(
       <ConnectMenu onSection={(s) => chosen.push(s)} onCancel={() => undefined} />,
@@ -22,8 +22,9 @@ describe("/connect", () => {
       "1. CLI / Subscription",
       "2. API Key",
       "3. Coding Plan",
-      "4. View connections",
+      "4. Local models / Self-hosted",
       "5. Manage connections",
+      "6. View connections",
     ]) {
       expect(screen).toContain(label);
     }
@@ -32,7 +33,9 @@ describe("/connect", () => {
     await wait();
     app.stdin.write("5");
     await wait();
-    expect(chosen).toEqual(["coding-plan", "manage"]);
+    app.stdin.write("4");
+    await wait();
+    expect(chosen).toEqual(["coding-plan", "manage", "local"]);
     app.unmount();
   });
 
@@ -44,6 +47,8 @@ describe("/connect", () => {
     expect(sectionOf("list")).toBe("list");
     expect(sectionOf("status")).toBe("status");
     expect(sectionOf("manage")).toBe("manage");
+    expect(sectionOf("local")).toBe("local");
+    expect(sectionOf("ollama")).toBe("local");
     expect(sectionOf("disconnect deepseek")).toBe("disconnect");
     expect(sectionOf("nonsense")).toBeUndefined();
   });

@@ -33,6 +33,16 @@ export interface ChatCompletionsOptions {
   readonly noKey: string;
   readonly fetch?: typeof fetch;
   readonly now?: () => Date;
+  /** A server that needs no key (a local one): requests go without `authorization` when there is none. */
+  readonly keyOptional?: boolean;
+  /** Streams the answer (server-sent events), text shown as it comes. Default: off. */
+  readonly stream?: boolean;
+  /** Inference settings sent with each request, such as `temperature` or `max_tokens`. */
+  readonly inference?: Readonly<Record<string, unknown>>;
+  /** The longest one request may take, in ms (a local model can be slow); none by default. */
+  readonly timeoutMs?: number;
+  /** The model takes no tools: none are offered, and the model only answers. */
+  readonly noTools?: boolean;
 }
 
 /** A message of an OpenAI-style chat. */
@@ -114,7 +124,8 @@ class ChatConversation implements Conversation {
       let text = "";
       const maxSteps = this.options.maxSteps ?? 40;
       for (let step = 1; ; step++) {
-        const answer = await this.#complete(signal);
+        const answer = yield* this.#complete(signal);
+        const streamed = this.model.stream === true;
         const cached = answer.usage?.prompt_tokens_details?.cached_tokens ?? 0;
         usage = {
           inputTokens: usage.inputTokens + (answer.usage?.prompt_tokens ?? 0) - cached,
@@ -135,7 +146,8 @@ class ChatConversation implements Conversation {
         });
         if (content !== "") {
           text += content;
-          yield { type: "text", text: content };
+          // Streamed text was shown as it came.
+          if (!streamed) yield { type: "text", text: content };
         }
         if (calls.length === 0) {
           yield done(text, stopReason(choice?.finish_reason), usage, step);
@@ -193,39 +205,71 @@ class ChatConversation implements Conversation {
     return Promise.resolve();
   }
 
-  async #complete(signal: AbortSignal): Promise<ChatResponse> {
+  async *#complete(signal: AbortSignal): AsyncGenerator<ModelEvent, ChatResponse> {
     const key = await this.model.key();
-    if (!key) throw new ModelError("setup", this.model.noKey);
-    const tools = this.options.tools.tools.map((tool) => ({
-      type: "function",
-      function: { name: tool.name, description: tool.description, parameters: tool.inputSchema },
-    }));
+    if (!key && this.model.keyOptional !== true) throw new ModelError("setup", this.model.noKey);
+    const tools =
+      this.model.noTools === true
+        ? []
+        : this.options.tools.tools.map((tool) => ({
+            type: "function",
+            function: {
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.inputSchema,
+            },
+          }));
+    const stream = this.model.stream === true;
     const body = {
+      ...this.model.inference,
       model: this.model.model as string,
       messages: this.#messages,
       ...(tools.length > 0 ? { tools } : {}),
       ...(this.model.effort ? { reasoning: { effort: this.model.effort } } : {}),
+      ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
     };
+    const limited =
+      this.model.timeoutMs === undefined
+        ? signal
+        : AbortSignal.any([signal, AbortSignal.timeout(this.model.timeoutMs)]);
     let response: Response;
     try {
       response = await (this.model.fetch ?? fetch)(`${this.model.api}/chat/completions`, {
         method: "POST",
+        // A redirect is not followed: the request goes only where it was configured to.
+        redirect: "error",
         headers: {
           ...this.model.headers,
           "content-type": "application/json",
-          authorization: `Bearer ${key}`,
+          ...(key ? { authorization: `Bearer ${key}` } : {}),
         },
         body: JSON.stringify(body),
-        signal,
+        signal: limited,
       });
     } catch (error) {
       if (signal.aborted) throw abortReason(signal);
+      if (limited.aborted) {
+        throw new ModelError("unavailable", `${this.model.name} took too long to answer`, {
+          cause: error,
+        });
+      }
       throw new ModelError("unavailable", `${this.model.name} could not be reached`, {
         cause: error,
       });
     }
     const now = this.model.now?.() ?? new Date();
     if (!response.ok) throw await chatError(this.model.name, response, now);
+    if (stream && /event-stream/i.test(response.headers.get("content-type") ?? "")) {
+      try {
+        return yield* readStream(response, signal);
+      } catch (error) {
+        if (signal.aborted) throw abortReason(signal);
+        if (error instanceof ModelError) throw error;
+        throw new ModelError("unavailable", `${this.model.name} stopped answering`, {
+          cause: error,
+        });
+      }
+    }
     const answer = (await response.json()) as ChatResponse;
     // An error may come with HTTP 200 once the model started.
     if (answer.error) {
@@ -236,6 +280,105 @@ class ChatConversation implements Conversation {
     }
     return answer;
   }
+}
+
+/** A chunk of a streamed answer (server-sent events of chat completions). */
+interface StreamChunk {
+  model?: string;
+  choices?: {
+    finish_reason?: string | null;
+    delta?: {
+      content?: string | null;
+      tool_calls?: {
+        index?: number;
+        id?: string;
+        function?: { name?: string; arguments?: string };
+      }[];
+    };
+  }[];
+  usage?: ChatResponse["usage"];
+  error?: { message?: string };
+}
+
+/**
+ * Reads a streamed answer: text as it comes (as events), tool calls put
+ * together from their pieces; gives back the whole answer, as a request
+ * that did not stream would have.
+ */
+async function* readStream(
+  response: Response,
+  signal: AbortSignal,
+): AsyncGenerator<ModelEvent, ChatResponse> {
+  if (!response.body) throw new ModelError("unavailable", "The stream had no body");
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let pending = "";
+  let content = "";
+  let model: string | undefined;
+  let finish: string | undefined;
+  let usage: ChatResponse["usage"];
+  const calls: { id: string; name: string; arguments: string }[] = [];
+  const onAbort = () => {
+    void reader.cancel().catch(() => undefined);
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    for (;;) {
+      const { value, done: ended } = await reader.read();
+      if (ended) break;
+      pending += value;
+      const lines = pending.split(/\r?\n/);
+      pending = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (data === "" || data === "[DONE]") continue;
+        let chunk: StreamChunk;
+        try {
+          chunk = JSON.parse(data) as StreamChunk;
+        } catch {
+          continue;
+        }
+        if (chunk.error) throw new ModelError("failed", chunk.error.message ?? "the model failed");
+        model ??= chunk.model;
+        if (chunk.usage) usage = chunk.usage;
+        const choice = chunk.choices?.[0];
+        if (choice?.finish_reason) finish = choice.finish_reason;
+        const piece = choice?.delta?.content;
+        if (piece) {
+          content += piece;
+          yield { type: "text", text: piece };
+        }
+        for (const part of choice?.delta?.tool_calls ?? []) {
+          const at = part.index ?? calls.length;
+          calls[at] ??= { id: part.id ?? `call-${String(at)}`, name: "", arguments: "" };
+          const call = calls[at];
+          if (part.id) call.id = part.id;
+          if (part.function?.name) call.name += part.function.name;
+          if (part.function?.arguments) call.arguments += part.function.arguments;
+        }
+      }
+    }
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+  if (signal.aborted) throw abortReason(signal);
+  const toolCalls = calls
+    .filter((c) => c.name !== "")
+    .map((c) => ({
+      id: c.id,
+      type: "function" as const,
+      function: { name: c.name, arguments: c.arguments },
+    }));
+  return {
+    ...(model ? { model } : {}),
+    choices: [
+      {
+        ...(finish ? { finish_reason: finish } : {}),
+        message: { content, ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}) },
+      },
+    ],
+    ...(usage ? { usage } : {}),
+  };
 }
 
 function parseArguments(wire: ToolCallWire): Record<string, unknown> {

@@ -21,10 +21,12 @@ export type AuthKind =
   /** A key of the user's for the vendor's API, kept in the environment or the system's secure store. */
   | "api-key"
   /** A key of a membership or prepaid coding plan: not interchangeable with an API key. */
-  | "coding-plan-key";
+  | "coding-plan-key"
+  /** A model server of the user's own: no sign-in, or a key only when the server asks for one. */
+  | "local-server";
 
-/** How a connection reaches the vendor: the three sections of /connect. */
-export type ConnectionType = "cli" | "api-key" | "coding-plan";
+/** How a connection reaches the vendor: the sections of /connect. */
+export type ConnectionType = "cli" | "api-key" | "coding-plan" | "local";
 
 /** How what a connection does is paid for, as far as it is known before using it. */
 export type CostModel =
@@ -35,7 +37,11 @@ export type CostModel =
   /** Billed per token: used only when the user allows it (AGENT_ALLOW_BILLING). */
   | "metered"
   /** Free models or a free tier, when the user chose only those. */
-  | "free-tier";
+  | "free-tier"
+  /** A model server on this computer: its cost is this computer's time and power. */
+  | "local"
+  /** A model server of the user's own on another machine: billed by no one per token. */
+  | "self-hosted";
 
 /** Where a connection's use stands with its vendor's terms. */
 export type ComplianceStatus =
@@ -168,6 +174,38 @@ function plan(
   };
 }
 
+const LOCAL_SUPPORTS = {
+  streaming: true,
+  sessions: true,
+  tools: true,
+  mcp: true,
+  cancellation: true,
+  headless: true,
+} as const;
+
+/** A model server of the user's own. Whether a model takes tools is checked per model, never assumed. */
+export function local(
+  id: string,
+  vendor: string,
+  vendorName: string,
+  extra: Partial<ProviderProfile> = {},
+): ProviderProfile {
+  return {
+    id,
+    vendor,
+    vendorName,
+    aliases: [],
+    shownAs: id,
+    connectionType: "local",
+    auth: "local-server",
+    costModel: "local",
+    compliance: "documented",
+    defaultEnabled: true,
+    supports: LOCAL_SUPPORTS,
+    ...extra,
+  };
+}
+
 export const PROVIDER_PROFILES: Readonly<Record<string, ProviderProfile>> = {
   // CLI / subscription: the vendors' own programs, signed in their own way.
   "claude-code": cli("claude-code", "anthropic", "Anthropic", {
@@ -242,12 +280,33 @@ export const PROVIDER_PROFILES: Readonly<Record<string, ProviderProfile>> = {
     docs: "https://platform.minimax.io/docs/m-plan/quickstart",
     note: "A MiniMax Coding (Token) Plan key, not interchangeable with a pay-as-you-go key. Whether its terms allow a third-party agent is not stated: off until you turn it on.",
   }),
+  // Local models / self-hosted: servers of the user's own (more are added in /connect).
+  ollama: local("ollama", "ollama", "Ollama", {
+    supports: { ...LOCAL_SUPPORTS, streaming: true },
+    docs: "https://docs.ollama.com/api",
+    note: "Your own Ollama server (default http://localhost:11434), through its HTTP API: no key, nothing leaves this computer.",
+  }),
+  lmstudio: local("lmstudio", "lmstudio", "LM Studio", {
+    docs: "https://lmstudio.ai/docs/developer",
+    note: "Your own LM Studio server (default http://localhost:1234/v1, also headless), through its OpenAI-compatible API: no key unless you turned on its authentication.",
+  }),
   "qwen-plan": plan("qwen-plan", "alibaba", "Alibaba (Qwen)", {
     compliance: "restricted-supported-tools",
     docs: "https://www.alibabacloud.com/help/en/model-studio/coding-plan",
     note: "An Alibaba Cloud Coding Plan key (sk-sp-), on its own endpoint. Alibaba lists the tools it supports, and this agent is not one of them: off unless you turn it on, at your own risk.",
   }),
 };
+
+/** Adds (or replaces) the profile of a connection made in /connect: a local or self-hosted server. */
+export function registerProfile(profile: ProviderProfile): void {
+  (PROVIDER_PROFILES as Record<string, ProviderProfile>)[profile.id] = profile;
+}
+
+/** Removes the profile of a connection made in /connect; built-in ones stay. */
+export function unregisterProfile(id: string): void {
+  if (id === "ollama" || id === "lmstudio") return;
+  Reflect.deleteProperty(PROVIDER_PROFILES, id);
+}
 
 /** The connection's id for a name or alias (`claude-code-local` → `claude-code`); itself otherwise. */
 export function canonicalProvider(name: string): string {

@@ -145,6 +145,7 @@ agent asks again when it starts.
 | `CLAUDE_API_MAX_BUDGET_USD` | none                    | The most one claude-api turn may cost                                            |
 | `AGENT_AFFINITY`            | the defaults below      | Where each task kind goes first in `auto`                                        |
 | `AGENT_ROUTING`             | `balanced`              | `economy`, `balanced` or `quality`: how eagerly runs spend the plans             |
+| `AGENT_LOCAL_ROUTING`       | `light`                 | `light`, `first` or `last`: what goes to your local models (see below)           |
 | `AGENT_AUTO_MODELS`         | (all)                   | Each Auto provider's models: `codex:gpt-6-astra,gpt-6.1-sol` (`m` in `/connect`) |
 | `AGENT_DELIVERY`            | `live`                  | `live` (task by task), `end` or `manual`: how runs' work reaches your folder     |
 | `AGENT_MEMORY_BUDGET`       | see [Memory](#memory)   | How much memory may reach the model                                              |
@@ -190,7 +191,7 @@ The panel hides on narrow windows, or with Ctrl+B.
 | `/resume`      | Take up an earlier conversation of this project              |
 | `/models`      | Choose the model, by its exact name                          |
 | `/effort`      | Choose how hard the model thinks (Low … Max)                 |
-| `/connect`     | Connections: CLI, API key, coding plan; list, manage (below) |
+| `/connect`     | Connections: CLI, API key, coding plan, local; manage, list  |
 | `/palace`      | Grafeno: included, or a server you already have              |
 | `/permissions` | Ask, automatic or skip permissions, and for what (see below) |
 | `/unattended`  | Work on alone until the task is done (see below)             |
@@ -688,14 +689,17 @@ A **vendor** (Anthropic, OpenAI, Moonshot…) may have several
    API key and works only on the plan's endpoint. The vendors' terms limit
    these keys to the coding tools they list, or do not say, so each starts
    **off**.
-4. **View connections**: every connection and its state.
+4. **Local models / Self-hosted**: model servers of your own, on this
+   computer or another of yours (see below). No key unless the server asks
+   for one.
 5. **Manage connections**: switch one on or off, check it, set or change
    its key, disconnect it, allow or forbid per-token billing.
+6. **View connections**: every connection and its state.
 
 Every choice can be clicked, chosen with its number, or reached with
-`/connect cli`, `/connect api`, `/connect plans`, `/connect list`,
-`/connect status` (with each one's detail), `/connect manage` and
-`/connect disconnect <connection>`.
+`/connect cli`, `/connect api`, `/connect plans`, `/connect local`,
+`/connect list`, `/connect status` (with each one's detail),
+`/connect manage` and `/connect disconnect <connection>`.
 
 | Vendor             | CLI / Subscription                   | API Key      | Coding Plan          |
 | ------------------ | ------------------------------------ | ------------ | -------------------- |
@@ -753,6 +757,109 @@ grafeno-agent logout deepseek                 # disconnect: its key is removed
   switches to the API. Its plan's usage is read through the documented
   app-server (`account/rateLimits/read`). A rate-limit reset credit is
   never spent.
+
+### Local models and self-hosted servers
+
+The agent reasons with models you run yourself, too:
+
+| Server                | How the agent talks to it                                        | Default address            | Key                    |
+| --------------------- | ---------------------------------------------------------------- | -------------------------- | ---------------------- |
+| **Ollama**            | its own HTTP API (`/api/chat`, streamed), so it sets the context | `http://localhost:11434`   | none                   |
+| **LM Studio**         | its OpenAI-compatible API (`/v1`, streamed); also headless       | `http://localhost:1234/v1` | only if you turn it on |
+| **Bionic**            | its OpenAI-compatible API (`/v1/models`, `/v1/chat/completions`) | your server's address      | yes (made in Bionic)   |
+| **OpenAI-compatible** | any server with `/v1/models` and `/v1/chat/completions`          | your server's address      | only if it asks        |
+
+In **`/connect` → 4. Local models / Self-hosted**, choose **+ Ollama**,
+**+ LM Studio**, **+ Bionic** or **+ Custom OpenAI-compatible endpoint**:
+
+1. **Its address**, proposed when the server has a documented one. It is
+   checked before anything is kept: http or https only, no user or
+   password in it, and never a link-local address (169.254.x.x, fe80::,
+   where clouds answer with their machines' secrets) nor `0.0.0.0`. Its
+   name is resolved to see where it really leads.
+2. **Its key**, only when the server asks for one (or Bionic, which always
+   does). It is typed masked, checked, and kept in the system's secure
+   store. A key is never sent in the clear to another machine: off this
+   computer, the address must be https.
+3. **Its default model**, among those the server lists, each with what it
+   can do: whether it takes tools, sees images, its context, and whether
+   it is loaded.
+
+Several connections of the same kind can be kept (`ollama`, `ollama-2`,
+`gpu-box`…). Choosing one in the list checks it again, changes its model,
+address or key, or removes it. **Use a connection** opens them as providers:
+Enter uses one for the chat, space puts it in Auto, **m** chooses its
+models there.
+
+**What is checked, never assumed.** Each model's capabilities come from
+the server: Ollama's `/api/show` (tools, vision, thinking, context), LM
+Studio's `/api/v1/models` (tool use, vision, loaded context; older
+versions' `/api/v0/models`, then `/v1/models`). Bionic and other
+OpenAI-compatible servers list only names, so their models' tools and
+context are **unknown**, and an unknown capability counts as missing:
+
+- a model known not to take tools is offered none (it only answers);
+- a local model takes tasks done with tools (files, commands) only when
+  it is known to take tools and runs with at least 16k tokens of context;
+- Ollama runs the model with the context you set, else what the model
+  takes, up to 32k (`num_ctx`).
+
+**Routing.** In Auto, a capable local model is preferred where it is
+enough: simple tasks (light tier, or complexity 1–2) and sorting requests
+(the triage) go to it first. Harder tasks go first to your subscriptions
+and free quotas, then to local models, and never to an API billed per
+token unless you allowed it. A server that took over 30 seconds to answer
+is not preferred. `AGENT_LOCAL_ROUTING=first` sends it every task it can
+take; `last`, only what nothing else can.
+
+**Privacy.** A model on this computer keeps your prompts on this computer.
+The agent only connects to servers you name; it never opens or exposes
+one, and never logs prompts or keys. Lists say where each server is: on
+this computer, on your network, or self-hosted outside it.
+
+From a terminal:
+
+```bash
+grafeno-agent local                                   # the connections
+grafeno-agent local add ollama                        # at its documented address, checked
+grafeno-agent local add lmstudio http://192.168.1.20:1234/v1 --id studio-box
+grafeno-agent local add bionic https://ai.example.com/v1 --key-env BIONIC_API_KEY --model llama-3.3-70b
+grafeno-agent local add openai-compatible http://localhost:8080/v1 --id llamacpp
+grafeno-agent local check ollama                      # its models and what each can do
+grafeno-agent local model ollama qwen3:8b             # its default model
+grafeno-agent local remove studio-box
+```
+
+A key is never given on the command line (it would stay in the shell's
+history): `--key-env` names the variable that holds it. The connections
+are kept in `local-connections.json`, next to the settings, without keys:
+
+```json
+{
+  "connections": [
+    {
+      "id": "ollama",
+      "kind": "ollama",
+      "name": "Ollama",
+      "url": "http://localhost:11434",
+      "defaultModel": "qwen3:8b",
+      "inference": { "contextLength": 32768, "temperature": 0.2, "keepAlive": "10m" }
+    },
+    {
+      "id": "bionic",
+      "kind": "bionic",
+      "name": "Bionic",
+      "url": "https://ai.example.com/v1",
+      "hasKey": true,
+      "timeoutMs": 300000
+    }
+  ]
+}
+```
+
+`inference` takes `temperature`, `contextLength`, `maxTokens` and, for
+Ollama, `keepAlive`; `timeoutMs` is the longest one request may take
+(default ten minutes).
 
 - **Auto is always the first row of `/connect`**, above every provider.
   The panel opens on what is in use.

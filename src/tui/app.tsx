@@ -9,6 +9,7 @@ import {
   API_KEY_PROVIDERS,
   autoMembers,
   isAuto,
+  isLocalProvider,
   providerIds,
   autoModels,
 } from "../providers/index.js";
@@ -84,9 +85,11 @@ import { Picker, type PickerItem } from "./picker.js";
 import { Prompt } from "./prompt.js";
 import { ProviderPanel } from "./provider.js";
 import { ConnectMenu, KeyEntry, sectionOf } from "./connect-menu.js";
+import { LocalPanel } from "./local-connect.js";
 import {
   complianceText,
   connectionRecord,
+  localConnectionRecord,
   describeConnections,
   stateOf,
 } from "../app/connections.js";
@@ -226,6 +229,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     | { kind: "actions"; provider: Provider }
     | { kind: "billing"; provider: Provider }
     | { kind: "plan"; provider: Provider }
+    | { kind: "local" }
   >({ kind: "menu" });
   /** For each provider in Auto, the models chosen (AGENT_AUTO_MODELS). */
   const [autoModelChoice, setAutoModelChoice] = useState<Record<string, string[]>>(() =>
@@ -377,16 +381,17 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       setBusy("Checking the connections");
       try {
         const records = await Promise.all(
-          services.providers.map(async (p) =>
-            connectionRecord(
-              p,
-              await p.status().catch((error: unknown) => ({
-                installed: false,
-                signedIn: false,
-                detail: error instanceof Error ? error.message : String(error),
-              })),
-            ),
-          ),
+          services.providers.map(async (p) => {
+            const status = await p.status().catch((error: unknown) => ({
+              installed: false,
+              signedIn: false,
+              detail: error instanceof Error ? error.message : String(error),
+            }));
+            // A local server's record carries its models and what each can do.
+            return isLocalProvider(p.id)
+              ? localConnectionRecord(p, status)
+              : connectionRecord(p, status);
+          }),
         );
         push({
           kind: "block",
@@ -394,7 +399,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           lines: [
             ...describeConnections(records, detailed),
             "",
-            "/connect cli · api · plans · manage · disconnect <connection>",
+            "/connect cli · api · plans · local · manage · disconnect <connection>",
           ],
         });
       } finally {
@@ -1002,7 +1007,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           const section = sectionOf(command.args);
           if (section === undefined) {
             notice(
-              "/connect takes: cli, api, plans, list, status, manage, disconnect <connection>.",
+              "/connect takes: cli, api, plans, local, list, status, manage, disconnect <connection>.",
               "warning",
             );
             break;
@@ -1035,7 +1040,9 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
               ? { kind: "menu" }
               : section === "manage"
                 ? { kind: "manage" }
-                : { kind: "section", type: section },
+                : section === "local"
+                  ? { kind: "local" }
+                  : { kind: "section", type: section },
           );
           setMode("connect");
           break;
@@ -1775,9 +1782,30 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                     setMode("chat");
                     void showConnections(false);
                   } else if (section === "manage") setConnectView({ kind: "manage" });
+                  else if (section === "local") setConnectView({ kind: "local" });
                   else if (section !== "menu") setConnectView({ kind: "section", type: section });
                 }}
               />
+            )}
+            {mode === "connect" && connectView.kind === "local" && services.connections && (
+              <LocalPanel
+                actions={services.connections}
+                onUse={() => {
+                  setConnectView({ kind: "section", type: "local" });
+                }}
+                onCancel={() => {
+                  setConnectView({ kind: "menu" });
+                }}
+                onDone={(message, tone) => {
+                  setConnectView({ kind: "local" });
+                  if (message) notice(message, tone ?? "success");
+                }}
+              />
+            )}
+            {mode === "connect" && connectView.kind === "local" && !services.connections && (
+              <Text color={theme.warning}>
+                Local connections are set up from the terminal here.
+              </Text>
             )}
             {mode === "connect" && connectView.kind === "key" && (
               <KeyEntry
@@ -2002,7 +2030,9 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                     ? "CLI / Subscription"
                     : connectView.type === "api-key"
                       ? "API Key"
-                      : "Coding Plan"
+                      : connectView.type === "local"
+                        ? "Local models / Self-hosted"
+                        : "Coding Plan"
                 }
                 providers={services.providers.filter(
                   (p) =>

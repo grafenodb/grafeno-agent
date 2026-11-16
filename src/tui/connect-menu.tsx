@@ -9,7 +9,7 @@ import { theme } from "./theme.js";
 /** Where /connect is: its menu, one of its sections, or a step inside one. */
 export type ConnectSection = "menu" | ConnectionType | "list" | "manage";
 
-/** The five ways into /connect, as the menu offers them (each clickable, 1–5 too). */
+/** The ways into /connect, as the menu offers them (each clickable, by number too). */
 export const CONNECT_MENU: readonly (PickerItem & { readonly section: ConnectSection })[] = [
   {
     id: "cli",
@@ -30,16 +30,22 @@ export const CONNECT_MENU: readonly (PickerItem & { readonly section: ConnectSec
     hint: "a membership or prepaid plan's own key (not an API key)",
   },
   {
-    id: "list",
-    section: "list",
-    label: "4. View connections",
-    hint: "each connection and its state",
+    id: "local",
+    section: "local",
+    label: "4. Local models / Self-hosted",
+    hint: "Ollama, LM Studio, Bionic or any OpenAI-compatible server of yours (no key unless it asks)",
   },
   {
     id: "manage",
     section: "manage",
     label: "5. Manage connections",
     hint: "switch on or off, check, change a key, disconnect",
+  },
+  {
+    id: "list",
+    section: "list",
+    label: "6. View connections",
+    hint: "each connection and its state",
   },
 ];
 
@@ -60,6 +66,14 @@ export function sectionOf(args: string): ConnectSection | "status" | "disconnect
     case "plans":
     case "coding-plan":
       return "coding-plan";
+    case "local":
+    case "self-hosted":
+    case "selfhosted":
+    case "ollama":
+    case "lmstudio":
+    case "lm-studio":
+    case "bionic":
+      return "local";
     case "list":
       return "list";
     case "status":

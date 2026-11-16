@@ -67,7 +67,7 @@ describe("the connection registry", () => {
     for (const id of Object.keys(KNOWN_PROVIDERS)) {
       const profile = PROVIDER_PROFILES[id];
       expect(profile, id).toBeDefined();
-      expect(["cli", "api-key", "coding-plan"]).toContain(profile?.connectionType);
+      expect(["cli", "api-key", "coding-plan", "local"]).toContain(profile?.connectionType);
     }
     // One vendor, several connections.
     const byVendor = (vendorId: string) =>

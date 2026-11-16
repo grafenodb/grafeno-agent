@@ -26,7 +26,9 @@ export type BillingKind =
   /** An API's free quota: no charge, with its own limits. */
   | "free-api"
   /** Billed by consumption (tokens): only with the user's express authorization. */
-  | "metered";
+  | "metered"
+  /** A model server of the user's own (on this computer or theirs): no one bills per token. */
+  | "local";
 
 export interface Billing {
   readonly kind: BillingKind;
@@ -88,8 +90,12 @@ export interface ProviderFeatures {
  * (its own program) or in the system's secure store; never in Grafeno.
  */
 export interface ProviderAuth {
-  /** `provider-cli`: the provider's official program holds the sign-in; `api-key`: a key of the user's. */
-  readonly method: "provider-cli" | "api-key";
+  /**
+   * `provider-cli`: the provider's official program holds the sign-in;
+   * `api-key`: a key of the user's; `local-server`: a model server of the
+   * user's own, with a key only when it asks for one.
+   */
+  readonly method: "provider-cli" | "api-key" | "local-server";
   /** How to sign in, in a sentence. */
   readonly signIn: string;
   status(): Promise<ProviderStatus>;
