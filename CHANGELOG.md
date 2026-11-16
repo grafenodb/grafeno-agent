@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Permission requests are no longer refused by accident**: Enter does not
+  answer them (only y, n or esc do), keys pressed the moment one appears
+  are not taken as its answer, and requests from several sub-agents wait
+  in turn ("2 more waiting") instead of replacing one another. The notice
+  says what was allowed or refused, the command included ("Not allowed:
+  run in the project: python -c ...").
+
 ## 0.1.3 (2026-11-15)
 
 - **The right panel follows the agent on screen**: on a sub-agent, its own

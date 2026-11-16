@@ -170,7 +170,19 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
   const [busy, setBusy] = useState<string | undefined>(undefined);
   const [live, setLive] = useState("");
   const [tools, setTools] = useState<LiveTool[]>([]);
-  const [approval, setApproval] = useState<Approval | undefined>(undefined);
+  // Permission requests wait in turn: several sub-agents may ask at once, and
+  // each one must be answered, never replaced by the next.
+  const [approvals, setApprovals] = useState<readonly Approval[]>([]);
+  const approval = approvals[0];
+  const setApproval = useCallback((next: Approval | undefined) => {
+    if (next) setApprovals((queue) => [...queue, next]);
+    else setApprovals((queue) => queue.slice(1));
+  }, []);
+  /** When the request on screen appeared: keys pressed just before it are not answers. */
+  const approvalShown = useRef(0);
+  useEffect(() => {
+    if (approval) approvalShown.current = Date.now();
+  }, [approval]);
   const [sent, setSent] = useState<string[]>([]);
   const [resumable, setResumable] = useState<PickerItem[]>([]);
   const [status, setStatus] = useState<ProviderStatus | undefined>(undefined);
@@ -1066,14 +1078,17 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
 
   useInput((input, key) => {
     if (approval) {
+      // A request that just appeared does not take keys typed for something else
+      // (a message being written): only y, n or esc answer it, a moment after it shows.
+      if (Date.now() - approvalShown.current < APPROVAL_GRACE_MS) return;
       if (input === "y" || input === "Y" || input === "s") {
         approval.resolve(true);
         setApproval(undefined);
-        notice(`Allowed: ${firstLine(approval.what)}`, "success");
-      } else if (input === "n" || input === "N" || key.escape || key.return) {
+        notice(`Allowed: ${approvalSummary(approval.what)}`, "success");
+      } else if (input === "n" || input === "N" || key.escape) {
         approval.resolve(false);
         setApproval(undefined);
-        notice(`Not allowed: ${firstLine(approval.what)}`, "warning");
+        notice(`Not allowed: ${approvalSummary(approval.what)}`, "warning");
       }
       return;
     }
@@ -1227,7 +1242,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
           )}
           {scroll > 0 && <Text dimColor> ↓ {String(scroll)} lines below · pgdn</Text>}
           <Box flexDirection="column" flexShrink={0}>
-            {approval && <ApprovalBox approval={approval} />}
+            {approval && <ApprovalBox approval={approval} waiting={approvals.length - 1} />}
             {mode === "models" && session && (
               <Picker
                 title="Model"
@@ -1938,11 +1953,31 @@ function Working({ label, hint }: { readonly label: string; readonly hint: strin
   );
 }
 
-function ApprovalBox({ approval }: { readonly approval: Approval }): ReactNode {
+/** Keys pressed this soon after a permission request appears are not taken as its answer. */
+const APPROVAL_GRACE_MS = 600;
+
+/** What a permission request was about, in a line: its first line, with the command or path it names. */
+export function approvalSummary(what: string): string {
+  const lines = what
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  const first = lines[0] ?? what;
+  const summary = first.endsWith(":") && lines[1] !== undefined ? `${first} ${lines[1]}` : first;
+  return summary.length > 160 ? `${summary.slice(0, 157)}...` : summary;
+}
+
+function ApprovalBox({
+  approval,
+  waiting,
+}: {
+  readonly approval: Approval;
+  readonly waiting: number;
+}): ReactNode {
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.warning} paddingX={1}>
       <Text bold color={theme.warning}>
-        Permission needed
+        Permission needed{waiting > 0 ? ` · ${String(waiting)} more waiting` : ""}
       </Text>
       <Text>The agent wants to {approval.what}</Text>
       {approval.reason !== undefined && <Text dimColor>{approval.reason}</Text>}
@@ -1954,7 +1989,8 @@ function ApprovalBox({ approval }: { readonly approval: Approval }): ReactNode {
         <Text color={theme.error} bold>
           n
         </Text>
-        <Text> don’t allow</Text>
+        <Text> or esc don’t allow</Text>
+        <Text dimColor> · enter does not answer</Text>
       </Text>
     </Box>
   );
@@ -2068,9 +2104,4 @@ function replay(entries: readonly Entry[]): NewItem[] {
         return [];
     }
   });
-}
-
-function firstLine(text: string): string {
-  const line = text.split("\n", 1)[0] ?? "";
-  return line.length > 100 ? `${line.slice(0, 99)}…` : line;
 }

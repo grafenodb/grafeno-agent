@@ -219,3 +219,14 @@ describe("the mouse wheel", () => {
     expect(wheelTurns("hello")).toEqual([]);
   });
 });
+
+describe("a permission request, in a line", () => {
+  it("names the command or path its first line only announces", async () => {
+    const { approvalSummary } = await import("../../src/tui/app.js");
+    expect(approvalSummary("run in the project:\n      python -I -c 'print(1)'")).toBe(
+      "run in the project: python -I -c 'print(1)'",
+    );
+    expect(approvalSummary("write a note")).toBe("write a note");
+    expect(approvalSummary(`run in the project:\n${"x".repeat(300)}`)).toHaveLength(160);
+  });
+});
