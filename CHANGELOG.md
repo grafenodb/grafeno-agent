@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased
+
+- **Connections**: a registry tells vendor, connection and model apart.
+  Each connection has its vendor, type (CLI, API key, coding plan), sign-in,
+  cost model, terms standing, what it supports and whether it starts on; a
+  vendor has one connection per way to reach it (Anthropic:
+  `claude-code-local` and `claude-api`).
+- **CLIs over ACP**: GitHub Copilot, Qwen Code, Kimi Code and Mistral Vibe,
+  through one adapter on the official `@agentclientprotocol/sdk` (pinned).
+  Each runs in a private folder with only its own documented sign-in; the
+  agent's tools reach it over the agent's MCP server, and its built-in
+  tools' permission requests are refused.
+- **Vendors by API key**: OpenAI, DeepSeek, Mistral, Moonshot, Qwen (Model
+  Studio), Z.ai, MiniMax and xAI, on their documented endpoints only. The
+  key is checked for free by listing models, kept in the system's secure
+  store, and billed per token only when allowed; DeepSeek's balance is
+  shown. Coding plans (Kimi, Z.ai, MiniMax, Qwen) are separate connections,
+  off by default, since their terms restrict or do not address a
+  third-party agent.
+- **`/connect` in sections**: CLI / Subscription, API Key, Coding Plan,
+  View and Manage, clickable or by number, and `/connect
+cli|api|plans|list|status|manage|disconnect <connection>`. A key is typed
+  masked and checked before it is kept; then billing or the plan's terms
+  are asked. `grafeno-agent login|logout <connection>` does the same from a
+  terminal.
+- **`claude-api`**: Claude through the official Claude Agent SDK with an
+  Anthropic API key only: built-in tools off, the agent's own tools and
+  permissions, no settings loaded, sessions resumed by id, step and budget
+  limits, and each turn's cost counted. Always billed per token, it runs
+  only with `AGENT_ALLOW_BILLING=claude-api`, which `login claude-api` asks
+  about after checking the key for free. The SDK (about 335 MB) is
+  installed on demand by `grafeno-agent providers install claude-api`.
+- **Provider switches**: `PROVIDER_<NAME>_ENABLED` for every provider, read
+  on every call; switched off, a provider is never asked or started.
+  `grafeno-agent providers` shows each one's sign-in, switch, standing and
+  state, and enables, disables or installs. `claude-code-local` is another
+  name for `claude-code`; its standing with Pro/Max subscriptions in
+  third-party orchestrators awaits Anthropic's clarification, and it is
+  said wherever it is listed.
+- **Isolation**: Claude Code and Codex start without any key variable, so
+  `ANTHROPIC_API_KEY`, `CODEX_API_KEY` or `OPENAI_API_KEY` can never turn a
+  subscription into a billed API; a reset credit is never spent.
+- **Cost routing**: at equal fit, providers billed per token come after
+  subscriptions and free quotas.
+
 ## 0.1.6 (2026-11-16)
 
 - **Documents**: `read_document` reads PDF, Word, Excel, PowerPoint and
