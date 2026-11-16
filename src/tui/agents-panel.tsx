@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
-import type { ReactNode } from "react";
-import type { SubAgent } from "./agents.js";
+import { useState, type ReactNode } from "react";
+import { ActionGroup, type ActionRecord } from "./activity.js";
+import type { AgentLine, SubAgent } from "./agents.js";
 import { Markdown } from "./markdown.js";
 import { Spinner } from "./spinner.js";
 import { theme } from "./theme.js";
@@ -184,7 +185,15 @@ function Entry({
  * A sub-agent's work, as it goes: its words and the tools it used. Read
  * only: a sub-agent takes no prompts, the main agent orchestrates it.
  */
-export function AgentView({ agent }: { readonly agent: SubAgent }): ReactNode {
+export function AgentView({
+  agent,
+  allOpen = false,
+}: {
+  readonly agent: SubAgent;
+  /** Every group of actions unfolded (ctrl+o); a click flips one. */
+  readonly allOpen?: boolean;
+}): ReactNode {
+  const [flipped, setFlipped] = useState<ReadonlySet<number>>(new Set());
   return (
     <Box flexDirection="column">
       <Box marginTop={1} flexDirection="column">
@@ -209,8 +218,25 @@ export function AgentView({ agent }: { readonly agent: SubAgent }): ReactNode {
           </Text>
         </Box>
       )}
-      {agent.lines.map((line, index) =>
-        line.kind === "text" ? (
+      {foldLines(agent.lines).map((entry) => {
+        if ("records" in entry) {
+          return (
+            <ActionGroup
+              key={entry.index}
+              records={entry.records}
+              open={allOpen !== flipped.has(entry.index)}
+              onToggle={() => {
+                setFlipped((current) => {
+                  const next = new Set(current);
+                  if (!next.delete(entry.index)) next.add(entry.index);
+                  return next;
+                });
+              }}
+            />
+          );
+        }
+        const { line, index } = entry;
+        return line.kind === "text" ? (
           <Box key={index} marginTop={1} paddingLeft={2}>
             <Markdown text={line.text} />
           </Box>
@@ -233,8 +259,35 @@ export function AgentView({ agent }: { readonly agent: SubAgent }): ReactNode {
               </Text>
             )}
           </Box>
-        ),
-      )}
+        );
+      })}
     </Box>
   );
+}
+
+/** A sub-agent's lines with its finished actions in a row gathered into groups. */
+function foldLines(
+  lines: readonly AgentLine[],
+): ({ index: number; line: AgentLine } | { index: number; records: ActionRecord[] })[] {
+  const out: ({ index: number; line: AgentLine } | { index: number; records: ActionRecord[] })[] =
+    [];
+  let group: { index: number; records: ActionRecord[] } | undefined;
+  lines.forEach((line, index) => {
+    if (line.kind === "tool" && line.state !== "running" && line.action) {
+      const record: ActionRecord = {
+        action: line.action,
+        failed: line.state === "failed",
+        ...(line.output !== undefined ? { output: line.output } : {}),
+      };
+      if (group) group.records.push(record);
+      else {
+        group = { index, records: [record] };
+        out.push(group);
+      }
+      return;
+    }
+    group = undefined;
+    out.push({ index, line });
+  });
+  return out;
 }

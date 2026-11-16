@@ -71,10 +71,15 @@ class ClickRegistry {
   }
 }
 
-/** Where an element is on the screen: its layout added to its ancestors'. */
-export function rectOf(
-  node: DOMElement,
-): { x: number; y: number; width: number; height: number } | undefined {
+interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Where a node is laid out, before any scrolling: its layout added to its ancestors'. */
+function laidOut(node: DOMElement): Rect | undefined {
   const own = node.yogaNode?.getComputedLayout();
   if (!own) return undefined;
   let x = 0;
@@ -87,6 +92,47 @@ export function rectOf(
     }
   }
   return { x, y, width: own.width, height: own.height };
+}
+
+const offsetOf = (value: unknown) => (typeof value === "number" ? value : 0);
+
+/**
+ * Where an element is on the screen: its layout, moved by the containers
+ * scrolled around it (`contentOffsetX`/`contentOffsetY`), and cut to what
+ * the containers that hide their overflow show. Nothing when none of it shows.
+ */
+export function rectOf(node: DOMElement): Rect | undefined {
+  const rect = laidOut(node);
+  if (!rect) return undefined;
+  let { x, y } = rect;
+  let right = x + rect.width;
+  let bottom = y + rect.height;
+  for (let at = node.parentNode; at; at = at.parentNode) {
+    const dx = offsetOf(at.style.contentOffsetX);
+    const dy = offsetOf(at.style.contentOffsetY);
+    x -= dx;
+    right -= dx;
+    y -= dy;
+    bottom -= dy;
+    if (at.style.overflow === "hidden" || at.style.overflowY === "hidden") {
+      const view = laidOut(at);
+      if (view) {
+        // The container's own place, moved by the containers scrolled around it.
+        let vy = view.y;
+        let vx = view.x;
+        for (let up = at.parentNode; up; up = up.parentNode) {
+          vx -= offsetOf(up.style.contentOffsetX);
+          vy -= offsetOf(up.style.contentOffsetY);
+        }
+        x = Math.max(x, vx);
+        y = Math.max(y, vy);
+        right = Math.min(right, vx + view.width);
+        bottom = Math.min(bottom, vy + view.height);
+      }
+    }
+  }
+  if (right <= x || bottom <= y) return undefined;
+  return { x, y, width: right - x, height: bottom - y };
 }
 
 const ClickContext = createContext<ClickRegistry | undefined>(undefined);

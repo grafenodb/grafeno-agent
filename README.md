@@ -275,11 +275,24 @@ window and is not done moves, between rounds, to a lighter model, which
 takes over from its progress so far (in economy and balanced; never for
 models you chose, nor for the hardest tasks).
 
-**The conversation** shows each action on its own line: what it does (Read,
+**The conversation** shows each action while it runs: what it does (Read,
 Edit, Run, Search, Recall…), on what, and what came of it (120 lines, ok,
-exit 1, 3 matches, not allowed: …). The agent's answers come under
-◆ Grafeno Agent; code comes framed, with its language, and diffs in their
-colours.
+exit 1, 3 matches, not allowed: …). Once done, the actions in a row fold
+into one line, such as `✓ Read 3 files, edited a file, ran 2 commands ▸`.
+A click on it unfolds the group: each action and what it did (a change as
+`-` and `+` lines, a command's output, an error). **ctrl+o** unfolds or
+folds every group at once, in a sub-agent's view too. A turn that did
+something closes with a line of its result (`✓ Worked for 1m 12s · edited
+2 files, ran 3 commands`), and the agent ends its answer with what was done
+and how it turned out. The agent's answers come under ◆ Grafeno Agent;
+code comes framed, with its language, and diffs in their colours.
+
+**A run's result.** When a plan of sub-agents ends, **Result** says how
+many tasks were done and, for each, what its sub-agent did or why it did
+not, then where the work is (merged into your branch, or the branch to
+merge). The technical details (attempts, tokens, models, what the
+sub-agents asked) stay folded under **Run details**: a click or ctrl+o
+opens them.
 
 **The agents panel** draws the sub-agents as a tree under the orchestrator:
 each one's task as its title, the model it uses under it, and what it is

@@ -1,4 +1,5 @@
 import { describeCall } from "../app/session.js";
+import { actionOutput, describeAction, summarizeOutcome, type Action } from "./activity.js";
 import type { TaskState } from "../orchestrator/states.js";
 import type { ActiveWorker, WorkerActivity } from "../orchestrator/workers.js";
 
@@ -11,6 +12,11 @@ export type AgentLine =
       readonly label: string;
       readonly state: "running" | "done" | "failed";
       readonly detail?: string;
+      /** How it reads (a verb, a target, what came of it), and what it did: for folding. */
+      readonly action?: Action;
+      readonly output?: string;
+      /** The call, kept until its result comes. */
+      readonly call?: { readonly name: string; readonly input: Record<string, unknown> };
     };
 
 /**
@@ -151,7 +157,17 @@ export function withActivity(agents: readonly SubAgent[], activity: WorkerActivi
       }
       case "tool_call": {
         const label = describeCall(event.call);
-        lines = [...a.lines, { kind: "tool", id: event.call.id, label, state: "running" }];
+        lines = [
+          ...a.lines,
+          {
+            kind: "tool",
+            id: event.call.id,
+            label,
+            state: "running",
+            action: describeAction(event.call.name, event.call.input),
+            call: { name: event.call.name, input: event.call.input },
+          },
+        ];
         doing = label.split("\n", 1)[0] ?? label;
         break;
       }
@@ -164,6 +180,20 @@ export function withActivity(agents: readonly SubAgent[], activity: WorkerActivi
                 state: failed ? "failed" : "done",
                 ...(failed
                   ? { detail: (event.outcome.content.split("\n", 1)[0] ?? "").slice(0, 160) }
+                  : {}),
+                ...(line.call
+                  ? {
+                      action: {
+                        ...describeAction(line.call.name, line.call.input),
+                        summary: summarizeOutcome(line.call.name, event.outcome.content, failed),
+                      },
+                      output: actionOutput(
+                        line.call.name,
+                        line.call.input,
+                        event.outcome.content,
+                        failed,
+                      ),
+                    }
                   : {}),
               }
             : line,

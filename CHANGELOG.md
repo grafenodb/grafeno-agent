@@ -12,6 +12,15 @@
   your own SearXNG (`BRAVE_SEARCH_API_KEY`, `TAVILY_API_KEY`,
   `SEARXNG_URL`, `WEB_SEARCH`); it asks first, and its keys are hidden from
   commands. `grafeno-agent check` says which service is in use.
+- **Folded actions**: finished actions in a row fold into one line (`Read 3
+files, edited a file, ran 2 commands`); a click unfolds a group into each
+  action and what it did (changes as `-`/`+` lines, outputs, errors), and
+  ctrl+o unfolds or folds them all, in sub-agents' views too.
+- **Results**: a turn that did something closes with how long it worked and
+  what it did, and the agent ends with the result of the work. A run ends
+  with **Result**: tasks done, what each one did or why not, and where the
+  work is; its technical details are folded under **Run details**.
+- Clicks land where they should in a scrolled conversation.
 
 ## 0.1.5 (2026-11-16)
 

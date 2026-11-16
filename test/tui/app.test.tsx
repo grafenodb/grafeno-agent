@@ -836,13 +836,17 @@ describe("orchestration in the interface", { timeout: 60_000 }, () => {
     await press(app, ENTER, () => !now(app).includes("Run this plan?"), "the run to start");
     // The last frame, not every frame: joining them all each time slows the run itself.
     await until(
-      () => now(app).includes("Run report"),
+      () => now(app).includes("Run details"),
       () => `the report; the screen was:
 ${now(app)}`,
       45_000,
     );
-    expect(now(app)).toContain(": completed");
+    // The result first, each task with what it did; the details folded under it.
+    expect(now(app)).toContain("Done: 2 of 2 tasks done.");
+    expect(now(app)).toContain("✓ Write alpha");
     expect(now(app)).toContain("git merge grafeno/");
+    expect(now(app)).toContain("▸ Run details");
+    expect(now(app)).not.toContain(": completed");
     expect(
       execFileSync("git", ["branch", "--list", "grafeno/*/integration"], {
         cwd: repo,
@@ -1060,6 +1064,51 @@ describe("Auto with no provider in it", { timeout: 20_000 }, () => {
     expect(seen(app)).toContain("Auto includes no provider yet");
     // No triage: Auto had nothing to choose from.
     expect(asked).toEqual([]);
+    app.unmount();
+  });
+});
+
+describe("folded actions", { timeout: 20_000 }, () => {
+  it("finished actions fold into a line; ctrl+o or a click unfolds them; the turn closes with its result", async () => {
+    const reader = (name: string): Tool => ({
+      name,
+      description: "Reads.",
+      inputSchema: { type: "object", properties: { path: { type: "string" } } },
+      writes: false,
+      run: (input) => `contents of ${String(input.path)}\nsecond line`,
+    });
+    const app = render(
+      <App
+        services={services({
+          turns: [
+            [
+              { call: "read_file", input: { path: "a.ts" } },
+              { call: "read_file", input: { path: "b.ts" } },
+              { call: "run_command", input: { command: "npm test" } },
+              { say: "All good: both files read, tests pass." },
+            ],
+          ],
+          tools: [reader("read_file"), reader("run_command")],
+        })}
+      />,
+    );
+    await ready(app);
+    await type(app, "check it");
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("All good"), "the answer");
+    await until(() => now(app).includes("Worked for"), "the result line");
+    const folded = now(app);
+    expect(folded).toContain("Read 2 files, ran a command ▸");
+    expect(folded).toMatch(/Worked for \d+s · read 2 files, ran a command/);
+    expect(folded).not.toContain("contents of a.ts");
+    app.stdin.write("\u000F"); // ctrl+o
+    await until(() => now(app).includes("contents of a.ts"), "the actions unfolded");
+    expect(now(app)).toContain("npm test");
+    expect(now(app)).toContain("▾");
+    app.stdin.write("\u000F");
+    await until(() => !now(app).includes("contents of a.ts"), "folded again");
+    clickOn(app, "Read 2 files");
+    await until(() => now(app).includes("contents of b.ts"), "unfolded by a click");
     app.unmount();
   });
 });

@@ -53,7 +53,16 @@ import { projectFootprint } from "../projects.js";
 import { sessionsDir } from "../sessions/store.js";
 import { dataDir } from "../data-dir.js";
 import { SessionsPanel } from "./sessions.js";
-import { ActionLine, describeAction, summarizeOutcome, type Action } from "./activity.js";
+import {
+  ActionGroup,
+  ActionLine,
+  actionOutput,
+  describeAction,
+  groupSummary,
+  summarizeOutcome,
+  type Action,
+  type ActionRecord,
+} from "./activity.js";
 import {
   PERMISSION_LABELS,
   settingsPermissionMode,
@@ -68,6 +77,7 @@ const SCOPE_LABELS: Readonly<Record<PermissionScope, string>> = {
   "session+subagents": "This session and its sub-agents",
 };
 import { describePlan } from "../app/orchestrate.js";
+import { describeResult } from "../orchestrator/result.js";
 import { useWheel } from "./mouse.js";
 import { PalacePanel } from "./palace.js";
 import { Picker, type PickerItem } from "./picker.js";
@@ -103,6 +113,15 @@ type Item =
       readonly detail?: string;
       /** How it reads: a verb, a target, what came of it (absent for restored ones). */
       readonly action?: Action;
+      /** What it did, shown when its group is unfolded. */
+      readonly output?: string;
+    }
+  | {
+      readonly id: number;
+      readonly kind: "result";
+      /** How long the work took, and what it did, in a line. */
+      readonly text: string;
+      readonly failed: boolean;
     }
   | { readonly id: number; readonly kind: "notice"; readonly text: string; readonly tone: Tone }
   | { readonly id: number; readonly kind: "memory"; readonly recall: Recall }
@@ -111,6 +130,10 @@ type Item =
       readonly kind: "block";
       readonly title: string;
       readonly lines: readonly string[];
+      /** Folded under its title until clicked (or ctrl+o): details few need. */
+      readonly foldable?: boolean;
+      /** Green when the work it reports went well, amber when not. */
+      readonly tone?: "success" | "warning";
     };
 
 type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id"> : never) : never;
@@ -218,6 +241,9 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   const [recall, setRecall] = useState<Recall | undefined>(undefined);
   const [sidebarOn, setSidebarOn] = useState(true);
   const [scroll, setScroll] = useState(0);
+  // Folded actions: all unfolded with ctrl+o; a click flips one group.
+  const [allOpen, setAllOpen] = useState(false);
+  const [flipped, setFlipped] = useState<ReadonlySet<number>>(new Set());
   const [, setTick] = useState(0);
   const [watched, setWatched] = useState<Watched | undefined>(undefined);
   const [runChoices, setRunChoices] = useState<PickerItem[]>([]);
@@ -403,6 +429,9 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       setBusy(label);
       const labels = new Map<string, string>();
       const calls = new Map<string, { name: string; input: Record<string, unknown> }>();
+      // What the turn did, for the line that closes it.
+      const done: ActionRecord[] = [];
+      const started = Date.now();
       let buffer = "";
       const flush = () => {
         if (buffer.trim() !== "") push({ kind: "assistant", text: buffer });
@@ -457,9 +486,16 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                           ...describeAction(call.name, call.input),
                           summary: summarizeOutcome(call.name, event.outcome.content, failed),
                         },
+                        output: actionOutput(call.name, call.input, event.outcome.content, failed),
                       }
                     : {}),
                 });
+                if (call) {
+                  done.push({
+                    action: describeAction(call.name, call.input),
+                    failed,
+                  });
+                }
                 break;
               }
               case "model_info":
@@ -484,6 +520,9 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           notice("The answer reached its length limit.", "warning");
         else if (turn.result.stopReason === "refusal")
           notice("The model declined to answer.", "warning");
+        if (done.length > 0 && turn.result.stopReason === "end_turn") {
+          push({ kind: "result", ...workResult(done, Date.now() - started) });
+        }
       } catch (error) {
         flush();
         const message = describeError(error);
@@ -640,10 +679,17 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       let delivered = false;
       try {
         state = await orchestrator.run(runId);
-        lines = describeReport(orchestrator.report(runId));
-        // What the sub-agents told the orchestrator, and what it decided of their requests.
+        // The details (attempts, tokens, models, what the sub-agents asked), folded.
+        const details = describeReport(orchestrator.report(runId));
         const told = orchestrator.coordination(runId);
-        if (told.length > 0) lines.push("", "What the sub-agents reported and asked:", ...told);
+        if (told.length > 0) details.push("", "What the sub-agents reported and asked:", ...told);
+        // The result first: what was done, task by task.
+        const result = describeResult(
+          orchestrator.store.tasks(runId),
+          orchestrator.store.events(runId),
+          state,
+        );
+        lines = [result.headline, "", ...result.tasks];
         const delivery = orchestrator.delivery(runId)?.status;
         delivered = delivery === "merged" || delivery === "already";
         if (state === "completed") {
@@ -660,7 +706,15 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
         } else if (state === "paused" || state === "waiting") {
           lines.push("", `The run is ${state}: /runs takes it up again.`);
         }
-        push({ kind: "block", title: "Run report", lines });
+        push({
+          kind: "block",
+          title: "Result",
+          lines,
+          tone: result.ok ? "success" : "warning",
+        });
+        push({ kind: "block", title: "Run details", lines: details, foldable: true });
+        // For the agent's own report: the result, then the details.
+        lines = [...lines, "", ...details];
       } catch (error) {
         const message = `The run stopped: ${error instanceof Error ? error.message : String(error)}`;
         lines = [message];
@@ -1176,7 +1230,10 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     if (key.pageUp) setScroll((s) => s + Math.max(3, rows - 10));
     else if (key.pageDown) setScroll((s) => Math.max(0, s - Math.max(3, rows - 10)));
     else if (key.ctrl && input === "b") setSidebarOn((on) => !on);
-    else if (key.ctrl && (input === "n" || input === "p") && agents.length > 0) {
+    else if (key.ctrl && input === "o") {
+      setAllOpen((open) => !open);
+      setFlipped(new Set());
+    } else if (key.ctrl && (input === "n" || input === "p") && agents.length > 0) {
       // Through the main agent and its sub-agents.
       const keys = [undefined, ...agents.map(agentKey)];
       const at = keys.indexOf(viewing);
@@ -1285,7 +1342,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
         <Box flexDirection="column" flexGrow={1} paddingX={1}>
           {viewed ? (
             <Viewport scroll={scroll} onClamp={setScroll}>
-              <AgentView agent={viewed} />
+              <AgentView agent={viewed} allOpen={allOpen} />
             </Viewport>
           ) : (
             <Viewport scroll={scroll} onClamp={setScroll}>
@@ -1297,9 +1354,35 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                   compact={rows < 34}
                 />
               )}
-              {items.map((item) => (
-                <ItemView key={item.id} item={item} />
-              ))}
+              {groupItems(items).map((entry) =>
+                "records" in entry ? (
+                  <ActionGroup
+                    key={entry.id}
+                    records={entry.records}
+                    open={allOpen !== flipped.has(entry.id)}
+                    onToggle={() => {
+                      setFlipped((current) => {
+                        const next = new Set(current);
+                        if (!next.delete(entry.id)) next.add(entry.id);
+                        return next;
+                      });
+                    }}
+                  />
+                ) : (
+                  <ItemView
+                    key={entry.id}
+                    item={entry}
+                    open={allOpen !== flipped.has(entry.id)}
+                    onToggle={() => {
+                      setFlipped((current) => {
+                        const next = new Set(current);
+                        if (!next.delete(entry.id)) next.add(entry.id);
+                        return next;
+                      });
+                    }}
+                  />
+                ),
+              )}
               {live !== "" && (
                 <Box marginTop={1} paddingLeft={2}>
                   <Markdown text={live} />
@@ -1951,7 +2034,7 @@ function Footer({
           <Text dimColor>
             {narrow
               ? "/ commands · pgup/pgdn · esc stop"
-              : "enter send · / commands · pgup/pgdn scroll · ctrl+b panel · esc interrupt"}
+              : "enter send · / commands · pgup/pgdn scroll · ctrl+o actions · ctrl+b panel · esc interrupt"}
           </Text>
         </Text>
       </Box>
@@ -1970,7 +2053,59 @@ function Footer({
   );
 }
 
-function ItemView({ item }: { readonly item: Item }): ReactNode {
+type ToolItem = Extract<Item, { kind: "tool" }>;
+
+/** The items with finished actions in a row gathered, each run as one group. */
+function groupItems(items: readonly Item[]): (Item | { id: number; records: ActionRecord[] })[] {
+  const out: (Item | { id: number; records: ActionRecord[] })[] = [];
+  let group: { id: number; records: ActionRecord[] } | undefined;
+  for (const item of items) {
+    if (item.kind === "tool" && item.action) {
+      const tool = item as ToolItem & { action: Action };
+      const record: ActionRecord = {
+        action: tool.action,
+        failed: tool.failed,
+        ...(tool.output !== undefined ? { output: tool.output } : {}),
+      };
+      if (group) group.records.push(record);
+      else {
+        group = { id: item.id, records: [record] };
+        out.push(group);
+      }
+      continue;
+    }
+    // Memory lines between actions do not break a group.
+    if (item.kind === "memory" && group) continue;
+    group = undefined;
+    out.push(item);
+  }
+  return out;
+}
+
+/** The line that closes a turn that did things: how long, and what. */
+function workResult(done: readonly ActionRecord[], ms: number): { text: string; failed: boolean } {
+  const seconds = Math.round(ms / 1000);
+  const took =
+    seconds < 60
+      ? `${String(Math.max(1, seconds))}s`
+      : `${String(Math.floor(seconds / 60))}m ${String(seconds % 60)}s`;
+  const failed = done.filter((d) => d.failed).length;
+  return {
+    text: `Worked for ${took} · ${groupSummary(done).replace(/^./, (c) => c.toLowerCase())}${failed > 0 ? ` · ${String(failed)} failed` : ""}`,
+    failed: failed > 0,
+  };
+}
+
+function ItemView({
+  item,
+  open = false,
+  onToggle,
+}: {
+  readonly item: Item;
+  /** For a foldable block: whether it is unfolded. */
+  readonly open?: boolean;
+  readonly onToggle?: () => void;
+}): ReactNode {
   switch (item.kind) {
     case "user":
       return (
@@ -2017,6 +2152,14 @@ function ItemView({ item }: { readonly item: Item }): ReactNode {
       );
     case "memory":
       return <MemoryLine recall={item.recall} />;
+    case "result":
+      return (
+        <Box marginTop={1} paddingLeft={2}>
+          <Text color={item.failed ? theme.warning : theme.success}>
+            {item.failed ? "!" : "✓"} {item.text}
+          </Text>
+        </Box>
+      );
     case "notice": {
       const color = {
         info: theme.muted,
@@ -2034,17 +2177,44 @@ function ItemView({ item }: { readonly item: Item }): ReactNode {
       );
     }
     case "block":
+      if (item.foldable && !open) {
+        return (
+          <Clickable paddingLeft={2} onClick={onToggle}>
+            <Text dimColor>
+              ▸ {item.title} ({String(item.lines.length)} lines · click or ctrl+o)
+            </Text>
+          </Clickable>
+        );
+      }
       return (
         <Box
           marginTop={1}
           flexDirection="column"
           borderStyle="round"
-          borderColor={theme.border}
+          borderColor={
+            item.tone === "success"
+              ? theme.success
+              : item.tone === "warning"
+                ? theme.warning
+                : theme.border
+          }
           paddingX={1}
         >
-          <Text bold color={theme.accent}>
-            {item.title}
-          </Text>
+          <Clickable {...(item.foldable ? { onClick: onToggle } : {})}>
+            <Text
+              bold
+              color={
+                item.tone === "success"
+                  ? theme.success
+                  : item.tone === "warning"
+                    ? theme.warning
+                    : theme.accent
+              }
+            >
+              {item.foldable ? "▾ " : ""}
+              {item.title}
+            </Text>
+          </Clickable>
           {item.lines.map((line, index) => (
             <Text key={index}>{line === "" ? " " : line}</Text>
           ))}
@@ -2252,6 +2422,7 @@ function helpLines(): string[] {
     "  ↑ ↓             earlier messages; in a list, move",
     "  tab             complete a command",
     "  pgup / pgdn     scroll the conversation (or the mouse wheel)",
+    "  ctrl+o          unfold or fold every group of actions (a click does one)",
     "  shift + mouse   select text to copy",
     "  ctrl+b          show or hide the side panel",
     "  esc             interrupt the answer",

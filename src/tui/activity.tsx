@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactNode } from "react";
+import { Clickable } from "./clicks.js";
 import { Spinner } from "./spinner.js";
 import { theme } from "./theme.js";
 
@@ -90,6 +91,13 @@ export function describeAction(name: string, input: Record<string, unknown>): Ac
         verb: name === "web_fetch" ? "Fetch" : str(input.method) || "GET",
         target: oneLine(str(input.url)),
       };
+    case "read_document":
+      return {
+        verb: "Document",
+        target: `${path}${str(input.pages) ? ` (${str(input.pages)})` : ""}`,
+      };
+    case "web_search":
+      return { verb: "Web search", target: `“${oneLine(str(input.query), 60)}”` };
     case "environment_info":
       return { verb: "Environment", target: "system, shell, programs" };
     case "current_time":
@@ -185,6 +193,176 @@ export function ActionLine({
           </Text>
         ) : null}
       </Text>
+    </Box>
+  );
+}
+
+/** A finished action and what it showed: kept so a folded group can be unfolded. */
+export interface ActionRecord {
+  readonly action: Action;
+  readonly failed: boolean;
+  /** What it did, in a few lines: the change, the command's output, the error. */
+  readonly output?: string;
+}
+
+/** Lines of output kept for each action, unfolded. */
+export const OUTPUT_LINES = 12;
+
+const clip = (text: string, lines = OUTPUT_LINES) => {
+  const all = text.replace(/\r/g, "").split("\n");
+  const kept = all
+    .slice(0, lines)
+    .map((line) => (line.length > 200 ? `${line.slice(0, 199)}…` : line));
+  return all.length > lines ? [...kept, `… ${String(all.length - lines)} more lines`] : kept;
+};
+
+/** What an action did, shown when its group is unfolded: a change as - and + lines, else what it returned. */
+export function actionOutput(
+  name: string,
+  input: Record<string, unknown>,
+  content: string,
+  failed: boolean,
+): string {
+  if (failed) return clip(content, 4).join("\n");
+  const diff = (before: string, after: string) => [
+    ...before.split(/\r?\n/).map((l) => `- ${l}`),
+    ...after.split(/\r?\n/).map((l) => `+ ${l}`),
+  ];
+  switch (name) {
+    case "edit_file":
+      return clip(diff(str(input.old_text), str(input.new_text)).join("\n")).join("\n");
+    case "multi_edit": {
+      const edits = Array.isArray(input.edits) ? (input.edits as Record<string, unknown>[]) : [];
+      return clip(edits.flatMap((e) => diff(str(e.old_text), str(e.new_text))).join("\n")).join(
+        "\n",
+      );
+    }
+    case "write_file":
+      return clip(str(input.content)).join("\n");
+    case "read_file":
+    case "read_document":
+    case "web_fetch":
+      // What it read is long and the model's; its first lines say enough.
+      return clip(content, 4).join("\n");
+    default:
+      return clip(content).join("\n");
+  }
+}
+
+/** How many of each kind, as a person says it: "Read 3 files, edited 2 files, ran a command". */
+export function groupSummary(records: readonly ActionRecord[]): string {
+  const counts = new Map<string, number>();
+  for (const r of records) counts.set(r.action.verb, (counts.get(r.action.verb) ?? 0) + 1);
+  const n = (count: number, one: string, many = `${one}s`) =>
+    count === 1 ? `a ${one}` : `${String(count)} ${many}`;
+  const files = (count: number) => (count === 1 ? "a file" : `${String(count)} files`);
+  const said = [...counts].map(([verb, count]) => {
+    switch (verb) {
+      case "Read":
+        return `read ${files(count)}`;
+      case "Edit":
+        return `edited ${files(count)}`;
+      case "Write":
+        return `wrote ${files(count)}`;
+      case "Delete":
+        return `deleted ${files(count)}`;
+      case "Move":
+        return `moved ${files(count)}`;
+      case "Look at":
+        return `looked at ${files(count)}`;
+      case "Document":
+        return `read ${n(count, "document")}`;
+      case "Run":
+        return `ran ${n(count, "command")}`;
+      case "Start":
+        return `started ${n(count, "process", "processes")}`;
+      case "Search":
+        return `searched ${count === 1 ? "once" : `${String(count)} times`}`;
+      case "List":
+        return `listed ${n(count, "folder")}`;
+      case "Fetch":
+        return `fetched ${n(count, "page")}`;
+      case "Web search":
+        return `searched the web ${count === 1 ? "once" : `${String(count)} times`}`;
+      default:
+        return count === 1 ? verb.toLowerCase() : `${verb.toLowerCase()} ×${String(count)}`;
+    }
+  });
+  const text = said.join(", ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/**
+ * Finished actions in a row, folded into one line ("Read 3 files, edited
+ * a file") that unfolds, with a click or ctrl+o, into each action and what
+ * it did.
+ */
+export function ActionGroup({
+  records,
+  open,
+  onToggle,
+}: {
+  readonly records: readonly ActionRecord[];
+  readonly open: boolean;
+  readonly onToggle?: () => void;
+}): ReactNode {
+  const failed = records.filter((r) => r.failed).length;
+  const only = records.length === 1 ? records[0] : undefined;
+  return (
+    <Box flexDirection="column">
+      <Clickable paddingLeft={2} onClick={onToggle}>
+        <Box width={2} flexShrink={0}>
+          <Text color={failed > 0 ? theme.error : theme.success}>{failed > 0 ? "✗" : "✓"}</Text>
+        </Box>
+        <Text wrap="truncate-end">
+          {only ? (
+            <>
+              <Text color={only.failed ? theme.error : theme.accent} bold>
+                {only.action.verb}
+              </Text>
+              <Text> {only.action.target}</Text>
+              {only.action.summary ? (
+                <Text {...(only.failed ? { color: theme.error } : { dimColor: true })}>
+                  {"  "}· {only.action.summary}
+                </Text>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <Text bold>{groupSummary(records)}</Text>
+              {failed > 0 && <Text color={theme.error}> · {String(failed)} failed</Text>}
+            </>
+          )}
+          <Text dimColor> {open ? "▾" : "▸"}</Text>
+        </Text>
+      </Clickable>
+      {open &&
+        records.map((record, index) => (
+          <Box key={index} flexDirection="column">
+            {!only && (
+              <ActionLine action={record.action} state={record.failed ? "failed" : "done"} />
+            )}
+            {record.output !== undefined && record.output.trim() !== "" && (
+              <Box paddingLeft={6} flexDirection="column">
+                {record.output.split("\n").map((line, at) => (
+                  <Text
+                    key={at}
+                    wrap="truncate-end"
+                    {...(record.failed
+                      ? { color: theme.error }
+                      : line.startsWith("+ ")
+                        ? { color: theme.success }
+                        : line.startsWith("- ")
+                          ? { color: theme.error }
+                          : { dimColor: true })}
+                  >
+                    {line === "" ? " " : line}
+                  </Text>
+                ))}
+              </Box>
+            )}
+          </Box>
+        ))}
     </Box>
   );
 }
