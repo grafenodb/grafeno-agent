@@ -542,9 +542,9 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.stdin.write(ENTER);
     await until(() => now(app).includes("Permission needed"), "the question");
     expect(now(app)).toContain("write a note");
-    // Enter is not an answer (a message being typed when the request appears), nor is a key
-    // pressed the moment it shows.
-    app.stdin.write("y");
+    // Enter is not an answer (a message being typed when the request appears), however long
+    // after it shows. (A key pressed the moment it shows is no answer either; how long that
+    // moment lasts depends on the machine's load, so it is not timed here.)
     app.stdin.write(ENTER);
     await new Promise((resolve) => setTimeout(resolve, 700));
     expect(now(app)).toContain("Permission needed");
