@@ -106,7 +106,10 @@ Commands:
           (failed attempts); reaching one pauses the run, saying which. --review: after
           a task's checks pass, a reviewer on another model reads its change and may
           send it back with issues (twice at most); it never approves, and a
-          disagreement left over goes to a person. --permissions ask|auto|skip: how
+          disagreement left over goes to a person. --leader provider/model (default
+          AGENT_LEADER): that model leads the run: it plans it, gives each task to a
+          provider and model, and audits every task (approves it, or sends it back with
+          what to fix, and leaves suggestions for the tasks after it). --permissions ask|auto|skip: how
           the workers' calls that would ask are decided (default AGENT_PERMISSIONS, ask).
           --unattended: nobody watches: the plan runs without asking, permissions are
           skipped, the run goes on in extended mode (replans, retries, merges when its
@@ -352,6 +355,7 @@ function runSettings(argv: readonly string[]): OrchestrateSettings {
   return {
     ...(Object.keys(limits).length > 0 ? { limits } : {}),
     ...(argv.includes("--review") ? { review: true } : {}),
+    ...(flag(argv, "--leader") === undefined ? {} : { leader: flag(argv, "--leader") ?? "" }),
     ...(mode === undefined ? {} : { mode: mode as Autonomy }),
     workers: Number.isFinite(workers) && workers >= 1 ? Math.floor(workers) : 3,
     light: argv.includes("--light"),
@@ -741,6 +745,7 @@ function settingsArgs(argv: readonly string[]): string[] {
     "--max-tokens",
     "--max-work",
     "--max-retries",
+    "--leader",
   ];
   for (const [i, arg] of argv.entries()) {
     if (valued.includes(arg) && argv[i + 1] !== undefined) out.push(arg, argv[i + 1] ?? "");

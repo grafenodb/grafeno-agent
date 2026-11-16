@@ -31,6 +31,8 @@ export interface SidebarProps {
   readonly autoUsage?: readonly AutoUsage[];
   /** The sub-agent on screen: the panel shows its own details instead of the main agent's. */
   readonly agent?: SubAgent;
+  /** The chat's provider is a model server of the person's own: no quota, only tokens. */
+  readonly local?: boolean;
   /** Runs a command when a section is clicked (models, usage, palace). */
   readonly onCommand?: (name: string) => void;
 }
@@ -46,6 +48,10 @@ export interface AutoUsage {
   readonly current: boolean;
   /** The latest reading failed: `usage` is an older one. */
   readonly stale?: boolean;
+  /** A model server of the person's own: it has no quota; only its tokens are shown. */
+  readonly local?: boolean;
+  /** The tokens it spent answering the chat in this session. */
+  readonly tokens?: { readonly input: number; readonly output: number };
 }
 
 /** The side panel: the model, how full its context is, the plan's real usage, where the agent works and its memory. */
@@ -118,7 +124,14 @@ export function Sidebar(props: SidebarProps): ReactNode {
                     <Text dimColor>{member.usage ? ` · ${ago(member.usage.at)}` : ""}</Text>
                     {member.stale ? <Text color={theme.warning}> · old</Text> : null}
                   </Text>
-                  {member.usage ? (
+                  {member.local ? (
+                    <Text dimColor wrap="truncate-end">
+                      local · no quota ·{" "}
+                      {member.tokens
+                        ? `${compact(member.tokens.input)} in · ${compact(member.tokens.output)} out`
+                        : "no tokens yet"}
+                    </Text>
+                  ) : member.usage ? (
                     member.usage.limits
                       .filter((limit) => !/fable/i.test(limit.label) || limit.used > 0)
                       .map((limit) => (
@@ -138,6 +151,24 @@ export function Sidebar(props: SidebarProps): ReactNode {
                   )}
                 </Box>
               ))}
+            </Section>
+          ) : props.local ? (
+            <Section title="Tokens · local">
+              {session ? (
+                <Text>
+                  {compact(
+                    session.usage.inputTokens +
+                      session.usage.cacheReadTokens +
+                      session.usage.cacheWriteTokens,
+                  )}{" "}
+                  in · {compact(session.usage.outputTokens)} out
+                </Text>
+              ) : (
+                <Text dimColor>—</Text>
+              )}
+              <Text dimColor wrap="wrap">
+                A model of your own: no quota or credits to spend.
+              </Text>
             </Section>
           ) : (
             <Section

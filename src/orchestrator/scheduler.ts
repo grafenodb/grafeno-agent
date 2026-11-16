@@ -41,6 +41,8 @@ export interface TaskInput {
   readonly summary?: string;
   /** The memories its worker stored (decisions, contracts…), by id in Grafeno. */
   readonly memories?: readonly string[];
+  /** What the run's leader suggested when it approved it, for the tasks after it. */
+  readonly suggestions?: readonly string[];
 }
 
 /**
@@ -326,19 +328,28 @@ export class Scheduler {
   /** What the task's dependencies came to. */
   #inputs(runId: string, task: TaskRecord): TaskInput[] {
     const { store } = this.#options;
-    const notes = store.events(runId).filter((e) => e.kind === "memories");
+    const events = store.events(runId);
+    const notes = events.filter((e) => e.kind === "memories");
     return task.spec.dependsOn.flatMap((id) => {
       const done = store.task(runId, id);
       if (!done) return [];
       const memories = notes
         .filter((e) => e.taskId === id)
         .flatMap((e) => (Array.isArray(e.data.ids) ? e.data.ids.map(String) : []));
+      // The leader's suggestions when it approved the task (its last review).
+      const approved = events
+        .filter((e) => e.taskId === id && e.kind === "reviewed" && e.data.leader === true)
+        .at(-1);
+      const suggestions = Array.isArray(approved?.data.suggestions)
+        ? approved.data.suggestions.map(String)
+        : [];
       return [
         {
           id,
           title: done.spec.title,
           ...(done.reason ? { summary: done.reason } : {}),
           ...(memories.length > 0 ? { memories: [...new Set(memories)] } : {}),
+          ...(suggestions.length > 0 ? { suggestions } : {}),
         },
       ];
     });

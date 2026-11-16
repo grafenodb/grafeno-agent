@@ -1,5 +1,7 @@
 import { Box, Text, useInput } from "ink";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useWheel } from "./mouse.js";
+import { useListRows, windowStart } from "./picker.js";
 import type { Provider, ProviderStatus } from "../providers/types.js";
 import { AutoModelsPanel } from "./auto-models.js";
 import { Spinner } from "./spinner.js";
@@ -68,6 +70,21 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
   const at = Math.min(selected, Math.max(0, rows - 1));
   const onAuto = offerAuto && at === 0;
   const autoEmpty = props.autoMembers !== undefined && props.autoMembers.length === 0;
+  // Each provider takes about five lines: as many as fit (three at least), the selected one in view.
+  const visible = Math.max(3, Math.floor(useListRows(undefined, 80, offerAuto ? 16 : 12) / 5));
+  const providerAt = Math.max(0, at - first);
+  const start = windowStart(providerAt, visible, shown.length);
+  const hiddenAbove = start;
+  const hiddenBelow = Math.max(0, shown.length - start - visible);
+  useWheel(
+    useCallback(
+      (direction: number) => {
+        if (choosingModels) return;
+        setSelected((s) => Math.max(0, Math.min(rows - 1, Math.min(s, rows - 1) - direction)));
+      },
+      [choosingModels, rows],
+    ),
+  );
 
   useEffect(() => {
     let live = true;
@@ -90,6 +107,8 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
       } else props.onDone(undefined);
     } else if (key.upArrow) setSelected(Math.max(0, at - 1));
     else if (key.downArrow) setSelected(Math.min(rows - 1, at + 1));
+    else if (key.pageUp) setSelected(Math.max(0, at - visible));
+    else if (key.pageDown) setSelected(Math.min(rows - 1, at + visible));
     else if (key.ctrl && input === "r") {
       setStatuses(new Map());
       setChecking((c) => c + 1);
@@ -165,7 +184,9 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
       {shown.length === 0 && (
         <Text color={theme.warning}>No provider matches “{query}”. esc clears the search.</Text>
       )}
-      {shown.map((provider, index) => {
+      {hiddenAbove > 0 && <Text dimColor> ↑ {String(hiddenAbove)} more</Text>}
+      {shown.slice(start, start + visible).map((provider, offset) => {
+        const index = start + offset;
         const status = statuses.get(provider.id);
         const on = index + first === at;
         return (
@@ -248,6 +269,7 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
           </Box>
         );
       })}
+      {hiddenBelow > 0 && <Text dimColor> ↓ {String(hiddenBelow)} more (↑↓, wheel, PgDn)</Text>}
       <Box marginTop={1}>
         <Text dimColor>
           The chat uses the one chosen here; a run may give tasks to the ones in Auto.

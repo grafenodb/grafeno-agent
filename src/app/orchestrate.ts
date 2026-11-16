@@ -1,3 +1,5 @@
+import { readAssignee } from "../orchestrator/plan.js";
+import { canonicalProvider } from "../providers/profiles.js";
 import { deliveryMode } from "../orchestrator/orchestrator.js";
 import { routingMode } from "../orchestrator/router.js";
 import { loadConfig } from "../config.js";
@@ -34,6 +36,8 @@ export interface OrchestrateSettings {
   readonly limits?: RunLimits;
   /** Cross review (phase D5): a reviewer on another model may send tasks back. */
   readonly review?: boolean;
+  /** The run's leader (`provider/model`); default: AGENT_LEADER. */
+  readonly leader?: string;
   readonly cwd?: string;
 }
 
@@ -57,6 +61,7 @@ export async function createOrchestrator(
     router: routerMode(process.env.AGENT_ROUTER),
     ...(settings.limits ? { limits: settings.limits } : {}),
     ...(settings.review ? { review: true } : {}),
+    ...leaderOption(settings.leader ?? process.env.AGENT_LEADER),
     explore: exploreOn(process.env.AGENT_ROUTER_EXPLORE),
     ...((settings.auto ?? isAuto(process.env.AGENT_PROVIDERS))
       ? { auto: true, affinity: affinityFor(process.env.AGENT_AFFINITY, TASK_KINDS) }
@@ -110,12 +115,40 @@ function providerOptions(settings: OrchestrateSettings): {
 }
 
 /** A plan, as lines for a person: each task, what it waits for, and the model it will get. */
+/** The run's leader from a setting such as `codex/gpt-6-astra` or `claude-code` (its own model). */
+export function leaderOption(setting: string | undefined): {
+  leader?: { provider: string; model?: string };
+} {
+  const assignee = readAssignee(setting ?? "");
+  if (!assignee) return {};
+  return {
+    leader: {
+      provider: canonicalProvider(assignee.provider),
+      ...(assignee.model ? { model: assignee.model } : {}),
+    },
+  };
+}
+
 export function describePlan(
-  planned: Planned & { routes: Map<string, Route>; planner?: string },
+  planned: Planned & {
+    routes: Map<string, Route>;
+    planner?: string;
+    leader?: string;
+    leaderMissing?: string;
+  },
 ): string[] {
   const lines = [
     `Goal: ${planned.plan.goal}`,
-    ...(planned.planner ? [`Planned by ${planned.planner}`] : []),
+    ...(planned.leader
+      ? [`Leader: ${planned.leader} · planned it, gave out the tasks, and audits each one`]
+      : planned.planner
+        ? [`Planned by ${planned.planner}`]
+        : []),
+    ...(planned.leaderMissing
+      ? [
+          `The leader chosen (${planned.leaderMissing}) is not one of this run's providers: the router chose the planner, and no task is audited by a leader.`,
+        ]
+      : []),
     "",
   ];
   // With tasks on more than one provider, each model is named with its provider.

@@ -60,6 +60,19 @@ export function describeResult(
     review: "?",
     cancelled: "–",
   };
+  // What the run's leader decided of each task: approved, sent back, its suggestions.
+  const audits = events.filter((e) => e.kind === "reviewed" && e.data.leader === true);
+  const leaderNote = (id: string) => {
+    const mine = audits.filter((e) => e.taskId === id);
+    const last = mine.at(-1);
+    if (!last) return "";
+    const back = mine.filter((e) => e.data.verdict === "changes").length;
+    const suggestions = Array.isArray(last.data.suggestions) ? last.data.suggestions.length : 0;
+    const verdict = last.data.verdict === "ok" ? "approved by the leader" : "not approved yet";
+    return ` · ${verdict}${back > 0 ? `, sent back ${String(back)}×` : ""}${
+      suggestions > 0 ? `, ${String(suggestions)} suggestion${suggestions === 1 ? "" : "s"}` : ""
+    }`;
+  };
   const lines = tasks.map((t) => {
     const what =
       t.state === "completed"
@@ -67,7 +80,20 @@ export function describeResult(
         : t.reason
           ? firstLine(t.reason)
           : t.state;
-    return `${mark[t.state] ?? "·"} ${t.spec.title}${what ? ` — ${what}` : ""}`;
+    return `${mark[t.state] ?? "·"} ${t.spec.title}${what ? ` — ${what}` : ""}${leaderNote(t.id)}`;
   });
-  return { ok, headline, tasks: lines };
+  const reviewer = audits.find((e) => typeof e.data.reviewer === "string")?.data.reviewer;
+  const approved = new Set(audits.filter((e) => e.data.verdict === "ok").map((e) => e.taskId)).size;
+  const sentBack = audits.filter((e) => e.data.verdict === "changes").length;
+  const leaderLine =
+    audits.length > 0
+      ? [
+          `The leader (${String(reviewer)}) approved ${String(approved)} task${approved === 1 ? "" : "s"}${
+            sentBack > 0
+              ? ` and sent work back ${String(sentBack)} time${sentBack === 1 ? "" : "s"}`
+              : ""
+          }.`,
+        ]
+      : [];
+  return { ok, headline, tasks: [...leaderLine, ...lines] };
 }

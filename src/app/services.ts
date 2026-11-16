@@ -123,6 +123,8 @@ export interface AppServices {
     permissions?: PermissionMode;
     /** For each provider in Auto, the models it may use; none: all (AGENT_AUTO_MODELS). */
     autoModels?: Readonly<Record<string, readonly string[]>>;
+    /** The leader of orchestrated runs, `provider/model`; "" for none (AGENT_LEADER). */
+    leader?: string;
   }): void;
   /** The memory upkeep report for the session's project. */
   upkeep(session: AgentSession): Promise<string>;
@@ -373,8 +375,13 @@ export function realServices(version: string): AppServices {
         autoProviders?: readonly string[];
         permissions?: PermissionMode;
         autoModels?: Readonly<Record<string, readonly string[]>>;
+        leader?: string;
       },
     ) {
+      if (choice.leader !== undefined) {
+        save({ AGENT_LEADER: choice.leader });
+        return;
+      }
       if (choice.autoModels !== undefined) {
         save({ [AUTO_MODELS_SETTING]: autoModelsSetting(choice.autoModels) });
         return;

@@ -126,6 +126,18 @@ export interface OrchestratorOptions {
   readonly profiles?: Partial<Record<TaskKind, Profile>>;
   /** The planner's model and effort; default: what the router gives an architecture task. */
   readonly planner?: ModelChoice;
+  /**
+   * The run's leader: one model of one of the run's providers, chosen by
+   * the person. It plans the run and gives each task to a sub-agent (a
+   * provider, and a model), decides the sub-agents' requests, and audits
+   * every task after its checks pass: it approves it, or sends it back with
+   * what to fix, and leaves suggestions for the tasks after it.
+   */
+  readonly leader?: {
+    readonly provider: string;
+    readonly model?: string;
+    readonly effort?: string;
+  };
   readonly context?: ContextPolicy;
   /** Asks a person (the interface); without it, what needs a person is refused or waits in review. */
   readonly ask?: (question: Question) => Promise<boolean>;
@@ -324,7 +336,10 @@ export class Orchestrator {
       }),
       policy: this.policy,
       ...(options.ask ? { ask: options.ask } : {}),
-      ...(options.review ? { review: this.#reviewing(options.review) } : {}),
+      // A leader audits every task; without one, the cross review when it is on.
+      ...(options.review || options.leader
+        ? { review: this.#reviewing(options.review || true) }
+        : {}),
       ...(options.delivery === "live"
         ? {
             onMerged: async (runId: string, taskId: string) => {
@@ -346,9 +361,28 @@ export class Orchestrator {
    */
   #reviewing(setting: true | { readonly rounds?: number; readonly kinds?: readonly TaskKind[] }) {
     const kinds = setting === true || !setting.kinds ? undefined : new Set(setting.kinds);
+    const leading = this.options.leader !== undefined;
     return {
-      for: (task: TaskRecord) => (kinds ? kinds.has(task.spec.kind) : task.spec.kind !== "docs"),
-      ask: async (task: TaskRecord, diff: string, context: AttemptContext) => {
+      // The leader audits every task; a cross review, every kind but docs.
+      for: (task: TaskRecord) =>
+        leading || (kinds ? kinds.has(task.spec.kind) : task.spec.kind !== "docs"),
+      ...(leading ? { leader: true } : {}),
+      ask: async (task: TaskRecord, diff: string, context: AttemptContext, summary?: string) => {
+        const leader = this.#leaderChoice();
+        if (leader) {
+          const model =
+            this.options.makeModel?.(leader.choice) ?? leader.provider.create(leader.choice);
+          const reviewer = plannerLabel(leader);
+          const worker = this.store.task(context.runId, task.id)?.model ?? "";
+          return {
+            verdict: await crossReview(model, task.spec, diff, context.signal, {
+              leader: true,
+              ...(summary ? { summary } : {}),
+            }),
+            reviewer,
+            independent: worker !== "" && !reviewer.endsWith(`/${worker}`) && worker !== reviewer,
+          };
+        }
         const route = await this.pool.routeFor({
           ...task.spec,
           id: `review-${task.id}`,
@@ -386,7 +420,16 @@ export class Orchestrator {
   async plan(
     request: string,
     signal?: AbortSignal,
-  ): Promise<Planned & { routes: Map<string, Route>; planner: string }> {
+  ): Promise<
+    Planned & {
+      routes: Map<string, Route>;
+      planner: string;
+      /** The run's leader, when it leads this run. */
+      leader?: string;
+      /** The leader chosen, when its provider is not one of this run's. */
+      leaderMissing?: string;
+    }
+  > {
     await this.#billingAllowed();
     // The planner's model, made with the provider it was routed to.
     const planner = this.options.planner
@@ -394,9 +437,16 @@ export class Orchestrator {
       : await this.#plannerChoice();
     const model =
       this.options.makeModel?.(planner.choice) ?? planner.provider.create(planner.choice);
+    const leading = this.#leaderChoice();
     const planned = await makePlan(
       { request, context: await this.#projectContext() },
-      { model, ...(signal ? { signal } : {}) },
+      {
+        model,
+        ...(signal ? { signal } : {}),
+        ...(leading
+          ? { leader: { name: plannerLabel(leading), roster: await this.#roster() } }
+          : {}),
+      },
     );
     // Routed in order, counting what each provider was given, as the run will.
     const routes = new Map<string, Route>();
@@ -409,7 +459,17 @@ export class Orchestrator {
         assigned.set(route.provider, (assigned.get(route.provider) ?? 0) + 1);
       routes.set(task.id, route);
     }
-    return { ...planned, routes, planner: plannerLabel(planner) };
+    return {
+      ...planned,
+      routes,
+      planner: plannerLabel(planner),
+      ...(leading ? { leader: plannerLabel(leading) } : {}),
+      ...(this.options.leader && !leading
+        ? {
+            leaderMissing: `${this.options.leader.provider}${this.options.leader.model ? `/${this.options.leader.model}` : ""}`,
+          }
+        : {}),
+    };
   }
 
   /** Stores a checked plan as a run, from the project's HEAD; says what the run will not see. */
@@ -697,7 +757,50 @@ export class Orchestrator {
     if (this.options.metrics === undefined) this.metrics?.close();
   }
 
+  /** The run's leader, when one was chosen and its provider is one of the run's. */
+  #leaderChoice(): { choice: ModelChoice; provider: Provider; model: string } | undefined {
+    const leader = this.options.leader;
+    if (!leader) return undefined;
+    let provider: Provider;
+    try {
+      provider = this.pool.providerById(leader.provider);
+    } catch {
+      return undefined;
+    }
+    return {
+      choice: {
+        ...(leader.model && leader.model !== "default" ? { model: leader.model } : {}),
+        ...(leader.effort ? { effort: leader.effort } : {}),
+      },
+      provider,
+      model: leader.model ?? "default",
+    };
+  }
+
+  /** Who the leader may give tasks to: each provider of the run, with its models. */
+  async #roster(): Promise<string[]> {
+    const providers = this.options.providers ?? [this.options.provider];
+    return Promise.all(
+      providers.map(async (p) => {
+        const catalog = await this.pool.catalog(p.id).catch(() => undefined);
+        const models = (catalog?.models ?? [])
+          .filter((m) => m.id !== "default")
+          .slice(0, 15)
+          .map((m) => {
+            const tier = catalog
+              ? (["deep", "standard", "light"] as const).find((t) => catalog.tiers[t][0] === m.id)
+              : undefined;
+            return `${m.id}${tier ? ` (${tier})` : ""}${m.hint && /tools|context/.test(m.hint) ? ` [${m.hint}]` : ""}`;
+          });
+        return `${p.id}: ${models.length > 0 ? models.join(", ") : "its own choice of model"}`;
+      }),
+    );
+  }
+
   async #plannerChoice(): Promise<{ choice: ModelChoice; provider: Provider; model: string }> {
+    // The run's leader plans it.
+    const leader = this.#leaderChoice();
+    if (leader) return leader;
     const probe: TaskSpec = {
       id: "plan",
       title: "Plan",

@@ -48,6 +48,12 @@ export interface TaskSpec {
   readonly parallelSafe: boolean;
   /** The planner's advice; the router has the last word. */
   readonly recommended?: { readonly tier: Tier; readonly effort?: string };
+  /**
+   * Who the run's leader gave the task to: a provider, and a model of it
+   * when it named one. The router follows it when that provider is ready
+   * and can take the task.
+   */
+  readonly assignee?: { readonly provider: string; readonly model?: string };
 }
 
 export type Acceptance =
@@ -141,6 +147,7 @@ function readTask(raw: unknown, index: number, problems: string[]): TaskSpec | u
     problems.push(`${name} is accepted only by a review: add a command or files to check`);
   }
   const recommended = readRecommended(raw.recommended, name, problems);
+  const assignee = readAssignee(raw.assign);
   return {
     id,
     title,
@@ -153,7 +160,19 @@ function readTask(raw: unknown, index: number, problems: string[]): TaskSpec | u
     acceptance,
     parallelSafe: raw.parallelSafe !== false,
     ...(recommended ? { recommended } : {}),
+    ...(assignee ? { assignee } : {}),
   };
+}
+
+/** "provider" or "provider/model" (a model's own id may have slashes too: "lmstudio/qwen/qwen3"). */
+export function readAssignee(raw: unknown): TaskSpec["assignee"] | undefined {
+  const value = text(raw);
+  if (value === "") return undefined;
+  const at = value.indexOf("/");
+  const provider = (at < 0 ? value : value.slice(0, at)).trim();
+  const model = at < 0 ? "" : value.slice(at + 1).trim();
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(provider)) return undefined;
+  return { provider, ...(model ? { model } : {}) };
 }
 
 function readAcceptance(raw: unknown, name: string, problems: string[]): Acceptance[] {

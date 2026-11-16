@@ -59,6 +59,21 @@ cli|api|plans|list|status|manage|disconnect <connection>`. A key is typed
   ones after subscriptions and free quotas, and before anything billed per
   token. A model not known to take tools takes no tool work.
   `AGENT_LOCAL_ROUTING` (`light`, `first`, `last`).
+- **A leader for orchestrated runs**: `/leader` (or `AGENT_LEADER`,
+  `orchestrate --leader provider/model`) chooses a model of one of Auto's
+  providers to plan the run, give each task to a sub-agent (provider and
+  model, followed when it can take it), decide the sub-agents' requests,
+  and audit every task after its checks: approve it, or send it back with
+  what to fix (up to three times), and leave suggestions that reach the
+  tasks after it. The plan says who leads; the Result says what it
+  approved and sent back.
+- **Searchable, scrolling lists**: long lists (models, the leader, a
+  provider's models in Auto) are searched by name as you type; every list,
+  `/connect`'s sections included, scrolls with the arrows, Page Up/Down
+  and the mouse wheel, and says how many rows are above and below. The
+  wheel scrolls an open menu, not the conversation behind it.
+- **Local providers show tokens, not a quota**: the side panel and
+  `/usage` show only the tokens a local or self-hosted server used.
 - The OpenAI-compatible adapter streams (for local servers), sends no key
   when a server needs none, takes inference settings and a timeout, and
   never follows a redirect.

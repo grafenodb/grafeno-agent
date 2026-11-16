@@ -1,5 +1,7 @@
 import { Box, Text, useInput } from "ink";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useWheel } from "./mouse.js";
+import { matchesQuery, useListRows, windowStart } from "./picker.js";
 import type { ModelOption, Provider } from "../providers/types.js";
 import { Spinner } from "./spinner.js";
 import { theme } from "./theme.js";
@@ -24,6 +26,7 @@ export function AutoModelsPanel(props: AutoModelsPanelProps): ReactNode {
   const [models, setModels] = useState<readonly ModelOption[] | undefined>(undefined);
   const [marked, setMarked] = useState<ReadonlySet<string>>(new Set(props.chosen));
   const [at, setAt] = useState(0);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     let live = true;
@@ -40,7 +43,25 @@ export function AutoModelsPanel(props: AutoModelsPanelProps): ReactNode {
     };
   }, [props.provider]);
 
-  const rows = (models?.length ?? 0) + 1;
+  // What was typed narrows the list (an API may offer hundreds of models).
+  const shown = useMemo(
+    () =>
+      (models ?? []).filter((m) =>
+        matchesQuery({ id: m.id, label: m.name, ...(m.hint ? { hint: m.hint } : {}) }, query),
+      ),
+    [models, query],
+  );
+  const rows = shown.length + 1;
+  const visible = useListRows(undefined, 14, 16);
+  const start = windowStart(Math.max(0, at - 1), visible, shown.length);
+  useWheel(
+    useCallback(
+      (direction: number) => {
+        setAt((a) => Math.max(0, Math.min(rows - 1, a - direction)));
+      },
+      [rows],
+    ),
+  );
   const toggle = (id: string) => {
     setMarked((current) => {
       const next = new Set(current);
@@ -53,23 +74,44 @@ export function AutoModelsPanel(props: AutoModelsPanelProps): ReactNode {
     props.onDone(models?.filter((m) => marked.has(m.id)).map((m) => m.id) ?? []);
   };
   useInput((input, key) => {
-    if (key.escape) props.onDone(undefined);
-    else if (key.upArrow) setAt((a) => Math.max(0, a - 1));
+    if (key.escape) {
+      if (query !== "") {
+        setQuery("");
+        setAt(0);
+      } else props.onDone(undefined);
+    } else if (key.upArrow) setAt((a) => Math.max(0, a - 1));
     else if (key.downArrow) setAt((a) => Math.min(rows - 1, a + 1));
+    else if (key.pageUp) setAt((a) => Math.max(0, a - visible));
+    else if (key.pageDown) setAt((a) => Math.min(rows - 1, a + visible));
     else if (input === " ") {
       if (at === 0) setMarked(new Set());
       else {
-        const id = models?.[at - 1]?.id;
+        const id = shown[at - 1]?.id;
         if (id !== undefined) toggle(id);
       }
     } else if (key.return) save();
+    else if (key.backspace || key.delete) {
+      setQuery((q) => q.slice(0, -1));
+      setAt(0);
+    } else if (input && !key.ctrl && !key.meta && !key.tab) {
+      setQuery((q) => q + input);
+      setAt(1);
+    }
   });
 
   const auto = marked.size === 0;
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.brand} paddingX={1}>
-      <Text bold color={theme.brand}>
-        {props.provider.name} · models in Auto
+      <Text>
+        <Text bold color={theme.brand}>
+          {props.provider.name} · models in Auto
+        </Text>
+        <Text dimColor>
+          {" "}
+          · {String(shown.length)}
+          {query === "" ? "" : ` of ${String(models?.length ?? 0)}`} · search:{" "}
+        </Text>
+        <Text color={theme.accent}>{query === "" ? "type a name" : query}</Text>
       </Text>
       {models === undefined ? (
         <Box>
@@ -90,7 +132,9 @@ export function AutoModelsPanel(props: AutoModelsPanelProps): ReactNode {
               <Text dimColor> every model, chosen by the task and by what each spends</Text>
             </Text>
           </Clickable>
-          {models.map((model, index) => {
+          {start > 0 && <Text dimColor> ↑ {String(start)} more</Text>}
+          {shown.slice(start, start + visible).map((model, offset) => {
+            const index = start + offset;
             const on = index + 1 === at;
             return (
               <Clickable
@@ -108,6 +152,12 @@ export function AutoModelsPanel(props: AutoModelsPanelProps): ReactNode {
               </Clickable>
             );
           })}
+          {shown.length - start - visible > 0 && (
+            <Text dimColor> ↓ {String(shown.length - start - visible)} more</Text>
+          )}
+          {models.length > 0 && shown.length === 0 && (
+            <Text color={theme.warning}>No model matches “{query}”. esc clears the search.</Text>
+          )}
           {models.length === 0 && (
             <Text color={theme.warning}>
               It did not list its models now: Auto uses all of them.
@@ -122,7 +172,7 @@ export function AutoModelsPanel(props: AutoModelsPanelProps): ReactNode {
         </Text>
       </Box>
       <Box gap={2}>
-        <Text dimColor>space or click mark ·</Text>
+        <Text dimColor>type to search · space or click mark ·</Text>
         <Clickable onClick={save}>
           <Text color={theme.accent} underline>
             enter save

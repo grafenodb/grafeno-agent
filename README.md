@@ -146,6 +146,7 @@ agent asks again when it starts.
 | `AGENT_AFFINITY`            | the defaults below      | Where each task kind goes first in `auto`                                        |
 | `AGENT_ROUTING`             | `balanced`              | `economy`, `balanced` or `quality`: how eagerly runs spend the plans             |
 | `AGENT_LOCAL_ROUTING`       | `light`                 | `light`, `first` or `last`: what goes to your local models (see below)           |
+| `AGENT_LEADER`              | none                    | `provider/model` that leads orchestrated runs (set by `/leader`)                 |
 | `AGENT_AUTO_MODELS`         | (all)                   | Each Auto provider's models: `codex:gpt-6-astra,gpt-6.1-sol` (`m` in `/connect`) |
 | `AGENT_DELIVERY`            | `live`                  | `live` (task by task), `end` or `manual`: how runs' work reaches your folder     |
 | `AGENT_MEMORY_BUDGET`       | see [Memory](#memory)   | How much memory may reach the model                                              |
@@ -189,7 +190,8 @@ The panel hides on narrow windows, or with Ctrl+B.
 | `/help`        | Commands and keys                                            |
 | `/new`         | A new conversation (the current one is kept)                 |
 | `/resume`      | Take up an earlier conversation of this project              |
-| `/models`      | Choose the model, by its exact name                          |
+| `/models`      | Choose the model, by its exact name (type to search)         |
+| `/leader`      | Choose the leader of orchestrated runs (see below)           |
 | `/effort`      | Choose how hard the model thinks (Low … Max)                 |
 | `/connect`     | Connections: CLI, API key, coding plan, local; manage, list  |
 | `/palace`      | Grafeno: included, or a server you already have              |
@@ -618,6 +620,36 @@ grafeno-agent resume <id>       # go on with a paused or waiting run
 Runs are kept in the agent's data folder, so a run stopped by closing the
 terminal, by a pause or by your plan's limit is resumed where it stopped.
 
+### A leader for the run
+
+`/leader` chooses one model of one of Auto's providers (searched by name)
+to **lead** orchestrated runs, `/orchestrate` and the sub-agents the agent
+starts. The leader:
+
+1. **plans** the run, as the planner would, and **gives each task to a
+   sub-agent**: a provider, and a model of it (`"assign":
+"codex/gpt-6-mini"`). The router follows its choice when that provider
+   is ready and has room, and says so (`the leader gave it to …`);
+   otherwise the usual rules decide. A local model gets only tasks it can
+   do with tools.
+2. **decides** the sub-agents' requests for more work.
+3. **audits every task**, docs too, once its checks pass: it **approves**
+   it, or **sends it back** with what to fix (up to three times; then a
+   person decides). Its approval is needed besides the checks, never
+   instead of them: a task whose checks fail never reaches it. It is told
+   what the sub-agent says it did, and sees the change.
+4. **leaves suggestions** for the sub-agents after: what it suggests when
+   it approves a task reaches the tasks that depend on it, under "The
+   run's leader suggests".
+
+The plan says who leads (`Leader: claude-code/opus · planned it, gave out
+the tasks, and audits each one`), and the run's **Result** says what it
+approved, what it sent back and how many suggestions it left. A leader
+whose provider is not one of the run's is said in the plan, and the run
+goes on without one. `AGENT_LEADER` keeps the choice (`provider/model`, or
+a provider alone for its own choice of model); `grafeno-agent orchestrate
+--leader provider/model` sets it for one run.
+
 ### Sub-agents
 
 The agent you chat with can start **sub-agents** itself, on any provider,
@@ -811,6 +843,9 @@ and free quotas, then to local models, and never to an API billed per
 token unless you allowed it. A server that took over 30 seconds to answer
 is not preferred. `AGENT_LOCAL_ROUTING=first` sends it every task it can
 take; `last`, only what nothing else can.
+
+**Usage.** A local or self-hosted server has no quota or credits: the side
+panel and `/usage` show only the tokens it used.
 
 **Privacy.** A model on this computer keeps your prompts on this computer.
 The agent only connects to servers you name; it never opens or exposes

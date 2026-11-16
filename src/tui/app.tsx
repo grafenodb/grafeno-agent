@@ -154,6 +154,7 @@ type Phase = "starting" | "setup-memory" | "setup-provider" | "ready" | "offline
 type Mode =
   | "chat"
   | "models"
+  | "leader"
   | "effort"
   | "resume"
   | "connect"
@@ -211,6 +212,8 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   // The providers Auto includes (AGENT_AUTO_PROVIDERS): by default, the official CLIs only.
   // In Auto, the usage of each provider it includes, for the side panel.
   const [autoUsage, setAutoUsage] = useState<readonly AutoUsage[]>([]);
+  /** /leader: the models of the providers in Auto, to choose the runs' leader from. */
+  const [leaderItems, setLeaderItems] = useState<PickerItem[]>([]);
   const [autoIds, setAutoIds] = useState<readonly string[]>(() => {
     try {
       return autoMembers(process.env);
@@ -337,6 +340,8 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
    * windows, an API key's own record).
    */
   const lastAutoUsage = useRef<ReadonlyMap<string, ProviderUsage>>(new Map());
+  /** The tokens each provider spent answering the chat in this session (shown for local ones). */
+  const providerTokens = useRef(new Map<string, { input: number; output: number }>());
   const refreshAutoUsage = useCallback(
     async (afterTurn = false) => {
       if (!auto || autoIds.length === 0) {
@@ -345,8 +350,20 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       }
       const members = services.providers.filter((p) => autoIds.includes(p.id));
       const found = await Promise.all(
-        members.map(async (p) => {
+        members.map(async (p): Promise<AutoUsage> => {
           const current = p.id === session?.provider.id;
+          // A model server of the person's own has no quota: only its tokens.
+          if (isLocalProvider(p.id)) {
+            const tokens = providerTokens.current.get(p.id);
+            return {
+              id: p.id,
+              name: p.name,
+              apiKey: false,
+              current,
+              local: true,
+              ...(tokens ? { tokens } : {}),
+            };
+          }
           // The provider that just answered is asked anew; the others through the cache.
           const read = await p
             .usage(afterTurn && current ? { fresh: true } : {})
@@ -496,6 +513,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
         setLive("");
       };
       try {
+        const answering = active.provider.id;
         const turn = await active.send(text, {
           signal: controller.signal,
           onRenewal: (text) => {
@@ -565,6 +583,14 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           },
         });
         flush();
+        {
+          const before = providerTokens.current.get(answering) ?? { input: 0, output: 0 };
+          const u = turn.result.usage;
+          providerTokens.current.set(answering, {
+            input: before.input + u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens,
+            output: before.output + u.outputTokens,
+          });
+        }
         if (turn.restarted) {
           notice("The conversation with the model had ended and was started again.", "warning");
         }
@@ -1000,6 +1026,55 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           if (models.length === 0 && provider) setModels(await provider.models());
           setMode("models");
           break;
+        case "leader": {
+          // A model of one of the providers in Auto: the runs' sub-agents come from them.
+          const members = services.providers.filter((p) => autoIds.includes(p.id));
+          if (members.length === 0) {
+            notice(
+              "Auto includes no provider yet: mark them in /connect (space), then choose a leader among their models.",
+              "warning",
+            );
+            break;
+          }
+          setBusy("Asking for the models");
+          try {
+            const lists = await Promise.all(
+              members.map(async (p) => ({
+                provider: p,
+                models: await p.models().catch(() => []),
+              })),
+            );
+            const now = process.env.AGENT_LEADER?.trim() ?? "";
+            setLeaderItems([
+              {
+                id: "",
+                label: "No leader",
+                hint: "the router chooses who plans; checks and the optional review decide",
+                current: now === "",
+              },
+              ...lists.flatMap(({ provider: p, models: found }) => [
+                {
+                  id: p.id,
+                  label: `${p.name} · its own choice of model`,
+                  hint: p.id,
+                  current: now === p.id,
+                },
+                ...found
+                  .filter((m) => m.id !== "default")
+                  .map((m) => ({
+                    id: `${p.id}/${m.id}`,
+                    label: `${p.name} · ${m.name}`,
+                    hint: [m.id !== m.name ? m.id : "", m.hint ?? ""].filter(Boolean).join(" · "),
+                    current: now === `${p.id}/${m.id}`,
+                  })),
+              ]),
+            ]);
+          } finally {
+            setBusy(undefined);
+          }
+          setMode("leader");
+          break;
+        }
         case "effort":
           setMode("effort");
           break;
@@ -1084,7 +1159,8 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
               Promise.all(
                 services.providers
                   .slice(1)
-                  .filter((other) => chosen.includes(other.id))
+                  // Local servers have no quota to show.
+                  .filter((other) => chosen.includes(other.id) && !isLocalProvider(other.id))
                   .map(async (other) => ({
                     name: other.name,
                     usage: await other.usage(ask).catch(() => undefined),
@@ -1289,7 +1365,11 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     );
   };
 
+  // The wheel scrolls the conversation when no menu is open; an open menu scrolls itself.
+  const modeNow = useRef(mode);
+  modeNow.current = mode;
   const onWheel = useCallback((direction: number) => {
+    if (modeNow.current !== "chat") return;
     setScroll((s) => Math.max(0, s + direction * 3));
   }, []);
   useWheel(onWheel);
@@ -1519,6 +1599,27 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                 approval={approval}
                 waiting={approvals.length - 1}
                 onAnswer={answerApproval}
+              />
+            )}
+            {mode === "leader" && (
+              <Picker
+                title="Leader of orchestrated runs"
+                search
+                items={leaderItems}
+                onCancel={() => {
+                  setMode("chat");
+                }}
+                onSelect={(item) => {
+                  setMode("chat");
+                  services.saveChoice({ leader: item.id });
+                  process.env.AGENT_LEADER = item.id;
+                  notice(
+                    item.id === ""
+                      ? "No leader: the router chooses who plans each run."
+                      : `Leader: ${item.label}. It plans each run, gives the tasks to the sub-agents and audits every one: it approves it, or sends it back with what to fix.`,
+                    "success",
+                  );
+                }}
               />
             )}
             {mode === "models" && session && (
@@ -2238,6 +2339,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
             environment={environment}
             recall={recall}
             {...(auto ? { autoUsage } : {})}
+            local={provider ? isLocalProvider(provider.id) : false}
             {...(viewed ? { agent: viewed } : {})}
             {...(mode === "chat" && !approval && busy === undefined
               ? {
@@ -2829,7 +2931,12 @@ function usageLines(
   usage: ProviderUsage | undefined,
   providerName?: string,
 ): string[] {
-  const lines = limitLines(usage, providerName);
+  // A model server of the person's own has no quota or credits: only the tokens below.
+  const lines = isLocalProvider(session.provider.id)
+    ? [
+        `${providerName ?? session.provider.name} runs on a server of your own: no quota or credits; only the tokens are counted.`,
+      ]
+    : limitLines(usage, providerName);
   const u = session.usage;
   lines.push(
     "",

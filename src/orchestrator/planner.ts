@@ -11,6 +11,19 @@ export interface PlannerOptions {
   readonly system?: string;
   /** How the answer is checked; default: `checkPlan`. A replan checks more. */
   readonly check?: (json: unknown) => PlanCheck;
+  /**
+   * The run has a leader (this model): it assigns each task to one of these
+   * models (one line each, "provider: model, model…"), and audits them later.
+   */
+  readonly leader?: { readonly name: string; readonly roster: readonly string[] };
+}
+
+/** What a planner that leads the run is told besides the planner's rules. */
+export function leaderPlanning(name: string, roster: readonly string[]): string {
+  return `You are also the leader of this run (${name}): you give each task to a sub-agent, and you will audit every task's work before it is merged (approve it, or send it back with what to fix).
+
+Give each task an "assign" field: "provider/model" for one of the models below, or "provider" to let that provider choose its model. Match the task to the model: the strongest for design, hard logic and debugging; light or local models for simple, well-specified tasks (docs, small tests, config). A local model takes only tasks it can do with tools. Spread independent tasks across providers when that is as good. Only these models:
+${roster.map((r) => `- ${r}`).join("\n")}`;
 }
 
 export interface PlanRequest {
@@ -91,8 +104,11 @@ Rules:
  */
 export async function makePlan(request: PlanRequest, options: PlannerOptions): Promise<Planned> {
   const maxRepairs = options.maxRepairs ?? 2;
+  const base = options.system ?? PLANNER_SYSTEM;
   const conversation = await options.model.open({
-    system: options.system ?? PLANNER_SYSTEM,
+    system: options.leader
+      ? `${base}\n\n${leaderPlanning(options.leader.name, options.leader.roster)}`
+      : base,
     tools: NO_TOOLS,
   });
   const check = options.check ?? checkPlan;

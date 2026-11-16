@@ -420,10 +420,20 @@ export class WorkerPool implements TaskRunner {
     if (!this.#registry) {
       const provider = this.#first();
       const usage = await this.usage(provider.id);
-      const chosen = route(task, await this.catalog(provider.id), {
+      const catalog = await this.catalog(provider.id);
+      const costOf = this.options.costs ? { costOf: this.options.costs.costOf(provider.id) } : {};
+      // The run's leader may have chosen this provider's model for the task.
+      if (task.assignee?.provider === provider.id) {
+        return routeAcross(
+          task,
+          [{ id: provider.id, catalog, ...(usage ? { usage } : {}), ...costOf }],
+          profiles,
+        );
+      }
+      const chosen = route(task, catalog, {
         ...profiles,
         ...(usage ? { usage } : {}),
-        ...(this.options.costs ? { costOf: this.options.costs.costOf(provider.id) } : {}),
+        ...costOf,
       });
       return chosen.kind === "run" ? { ...chosen, provider: provider.id } : chosen;
     }
@@ -990,7 +1000,12 @@ export function taskMessage(task: TaskSpec, context: AttemptContext): string {
         : `- a reviewer finds: ${a.criteria}`,
   );
   const inputs = context.inputs.map(
-    (input) => `- ${input.title} (${input.id})${input.summary ? `: ${input.summary}` : ""}`,
+    (input) =>
+      `- ${input.title} (${input.id})${input.summary ? `: ${input.summary}` : ""}${
+        input.suggestions && input.suggestions.length > 0
+          ? `\n  The run's leader suggests:\n${input.suggestions.map((s) => `  - ${s}`).join("\n")}`
+          : ""
+      }`,
   );
   return [
     `# ${task.title}`,

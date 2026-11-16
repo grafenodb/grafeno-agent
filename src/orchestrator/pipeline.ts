@@ -45,9 +45,15 @@ export interface PipelineOptions {
       task: TaskRecord,
       diff: string,
       context: AttemptContext,
+      summary?: string,
     ) => Promise<{ verdict: ReviewVerdict; reviewer: string; independent: boolean }>;
-    /** Times a review may send a task back. Default: 2. */
+    /** Times a review may send a task back. Default: 2 (3 for a leader). */
     readonly rounds?: number;
+    /**
+     * The reviewer is the run's leader: its approval is recorded as such,
+     * its suggestions go to the tasks after this one.
+     */
+    readonly leader?: boolean;
     /** The scheduler's attempts per task: a send-back never spends the last one. Default: 3. */
     readonly maxAttempts?: number;
   };
@@ -132,8 +138,9 @@ export class TaskPipeline implements TaskRunner {
     const review = this.options.review;
     if (review?.for(task)) {
       const diff = await worktrees.diff(runId, task.id, base);
-      const asked = await review.ask(task, diff, context);
+      const asked = await review.ask(task, diff, context, outcome.summary);
       const verdict = asked.verdict;
+      const leader = review.leader === true;
       if (verdict.verdict === "none") {
         store.event(
           runId,
@@ -156,17 +163,28 @@ export class TaskPipeline implements TaskRunner {
             verdict: verdict.verdict,
             issues: verdict.verdict === "changes" ? verdict.issues.length : 0,
             round: before + 1,
+            ...(leader ? { leader: true } : {}),
+            ...(verdict.verdict === "changes"
+              ? { found: verdict.issues.map((i) => `${i.file ? `${i.file}: ` : ""}${i.issue}`) }
+              : {}),
+            ...(verdict.suggestions && verdict.suggestions.length > 0
+              ? { suggestions: verdict.suggestions }
+              : {}),
           },
           task.id,
         );
         if (verdict.verdict === "changes") {
           const left = (review.maxAttempts ?? 3) - task.attempts;
-          if (before + 1 <= (review.rounds ?? 2) && left > 0) {
-            return { status: "retry", reason: reviewFeedback(asked.reviewer, verdict.issues) };
+          const feedback = reviewFeedback(asked.reviewer, verdict.issues, {
+            leader,
+            ...(verdict.suggestions ? { suggestions: verdict.suggestions } : {}),
+          });
+          if (before + 1 <= (review.rounds ?? (leader ? 3 : 2)) && left > 0) {
+            return { status: "retry", reason: feedback };
           }
           return {
             status: "review",
-            reason: `the reviewer (${asked.reviewer}) still asks for changes after ${String(before + 1)} round${before === 0 ? "" : "s"}; a person decides. ${reviewFeedback(asked.reviewer, verdict.issues)}`,
+            reason: `${leader ? "the leader" : "the reviewer"} (${asked.reviewer}) still asks for changes after ${String(before + 1)} round${before === 0 ? "" : "s"}; a person decides. ${feedback}`,
           };
         }
       }

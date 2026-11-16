@@ -435,6 +435,9 @@ export function routeAcross(
   }
   // Cost first: a capable local server for simple tasks, what bills per token only when nothing else can.
   providers = byCost(capable, task, options);
+  // The run's leader gave the task to a provider (and maybe a model): followed when it can take it.
+  const assigned = task.assignee ? assignedRoute(task, providers, options) : undefined;
+  if (assigned) return assigned;
   const lighter = lighterOf(options);
   const hold = options.holdAbove ?? 0.95;
   const used = (p: ProviderEntry) => mostUsed(p.usage)?.used ?? 0;
@@ -485,6 +488,50 @@ export function routeAcross(
       .map((l) => `${l.p.id} ${String(Math.round((l.limit?.used ?? 0) * 100))}%`)
       .join(", ")})`,
     ...(first?.limit?.resets === undefined ? {} : { resets: first.limit.resets }),
+  };
+}
+
+/**
+ * The route the run's leader asked for: its provider, with room, and its
+ * model when the provider offers it (else the provider's own choice for
+ * the task). Nothing when the provider is not ready, near its limit, or
+ * cannot take the task: the usual rules decide then.
+ */
+function assignedRoute(
+  task: TaskSpec,
+  providers: readonly ProviderEntry[],
+  options: AcrossOptions,
+): ProviderRoute | undefined {
+  const wanted = task.assignee;
+  if (!wanted) return undefined;
+  const entry = providers.find((p) => p.id === wanted.provider);
+  if (!entry) return undefined;
+  const near = mostUsed(entry.usage)?.used ?? 0;
+  if (near >= lighterOf(options)) return undefined;
+  const offered =
+    wanted.model !== undefined &&
+    entry.catalog.models.some((m) => m.id === wanted.model || m.name === wanted.model);
+  const catalog = offered
+    ? {
+        ...entry.catalog,
+        // The leader's model for whatever tier the task needs.
+        tiers: {
+          deep: [wanted.model ?? ""],
+          standard: [wanted.model ?? ""],
+          light: [wanted.model ?? ""],
+        },
+        pinned: true,
+      }
+    : entry.catalog;
+  const chosen = route(task, catalog, { ...options, ...withUsage(entry) });
+  if (chosen.kind === "hold") return undefined;
+  return {
+    ...chosen,
+    provider: entry.id,
+    reasons: [
+      `the leader gave it to ${entry.id}${offered ? `/${wanted.model ?? ""}` : wanted.model ? ` (it has no model ${wanted.model}: its own choice)` : ""}`,
+      ...chosen.reasons,
+    ],
   };
 }
 

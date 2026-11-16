@@ -18,6 +18,10 @@ export const COMMANDS: readonly Command[] = [
     description: "Your projects: open one (a session in its folder), add this folder, or make one",
   },
   { name: "models", description: "Choose the model", aliases: ["model"] },
+  {
+    name: "leader",
+    description: "Choose the leader of orchestrated runs: it plans, assigns and audits the tasks",
+  },
   { name: "effort", description: "Choose how hard the model thinks" },
   { name: "connect", description: "Choose the provider the chat uses (Claude, Codex…)" },
   { name: "palace", description: "Grafeno: included, or a server you already have" },
