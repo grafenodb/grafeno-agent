@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **The right panel follows the agent on screen**: on a sub-agent, its own
+  task, state, model, tier and effort, tokens, context, time working,
+  folder and branch, and its last report; on the main agent, as before.
+- **Sub-agents and the orchestrator talk**: sub-agents report their
+  progress (`report_progress`), shown as it comes and given to the main
+  agent with the run's report; they ask for more work (`request_work`: a
+  finished task done again, or a new task), which the orchestrator decides
+  with the planner's model after code checks. Rejected, the sub-agent gets
+  the reason; accepted, it becomes a task of the plan that says who asked
+  and why. Four requests per run at most.
 - **Runs spend the plans with care** (`AGENT_ROUTING`, `balanced` by
   default): the deep tier and high efforts only for hard tasks
   (complexity 4–5), whatever the planner asks; one effort lower from half

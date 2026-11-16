@@ -37,7 +37,14 @@ import { delegateTool } from "../app/delegate.js";
 import { describeSkills } from "../app/skills-command.js";
 import { findSkills, skillRoots } from "../skills/skills.js";
 import type { Provider } from "../providers/types.js";
-import { withActivity, withState, withTasks, withWorkers, type SubAgent } from "./agents.js";
+import {
+  withActivity,
+  withState,
+  withTasks,
+  withWorkers,
+  type SubAgent,
+  withReport,
+} from "./agents.js";
 import { AgentsPanel, AgentView, agentKey } from "./agents-panel.js";
 import {
   PERMISSION_LABELS,
@@ -461,6 +468,41 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
           onActivity: (activity) => {
             setAgents((current) => withActivity(current, activity));
           },
+          // What sub-agents tell the orchestrator, and its answers to their requests.
+          onNote: (note) => {
+            if (note.kind === "progress") {
+              setAgents((current) =>
+                withReport(current, note.runId, note.task, note.report.summary),
+              );
+              notice(`${note.task} → orchestrator: ${note.report.summary}`, "info");
+              return;
+            }
+            const { request, decision } = note;
+            const asked =
+              request.kind === "rerun"
+                ? `a rerun of ${request.task ?? request.from}`
+                : `a new task (${request.what.split("\n", 1)[0] ?? ""})`;
+            notice(
+              `${request.from} asks for ${asked}: ${request.reason}. ${decision.accept ? `Accepted as ${decision.added?.id ?? "?"}` : "Rejected"}: ${decision.reason}`,
+              decision.accept ? "success" : "warning",
+            );
+            const orchestrator = orchestration.current?.orchestrator;
+            if (decision.accept && orchestrator) {
+              const tasks = orchestrator.store.tasks(request.runId).map((t) => ({
+                id: t.id,
+                title: t.spec.title,
+                state: t.state,
+              }));
+              setAgents((current) =>
+                withTasks(current, request.runId, tasks, (id) =>
+                  orchestrator.taskWhere(request.runId, id),
+                ),
+              );
+              setWatched((current) =>
+                current && current.runId === request.runId ? { ...current, tasks } : current,
+              );
+            }
+          },
           // The run's work reaching the person's folder, task by task and at the end.
           onDelivered: ({ lines }) => {
             for (const line of lines) {
@@ -529,7 +571,9 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
       setWatched({ runId, state: "running", tasks, workers: [] });
       notice(orchestrator.describeWork(runId), "info");
       runNow.current = runId;
-      setAgents((current) => withTasks(current, runId, tasks));
+      setAgents((current) =>
+        withTasks(current, runId, tasks, (id) => orchestrator.taskWhere(runId, id)),
+      );
       orchestration.current = { orchestrator, running: true };
       // For the main agent's own call, its turn keeps the busy line.
       if (!options.forAgent) setBusy("Running the plan");
@@ -539,6 +583,9 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
       try {
         state = await orchestrator.run(runId);
         lines = describeReport(orchestrator.report(runId));
+        // What the sub-agents told the orchestrator, and what it decided of their requests.
+        const told = orchestrator.coordination(runId);
+        if (told.length > 0) lines.push("", "What the sub-agents reported and asked:", ...told);
         const delivery = orchestrator.delivery(runId)?.status;
         delivered = delivery === "merged" || delivery === "already";
         if (state === "completed") {
@@ -1584,6 +1631,7 @@ export function App({ services }: { readonly services: AppServices }): ReactNode
             environment={environment}
             recall={recall}
             {...(auto ? { autoUsage } : {})}
+            {...(viewed ? { agent: viewed } : {})}
           />
         )}
       </Box>

@@ -337,3 +337,75 @@ describe("what a run's models spend of their plans", { timeout: 60_000 }, () => 
     }
   });
 });
+
+describe("a worker asks the orchestrator for more, in a run", { timeout: 60_000 }, () => {
+  it("the accepted task joins the plan and runs; the report says who asked and why", async () => {
+    const base = provider();
+    const plan = {
+      ...PLAN,
+      tasks: [{ ...spec("api"), recommended: { tier: "light", effort: "low" } }],
+    };
+    const turn: FakeTurn = (context) => {
+      if (
+        context.system.includes("You are the planner") ||
+        context.message.includes("Turn the user's request")
+      ) {
+        return [{ say: `\`\`\`json\n${JSON.stringify(plan)}\n\`\`\`` }];
+      }
+      if (context.message.includes("more.txt")) {
+        return [
+          { call: "write_file", input: { path: "more.txt", content: "more\n" } },
+          { say: "Done." },
+        ];
+      }
+      return [
+        { call: "report_progress", input: { summary: "The API needs a price list" } },
+        {
+          call: "request_work",
+          input: {
+            kind: "new",
+            reason: "prices are missing",
+            what: "Write more.txt with the prices",
+            files: ["more.txt"],
+          },
+        },
+        { call: "write_file", input: { path: "api.txt", content: "api\n" } },
+        { say: "Done." },
+      ];
+    };
+    const orchestrator = new Orchestrator({
+      provider: { ...base, create: () => new FakeModel({ turns: [turn, turn, turn, turn] }) },
+      project: { name: "shop", path: repo },
+      projectRoot: repo,
+      dataDir: join(dir, "data"),
+      metrics: false,
+      mode: "controlled",
+      delivery: "end",
+      decideWork: () =>
+        Promise.resolve({
+          accept: true,
+          reason: "the API needs it",
+          acceptance: [{ check: "files", exist: ["more.txt"] }],
+        }),
+    });
+    try {
+      const planned = await orchestrator.plan("Write the api");
+      const { run } = await orchestrator.start("Write the api", planned);
+      expect(await orchestrator.run(run.id)).toBe("completed");
+      const tasks = orchestrator.store.tasks(run.id);
+      expect(tasks.map((t) => [t.id, t.state])).toEqual([
+        ["api", "completed"],
+        ["api-more-2", "completed"],
+      ]);
+      expect(readFileSync(join(repo, "more.txt"), "utf8")).toBe("more\n");
+      expect(orchestrator.coordination(run.id).join("\n")).toContain(
+        "api asked for a new task (prices are missing): accepted as api-more-2",
+      );
+      expect(orchestrator.coordination(run.id)[0]).toBe(
+        "- api reported: The API needs a price list",
+      );
+    } finally {
+      orchestrator.close();
+    }
+  });
+});

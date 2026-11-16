@@ -33,6 +33,20 @@ export interface SubAgent {
   /** Why it is waiting, failed or in review. */
   readonly reason?: string;
   readonly lines: readonly AgentLine[];
+  /** The tier the router gave it, and the exact model answering, when it said. */
+  readonly tier?: string;
+  readonly exactModel?: string;
+  /** When its current attempt started. */
+  readonly started?: Date;
+  /** Tokens it spent, over its attempts. */
+  readonly tokens?: { readonly input: number; readonly output: number; readonly cache: number };
+  /** How full its context is now. */
+  readonly context?: { readonly used: number; readonly window?: number };
+  /** Its own folder (a worktree) and branch. */
+  readonly folder?: string;
+  readonly branch?: string;
+  /** What it last told the orchestrator. */
+  readonly lastReport?: string;
 }
 
 /** Lines kept per sub-agent on screen. */
@@ -48,18 +62,43 @@ export function withTasks(
     readonly state: TaskState;
     readonly reason?: string;
   }[],
+  where?: (taskId: string) => { folder: string; branch: string },
 ): SubAgent[] {
   const others = agents.filter((a) => a.runId !== runId);
   const mine = tasks.map((task) => {
     const known = agents.find((a) => a.runId === runId && a.id === task.id);
-    return settle(
-      known ?? { id: task.id, runId, title: task.title, state: task.state, lines: [] },
-      task.state,
-      task.reason,
-      task.title,
-    );
+    const fresh: SubAgent = {
+      id: task.id,
+      runId,
+      title: task.title,
+      state: task.state,
+      lines: [],
+      ...(where ? where(task.id) : {}),
+    };
+    return settle(known ?? fresh, task.state, task.reason, task.title);
   });
   return [...others, ...mine];
+}
+
+/** What a sub-agent told the orchestrator, on its lines and as its last report. */
+export function withReport(
+  agents: readonly SubAgent[],
+  runId: string,
+  task: string,
+  text: string,
+): SubAgent[] {
+  return agents.map((a) =>
+    a.runId === runId && a.id === task
+      ? {
+          ...a,
+          lastReport: text,
+          lines: [
+            ...a.lines,
+            { kind: "text" as const, text: `\n**To the orchestrator:** ${text}\n` },
+          ].slice(-KEEP),
+        }
+      : a,
+  );
 }
 
 /** A task changed state. */
@@ -86,6 +125,8 @@ export function withWorkers(
       ...without(a, "effort"),
       worker: worker.name,
       model: worker.model,
+      tier: worker.tier,
+      started: worker.started,
       ...(worker.effort ? { effort: worker.effort } : {}),
     };
   });
@@ -130,6 +171,28 @@ export function withActivity(agents: readonly SubAgent[], activity: WorkerActivi
         doing = "thinking";
         break;
       }
+      case "done": {
+        const usage = event.result.usage;
+        const before = a.tokens ?? { input: 0, output: 0, cache: 0 };
+        return {
+          ...a,
+          tokens: {
+            input: before.input + usage.inputTokens,
+            output: before.output + usage.outputTokens,
+            cache: before.cache + usage.cacheReadTokens + usage.cacheWriteTokens,
+          },
+        };
+      }
+      case "context":
+        return {
+          ...a,
+          context: {
+            used: event.used,
+            ...(event.window === undefined ? {} : { window: event.window }),
+          },
+        };
+      case "model_info":
+        return { ...a, exactModel: event.model };
       default:
         return a;
     }

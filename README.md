@@ -515,8 +515,28 @@ they all use that one.
 
 While they work, the **agents panel** on the left lists the main agent and
 each sub-agent: its model and effort, and what it is doing now (writing,
-the tool it runs, done, waiting for a person). The right panel, with your
-plan's usage, stays as it was.
+the tool it runs, done, waiting for a person). The **right panel follows
+the agent on screen**: on the main agent, its model, context and your
+plans' usage (all of Auto's providers in Auto); on a sub-agent, that
+sub-agent's own task and state, its provider, model, tier and effort, the
+tokens it spent, how full its context is, how long it has worked, its
+folder and branch, and the last thing it told the orchestrator.
+
+**Sub-agents and the orchestrator talk as the run goes:**
+
+- each sub-agent reports at its milestones (`report_progress`): what it
+  found, did, or ran into. It shows on the screen as it comes, and the main
+  agent gets all of it with the run's report;
+- a sub-agent that needs work it cannot do alone asks for it
+  (`request_work`): a finished task done again (its own or another one,
+  whose result fell short or must be redone), or a task the plan lacks.
+  The orchestrator decides, with the planner's model, after code has
+  refused what makes no sense (a task that does not exist, one still to
+  run, one still running). If it rejects, the sub-agent gets the reason and
+  goes on with its task. If it accepts, the work becomes a task of the plan
+  (`<task>-again-2` for a rerun, `<task>-more-2` for a new one), whose
+  description says who asked, why, and what to do, and a sub-agent does it
+  as any other task. A run accepts four requests at most.
 
 - **Ctrl+N / Ctrl+P**, or `/agents`, show another agent's work as it goes:
   its words and the tools it used.

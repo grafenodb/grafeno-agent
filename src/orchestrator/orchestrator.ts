@@ -1,5 +1,13 @@
 import type { PermissionMode } from "../agent/permissions.js";
 import { CostBook } from "./costs.js";
+import {
+  Coordinator,
+  coordinationTools,
+  describeCoordination,
+  modelDecider,
+  type Decider,
+  type WorkNote,
+} from "./coordination.js";
 import type { RoutingMode } from "./router.js";
 import { CapabilityRegistry } from "../providers/registry.js";
 import { PROVIDER_SECRET_ENV } from "../providers/index.js";
@@ -85,6 +93,10 @@ export interface OrchestratorOptions {
   readonly delivery?: Delivery_Mode;
   /** Told what became of the work in the user's branch, task by task and at the end. */
   readonly onDelivered?: (info: { task?: string; lines: string[] }) => void;
+  /** Told what workers report, and what they ask and how it was decided. */
+  readonly onNote?: (note: WorkNote) => void;
+  /** Decides workers' requests for more work; default: the planner's model. */
+  readonly decideWork?: Decider;
   /** For each provider in General Auto, the models the person chose (`AGENT_AUTO_MODELS`). */
   readonly models?: Readonly<Record<string, readonly string[]>>;
   readonly maxWorkers?: number;
@@ -176,6 +188,8 @@ export class Orchestrator {
   readonly store: OperationalStore;
   readonly worktrees: WorktreeManager;
   readonly policy: Policy;
+  /** Workers' progress and requests, decided by the run's orchestrator. */
+  readonly coordinator: Coordinator;
   readonly pool: WorkerPool;
   /** What each provider can do, when there are several. */
   readonly registry: CapabilityRegistry | undefined;
@@ -208,7 +222,22 @@ export class Orchestrator {
       providers.length > 1
         ? new CapabilityRegistry({ providers, file: join(root, "capabilities.json") })
         : undefined;
+    this.coordinator = new Coordinator(
+      this.store,
+      options.decideWork ??
+        modelDecider(async () => {
+          const planner = options.planner
+            ? { choice: options.planner, provider: options.provider }
+            : await this.#plannerChoice();
+          return options.makeModel?.(planner.choice) ?? planner.provider.create(planner.choice);
+        }),
+      (note) => {
+        options.onNote?.(note);
+      },
+    );
     this.pool = new WorkerPool({
+      workerTools: (task, worker, context) =>
+        coordinationTools(this.coordinator, context.runId, task.id, worker),
       provider: options.provider,
       ...(providers.length > 1 ? { providers } : {}),
       ...(this.registry ? { registry: this.registry } : {}),
@@ -569,6 +598,19 @@ export class Orchestrator {
   }
 
   /** The run's integration branch, where its work landed. */
+  /** What the run's workers reported and asked, and how each request was decided. */
+  coordination(runId: string): string[] {
+    return describeCoordination(this.store, runId);
+  }
+
+  /** A task's own folder (its worktree) and branch. */
+  taskWhere(runId: string, taskId: string): { folder: string; branch: string } {
+    return {
+      folder: this.worktrees.pathFor(runId, taskId),
+      branch: this.worktrees.branchFor(runId, taskId),
+    };
+  }
+
   /** Where the run's sub-agents work: one folder per task, each a git worktree of its own. */
   workFolder(runId: string): string {
     return dirname(this.worktrees.pathFor(runId, "_"));

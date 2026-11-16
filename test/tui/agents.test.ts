@@ -55,9 +55,11 @@ describe("sub-agents on screen", () => {
       detail: "Permission denied",
     });
     expect(agents[0]?.doing).toBe("thinking");
-    // Events that are not work (context, model info) change nothing.
-    const same = withActivity(agents, act("api", { type: "context", used: 10 }));
-    expect(same[0]).toBe(agents[0]);
+    // Context and model info are kept for the side panel; its lines and what it does stay.
+    const same = withActivity(agents, act("api", { type: "context", used: 10, window: 100 }));
+    expect(same[0]?.context).toEqual({ used: 10, window: 100 });
+    expect(same[0]?.lines).toBe(agents[0]?.lines);
+    expect(same[0]?.doing).toBe("thinking");
   });
 
   it("follow the run: workers with their models, states with their reasons", () => {

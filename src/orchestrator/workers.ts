@@ -154,6 +154,8 @@ export interface WorkerPoolOptions {
   readonly workspaceFor: (task: TaskRecord, context: AttemptContext) => Promise<Workspace>;
   /** The project's tools for a workspace (files, commands…). */
   readonly tools: (workspace: Workspace) => Tool[];
+  /** Tools of a worker's own: to report its progress and ask the orchestrator for work. */
+  readonly workerTools?: (task: TaskRecord, worker: string, context: AttemptContext) => Tool[];
   /** Each worker's memory under its own name; none by default. */
   readonly memoryFor?: (
     task: TaskRecord,
@@ -477,16 +479,18 @@ export class WorkerPool implements TaskRunner {
     const budget = this.options.attemptTokens?.(task.spec);
     const approver =
       this.options.approverFor?.(task, name, context) ?? this.options.approve ?? (() => false);
+    const workerOwnTools = this.options.workerTools?.(task, name, context) ?? [];
     // The project's and the user's skills reach sub-agents too.
     const skills = findSkills(skillRoots(workspace.root)).skills;
     const catalog = skillCatalog(skills);
     const makeAgent = () =>
       new Agent({
         model: this.options.makeModel?.(choice) ?? provider.create(choice),
-        system: `${workerSystem(task.spec, workspace, memory?.brief)}${catalog ? `\n\n${catalog}` : ""}`,
+        system: `${workerSystem(task.spec, workspace, memory?.brief, workerOwnTools.length > 0)}${catalog ? `\n\n${catalog}` : ""}`,
         tools: new ToolRegistry(
           [
             ...this.options.tools(workspace),
+            ...workerOwnTools,
             ...(memory?.tools ?? []),
             ...(skills.length > 0 ? [skillTool(() => skills)] : []),
           ],
@@ -764,7 +768,12 @@ export function outcomeOf(error: unknown): AttemptOutcome {
 }
 
 /** The worker's standing instructions: its role, its bounds, and what memory gave it. */
-export function workerSystem(task: TaskSpec, workspace: Workspace, brief?: string): string {
+export function workerSystem(
+  task: TaskSpec,
+  workspace: Workspace,
+  brief?: string,
+  coordinated = false,
+): string {
   return `You are a worker of Grafeno Agent: one of several, each on its own task. Your task is "${task.title}" (${task.kind}).
 
 - Work only in ${workspace.root}; paths are relative to it. Change only what your task needs${task.touches.length > 0 ? `, mainly: ${task.touches.join(", ")}` : ""}. Other workers change other files at the same time.
@@ -774,8 +783,10 @@ export function workerSystem(task: TaskSpec, workspace: Workspace, brief?: strin
 - Tools that need permission may be refused: then do without, or say what you needed.
 - Never push, deploy, delete what is not yours, or read secrets.
 - When you are done, end with a short report: what you changed (files), what you checked, and anything the next tasks must know.${
-    brief ? `\n\n## What memory holds about this task\n\n${brief}` : ""
-  }`;
+    coordinated
+      ? "\n- Keep the orchestrator informed with report_progress at milestones: what you found, what you finished, a problem. When your task needs work it cannot do alone (a finished task redone, or a task the plan lacks), ask with request_work; the orchestrator decides, and you go on with your task either way."
+      : ""
+  }${brief ? `\n\n## What memory holds about this task\n\n${brief}` : ""}`;
 }
 
 /** The task, as the worker is given it: only what it needs. */

@@ -473,6 +473,16 @@ async function orchestrateCommand(argv: readonly string[]): Promise<number> {
     onDelivered: ({ lines }) => {
       for (const line of lines) console.log(`  ${line.trim()}`);
     },
+    onNote: (note) => {
+      if (note.kind === "progress") {
+        console.log(`  ${note.task} → orchestrator: ${note.report.summary}`);
+      } else {
+        const { request, decision } = note;
+        console.log(
+          `  ${request.from} asks for ${request.kind === "rerun" ? `a rerun of ${request.task ?? request.from}` : "a new task"}: ${decision.accept ? `accepted as ${decision.added?.id ?? "?"}` : "rejected"} (${decision.reason})`,
+        );
+      }
+    },
     permissions,
     ask: async (question) =>
       unattended ||

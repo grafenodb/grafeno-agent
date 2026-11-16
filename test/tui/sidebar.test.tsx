@@ -101,3 +101,48 @@ describe("the side panel's plan usage", () => {
     app.unmount();
   });
 });
+
+describe("the side panel on a sub-agent", () => {
+  it("shows that sub-agent's own task, model, tokens, context and where it works", () => {
+    const app = render(
+      <Sidebar
+        width={44}
+        session={undefined}
+        grafeno={grafeno}
+        status={undefined}
+        usage={undefined}
+        models={[]}
+        environment={{}}
+        agent={{
+          id: "implementar-api",
+          runId: "run-x",
+          title: "Implement the API",
+          state: "running",
+          doing: "edit_file src/api.py",
+          lines: [],
+          model: "codex/gpt-6.1-sol",
+          effort: "medium",
+          tier: "standard",
+          started: new Date(Date.now() - 120_000),
+          tokens: { input: 12_000, output: 3_400, cache: 40_000 },
+          context: { used: 50_000, window: 200_000 },
+          folder: "C:/data/worktrees/sdk/fecdf218/implementar-api",
+          branch: "grafeno/fecdf218/implementar-api",
+          lastReport: "Transport done; starting the API",
+        }}
+      />,
+    );
+    const screen = app.lastFrame() ?? "";
+    expect(screen).toContain("SUB-AGENT");
+    expect(screen).toContain("implementar-api");
+    expect(screen).toContain("codex/gpt-6.1-sol");
+    expect(screen).toContain("standard · medium");
+    expect(screen).toContain("52.0k in · 3.4k out");
+    expect(screen).toMatch(/50\.0k \/ 200\.0k\s+25%/);
+    expect(screen).toContain("grafeno/fecdf218/implementar-api");
+    expect(screen).toContain("Transport done; starting the API");
+    // The main agent's own sections give way to the sub-agent's.
+    expect(screen).not.toContain("PLAN USAGE");
+    app.unmount();
+  });
+});
