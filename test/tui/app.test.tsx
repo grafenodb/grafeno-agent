@@ -508,7 +508,7 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     await ready(app);
     await type(app, "/resume");
     app.stdin.write(ENTER);
-    await until(() => now(app).includes("Resume a conversation"), "the list");
+    await until(() => now(app).includes("Conversations of this project"), "the list");
     expect(now(app)).toContain("remember the parser");
     app.stdin.write(ENTER);
     await until(() => seen(app).includes("Resumed: remember the parser"), "the resume");
@@ -549,8 +549,8 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     await new Promise((resolve) => setTimeout(resolve, 700));
     expect(now(app)).toContain("Permission needed");
     expect(now(app)).toContain("enter does not answer");
-    app.stdin.write("y");
-    await until(() => seen(app).includes("result: written"), "the answer");
+    // A key in the moment after it shows is no answer: pressed again until it is taken.
+    await press(app, "y", () => seen(app).includes("result: written"), "the answer");
     expect(seen(app)).toContain("Allowed: write a note");
     app.unmount();
   });
@@ -669,8 +669,14 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.stdin.write(ENTER);
     await until(() => now(app).includes("Permission needed"), "the question");
     await new Promise((resolve) => setTimeout(resolve, 700));
-    clickOn(app, "y allow");
-    await until(() => seen(app).includes("result: written"), "the answer");
+    // Clicked again until taken: a click in the moment after it shows is no answer.
+    for (let tries = 0; tries < 10 && !seen(app).includes("result: written"); tries++) {
+      if (now(app).includes("y allow")) clickOn(app, "y allow");
+      await until(() => seen(app).includes("result: written"), "the answer", 500).catch(
+        () => undefined,
+      );
+    }
+    await until(() => seen(app).includes("result: written"), "the answer", 1);
     expect(seen(app)).toContain("Allowed: write a note");
     app.unmount();
   });

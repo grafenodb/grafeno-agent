@@ -58,6 +58,9 @@ Commands:
                  External MCP servers (mcp.json next to the settings): their tools reach
                  the agent, asking you before they change anything. A server is checked
                  when it is added. grafeno-agent mcp help says more.
+  sessions [delete <id>]
+                 The project's conversations; delete one for good (asked first, unless
+                 --yes). /resume in the interface does the same (d, or [delete]).
   projects [add|new|remove]
                  Your projects (a name and a folder each): /projects in the interface opens
                  one, a session in its folder, with its own conversations, runs and memory.
@@ -938,6 +941,41 @@ async function main(argv: readonly string[]): Promise<number> {
           console.log(line);
         },
       });
+    }
+    case "sessions": {
+      const { SessionStore } = await import("./sessions/store.js");
+      const project = detectProject(process.cwd(), process.env.AGENT_PROJECT);
+      const store = new SessionStore();
+      const sub = argv[1] ?? "list";
+      if (sub === "list" || sub === "ls") {
+        const list = store.list(project.name);
+        if (list.length === 0) console.log(`No conversations of ${project.name} yet.`);
+        for (const c of list) {
+          console.log(`  ${c.id}  ${c.updated.slice(0, 16).replace("T", " ")}  ${c.title}`);
+        }
+        return 0;
+      }
+      if (sub === "delete" || sub === "rm") {
+        const id = argv[2] ?? "";
+        const found = store.load(project.name, id);
+        if (!found) {
+          console.error(
+            `No conversation ${id} in ${project.name}: grafeno-agent sessions lists them.`,
+          );
+          return 1;
+        }
+        if (!argv.includes("--yes") && !(await confirm(`Delete “${found.title}” for good?`))) {
+          console.log("Kept.");
+          return 0;
+        }
+        store.remove(project.name, id);
+        console.log(`Deleted ${id}. What the agent stored in its memory stays.`);
+        return 0;
+      }
+      console.log(
+        "grafeno-agent sessions                    the project's conversations\ngrafeno-agent sessions delete <id> [--yes]  delete one for good",
+      );
+      return 2;
     }
     case "projects": {
       const { addProject, loadProjects, removeProject } = await import("./projects.js");

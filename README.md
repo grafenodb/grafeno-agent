@@ -230,6 +230,12 @@ It needs a terminal that reports the mouse (most do).
 `GRAFENO_AGENT_MOUSE=off` leaves the mouse to the terminal: then clicks and
 the wheel do nothing here, and selecting text needs no Shift.
 
+**Conversations** are kept per project. `[Sessions]` (or `/resume`) lists
+the earlier ones: Enter or a click takes one up again; **d** or its
+`[delete]` deletes it, after asking (it cannot be undone; what the agent
+stored in its memory stays). Without the interface:
+`grafeno-agent sessions` and `grafeno-agent sessions delete <id>`.
+
 **Projects.** `[Projects]` (or `/projects`) lists your projects, each a
 name and a folder: open one, and a new session starts in its folder, with
 its own conversations (`/resume`), runs and memory. **+ New project** asks

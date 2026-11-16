@@ -452,6 +452,15 @@ export class AgentSession {
   }
 
   /** Takes up a kept conversation: the model gets it with the next message. */
+  /**
+   * Deletes one of the project's conversations for good: never the one open
+   * now. What the agent stored in its memory (Grafeno) stays.
+   */
+  deleteConversation(id: string): boolean {
+    if (id === this.#record.id) return false;
+    return this.store.remove(this.memory.project.name, id);
+  }
+
   async resume(id: string): Promise<SavedSession | undefined> {
     const saved = this.store.load(this.memory.project.name, id);
     if (saved === undefined) return undefined;

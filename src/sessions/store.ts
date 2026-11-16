@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -123,6 +123,15 @@ export class SessionStore {
   load(project: string, id: string): SavedSession | undefined {
     if (!/^[A-Za-z0-9-]+$/.test(id)) return undefined;
     return this.#read(join(this.dir, folderOf(project), `${id}.json`));
+  }
+
+  /** Deletes a conversation for good; false when it was not there. */
+  remove(project: string, id: string): boolean {
+    if (!/^[A-Za-z0-9-]+$/.test(id)) return false;
+    const path = join(this.dir, folderOf(project), `${id}.json`);
+    if (!existsSync(path)) return false;
+    rmSync(path);
+    return true;
   }
 
   #read(path: string): SavedSession | undefined {

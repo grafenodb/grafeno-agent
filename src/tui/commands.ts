@@ -8,7 +8,11 @@ export interface Command {
 export const COMMANDS: readonly Command[] = [
   { name: "help", description: "Commands and keys" },
   { name: "new", description: "Start a new conversation (the current one is kept)" },
-  { name: "resume", description: "Take up an earlier conversation of this project" },
+  {
+    name: "resume",
+    description: "Take up an earlier conversation of this project, or delete one",
+    aliases: ["sessions"],
+  },
   {
     name: "projects",
     description: "Your projects: open one (a session in its folder), add this folder, or make one",

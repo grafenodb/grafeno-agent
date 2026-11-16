@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Delete conversations**: in `/resume` (or `[Sessions]`), **d** or a
+  row's `[delete]`, after a confirmation; `grafeno-agent sessions` lists
+  them and `sessions delete <id>` deletes one. The open conversation is
+  never deleted; what the agent stored in its memory stays.
 - **No more "Stopped at the step limit"**: a chat turn carries on by itself
   past its step limit (40 requests a round, up to ten rounds), and says so
   only if it still is not done. Sub-agents get six rounds per attempt.

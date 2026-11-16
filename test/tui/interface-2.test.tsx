@@ -165,3 +165,48 @@ describe("projects", () => {
     }
   });
 });
+
+describe("deleting conversations", () => {
+  it("the store deletes one for good; the panel asks first", async () => {
+    const { SessionStore } = await import("../../src/sessions/store.js");
+    const { SessionsPanel } = await import("../../src/tui/sessions.js");
+    const dir = mkdtempSync(join(tmpdir(), "ga-sessions-"));
+    try {
+      const store = new SessionStore(dir);
+      const one = store.create("shop");
+      store.add(one, { kind: "user", text: "write the parser" });
+      expect(store.list("shop")).toHaveLength(1);
+      expect(store.remove("shop", "../escape")).toBe(false);
+      const deleted: string[] = [];
+      const app = render(
+        <SessionsPanel
+          sessions={[{ id: one.id, title: "write the parser", hint: "1 message" }]}
+          onResume={() => undefined}
+          onDelete={(row) => {
+            deleted.push(row.id);
+            store.remove("shop", row.id);
+          }}
+          onCancel={() => undefined}
+        />,
+      );
+      await wait();
+      expect(app.lastFrame()).toContain("[delete]");
+      app.stdin.write("d");
+      await wait();
+      expect(app.lastFrame()).toContain("Delete “write the parser”? It cannot be undone");
+      // n keeps it; d then y deletes it.
+      app.stdin.write("n");
+      await wait();
+      expect(deleted).toEqual([]);
+      app.stdin.write("d");
+      await wait();
+      app.stdin.write("y");
+      await wait();
+      expect(deleted).toEqual([one.id]);
+      expect(store.list("shop")).toEqual([]);
+      app.unmount();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

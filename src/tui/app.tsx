@@ -48,6 +48,7 @@ import {
 import { AgentsPanel, AgentView, agentKey } from "./agents-panel.js";
 import { ClickArea, Clickable } from "./clicks.js";
 import { ProjectsPanel } from "./projects.js";
+import { SessionsPanel } from "./sessions.js";
 import { ActionLine, describeAction, summarizeOutcome, type Action } from "./activity.js";
 import {
   PERMISSION_LABELS,
@@ -869,6 +870,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
             notice("No earlier conversations of this project yet.");
             break;
           }
+          // Rows to resume or delete: the open conversation is never among them.
           setResumable(
             list.map((c) => ({
               id: c.id,
@@ -1552,15 +1554,22 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
               />
             )}
             {mode === "resume" && session && (
-              <Picker
-                title="Resume a conversation"
-                items={resumable}
+              <SessionsPanel
+                sessions={resumable.map((r) => ({ id: r.id, title: r.label, hint: r.hint ?? "" }))}
                 onCancel={() => {
                   setMode("chat");
                 }}
-                onSelect={(item) => {
+                onDelete={(row) => {
+                  if (session.deleteConversation(row.id)) {
+                    setResumable((current) => current.filter((r) => r.id !== row.id));
+                    notice(`Deleted the conversation “${row.title}”.`, "success");
+                  } else {
+                    notice("That conversation could not be deleted.", "error");
+                  }
+                }}
+                onResume={(id) => {
                   setMode("chat");
-                  void session.resume(item.id).then((saved) => {
+                  void session.resume(id).then((saved) => {
                     if (!saved) {
                       notice("That conversation could not be read.", "error");
                       return;
