@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.6 (2026-11-16)
 
 - **Documents**: `read_document` reads PDF, Word, Excel, PowerPoint and
   OpenDocument files (by page, slide or sheet), on this computer, with no
