@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.4 (2026-11-16)
 
 - **The interface takes clicks**: a menu bar of the main commands under the
   header, rows of every list, the commands offered as you type `/`, the
