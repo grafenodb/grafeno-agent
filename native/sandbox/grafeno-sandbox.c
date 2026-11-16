@@ -513,8 +513,12 @@ static void probe(void) {
   int userns = 0;
   pid_t child = fork();
   if (child == 0) {
-    int flags = CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWNET;
-    _exit(unshare(flags) == 0 ? 0 : 1);
+    /*
+     * The same steps as a real run (maps included): AppArmor on recent Ubuntu
+     * lets the namespace be made, then refuses what makes it usable.
+     */
+    opt.no_network = 1;
+    _exit(enter_namespaces() == 0 ? 0 : 1);
   }
   int status = 0;
   if (child > 0 && waitpid(child, &status, 0) == child && WIFEXITED(status) &&
