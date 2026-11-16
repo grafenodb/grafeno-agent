@@ -139,13 +139,18 @@ describe("General Auto settings", () => {
       "codex",
       "openrouter",
     ]);
-    expect(Object.keys(KNOWN_PROVIDERS)).toEqual([
-      "claude-code",
-      "claude-api",
-      "codex",
-      "gemini",
-      "openrouter",
-    ]);
+    expect(Object.keys(KNOWN_PROVIDERS)).toEqual(
+      expect.arrayContaining([
+        "claude-code",
+        "claude-api",
+        "codex",
+        "gemini",
+        "openrouter",
+        "copilot",
+        "deepseek",
+        "kimi-plan",
+      ]),
+    );
   });
 
   it("starts from the user's affinities, and AGENT_AFFINITY changes or removes them", () => {

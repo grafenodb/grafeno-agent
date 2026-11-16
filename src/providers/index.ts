@@ -1,3 +1,5 @@
+import { ACP_CLI_SPECS, AcpCliProvider } from "./acp-cli.js";
+import { API_KEY_SPECS, ApiKeyProvider } from "./api-key.js";
 import { ClaudeApiProvider } from "./claude-api.js";
 import { ClaudeCodeProvider } from "./claude-code.js";
 import { canonicalProvider, providerEnabled, withSwitch } from "./profiles.js";
@@ -40,8 +42,16 @@ export const KNOWN_PROVIDERS: Readonly<Record<string, () => Provider>> = {
   "claude-code": () => withSwitch(withCache(new ClaudeCodeProvider())),
   "claude-api": () => withSwitch(withCache(new ClaudeApiProvider())),
   codex: () => withSwitch(withCache(new CodexProvider())),
+  // Vendors' CLIs driven over ACP (Copilot, Qwen Code, Kimi Code, Mistral Vibe).
+  ...Object.fromEntries(
+    ACP_CLI_SPECS.map((spec) => [spec.id, () => withSwitch(withCache(new AcpCliProvider(spec)))]),
+  ),
   gemini: () => withSwitch(withCache(new GeminiProvider())),
   openrouter: () => withSwitch(withCache(new OpenRouterProvider())),
+  // Vendors reached with a key (an API, or a coding plan's own key), by one shared adapter.
+  ...Object.fromEntries(
+    API_KEY_SPECS.map((spec) => [spec.id, () => withSwitch(withCache(new ApiKeyProvider(spec)))]),
+  ),
 };
 
 /** Environment variables that hold the providers' keys: commands the agent runs never see them. */
@@ -52,6 +62,7 @@ export const PROVIDER_SECRET_ENV = [
   "GEMINI_API_KEY",
   "GOOGLE_API_KEY",
   "OPENROUTER_API_KEY",
+  ...API_KEY_SPECS.flatMap((spec) => spec.keyVariables).filter((v) => v !== "OPENAI_API_KEY"),
 ] as const;
 
 /**
@@ -59,7 +70,12 @@ export const PROVIDER_SECRET_ENV = [
  * this computer): they may bill per token, so General Auto uses them only
  * when the user includes them (AGENT_AUTO_PROVIDERS).
  */
-export const API_KEY_PROVIDERS: readonly string[] = ["claude-api", "gemini", "openrouter"];
+export const API_KEY_PROVIDERS: readonly string[] = [
+  "claude-api",
+  "gemini",
+  "openrouter",
+  ...API_KEY_SPECS.map((spec) => spec.id),
+];
 
 /** The setting's word for General Auto: the providers it includes, as one pool. */
 export const AUTO = "auto";

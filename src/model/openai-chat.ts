@@ -15,7 +15,11 @@ export interface ChatCompletionsOptions {
   readonly name: string;
   /** The API's base, such as `https://openrouter.ai/api/v1`. */
   readonly api: string;
-  readonly model: string;
+  /**
+   * The model's id; or, when none was chosen, how to find the vendor's
+   * default (asked once, when the conversation opens).
+   */
+  readonly model: string | (() => Promise<string>);
   /** A reasoning effort (`low`, `medium`, `high`), for models that take one. */
   readonly effort?: string;
   /**
@@ -76,8 +80,10 @@ export class ChatCompletionsModel implements Model {
     this.name = options.name;
   }
 
-  open(options: ConversationOptions): Promise<Conversation> {
-    return Promise.resolve(new ChatConversation(this.options, options));
+  async open(options: ConversationOptions): Promise<Conversation> {
+    const model =
+      typeof this.options.model === "string" ? this.options.model : await this.options.model();
+    return new ChatConversation({ ...this.options, model }, options);
   }
 }
 
@@ -195,7 +201,7 @@ class ChatConversation implements Conversation {
       function: { name: tool.name, description: tool.description, parameters: tool.inputSchema },
     }));
     const body = {
-      model: this.model.model,
+      model: this.model.model as string,
       messages: this.#messages,
       ...(tools.length > 0 ? { tools } : {}),
       ...(this.model.effort ? { reasoning: { effort: this.model.effort } } : {}),

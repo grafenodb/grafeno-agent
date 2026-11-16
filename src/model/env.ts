@@ -15,6 +15,20 @@ export const KEY_VARIABLES = [
   "GEMINI_API_KEY",
   "GOOGLE_API_KEY",
   "OPENROUTER_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "MISTRAL_API_KEY",
+  "MOONSHOT_API_KEY",
+  "DASHSCOPE_API_KEY",
+  "ZAI_API_KEY",
+  "MINIMAX_API_KEY",
+  "XAI_API_KEY",
+  "KIMI_CODE_API_KEY",
+  "ZAI_CODING_API_KEY",
+  "MINIMAX_CODING_API_KEY",
+  "DASHSCOPE_CODING_API_KEY",
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "COPILOT_GITHUB_TOKEN",
 ] as const;
 
 /** The environment for a provider's program: the user's, without any key, plus `extra`. */

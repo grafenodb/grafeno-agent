@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { connectionActions, type ConnectionActionsApi } from "./connections.js";
 import { providerEnabled } from "../providers/profiles.js";
 import { connectAll } from "../mcp/client.js";
 import { loadMcpConfig, mcpConfigPath } from "../mcp/config.js";
@@ -123,6 +124,8 @@ export interface AppServices {
   }): void;
   /** The memory upkeep report for the session's project. */
   upkeep(session: AgentSession): Promise<string>;
+  /** What /connect does to connections: keys, switches, billing, disconnecting. */
+  readonly connections?: ConnectionActionsApi;
   /**
    * An orchestrator for the project, on the settings, wired to the
    * interface; `auto`: General Auto, every ready provider as one pool.
@@ -266,6 +269,7 @@ export function realServices(version: string): AppServices {
   };
 
   return {
+    connections: connectionActions({ env, save }),
     version,
     settingsPath: settingsPath(),
     providers,

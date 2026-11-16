@@ -183,31 +183,31 @@ for the commands), and a side panel with:
 
 The panel hides on narrow windows, or with Ctrl+B.
 
-| Command        | What it does                                                    |
-| -------------- | --------------------------------------------------------------- |
-| `/help`        | Commands and keys                                               |
-| `/new`         | A new conversation (the current one is kept)                    |
-| `/resume`      | Take up an earlier conversation of this project                 |
-| `/models`      | Choose the model, by its exact name                             |
-| `/effort`      | Choose how hard the model thinks (Low … Max)                    |
-| `/connect`     | The provider: Claude today, more later; whether it is signed in |
-| `/palace`      | Grafeno: included, or a server you already have                 |
-| `/permissions` | Ask, automatic or skip permissions, and for what (see below)    |
-| `/unattended`  | Work on alone until the task is done (see below)                |
-| `/usage`       | Your provider's real usage, and this session's tokens           |
-| `/status`      | Provider, Grafeno, agent, project and model                     |
-| `/memory`      | What memory brought back when the session started               |
-| `/checkpoint`  | Save where the work stands, in memory                           |
-| `/orchestrate` | Plan a request and run it with several workers (see below)      |
-| `/runs`        | Earlier runs of this project: see one, or resume it             |
-| `/agents`      | The main agent and its sub-agents: view one, read only          |
-| `/skills`      | The skills the agent can use                                    |
-| `/mcp`         | MCP servers: Grafeno's own (always on) and yours                |
-| `/plugins`     | Services the agent works with: GitHub, GitLab                   |
-| `/upkeep`      | Report on the memory: duplicates, contradictions                |
-| `/sidebar`     | Show or hide the side panel                                     |
-| `/clear`       | Clear the conversation from the screen                          |
-| `/exit`        | Leave, saving where the session stands                          |
+| Command        | What it does                                                 |
+| -------------- | ------------------------------------------------------------ |
+| `/help`        | Commands and keys                                            |
+| `/new`         | A new conversation (the current one is kept)                 |
+| `/resume`      | Take up an earlier conversation of this project              |
+| `/models`      | Choose the model, by its exact name                          |
+| `/effort`      | Choose how hard the model thinks (Low … Max)                 |
+| `/connect`     | Connections: CLI, API key, coding plan; list, manage (below) |
+| `/palace`      | Grafeno: included, or a server you already have              |
+| `/permissions` | Ask, automatic or skip permissions, and for what (see below) |
+| `/unattended`  | Work on alone until the task is done (see below)             |
+| `/usage`       | Your provider's real usage, and this session's tokens        |
+| `/status`      | Provider, Grafeno, agent, project and model                  |
+| `/memory`      | What memory brought back when the session started            |
+| `/checkpoint`  | Save where the work stands, in memory                        |
+| `/orchestrate` | Plan a request and run it with several workers (see below)   |
+| `/runs`        | Earlier runs of this project: see one, or resume it          |
+| `/agents`      | The main agent and its sub-agents: view one, read only       |
+| `/skills`      | The skills the agent can use                                 |
+| `/mcp`         | MCP servers: Grafeno's own (always on) and yours             |
+| `/plugins`     | Services the agent works with: GitHub, GitLab                |
+| `/upkeep`      | Report on the memory: duplicates, contradictions             |
+| `/sidebar`     | Show or hide the side panel                                  |
+| `/clear`       | Clear the conversation from the screen                       |
+| `/exit`        | Leave, saving where the session stands                       |
 
 Keys: Enter sends; `\` then Enter (or Shift+Enter) starts a new line; ↑ ↓
 go through earlier messages; Tab completes a command; PgUp/PgDn scroll the
@@ -672,13 +672,48 @@ Claude through the official Claude Agent SDK and an Anthropic API key; and
 with **Gemini** (Google AI Studio) and **OpenRouter**, each with your own API
 key.
 
-| Provider            | Signs in with                                            | Paid by                              |
-| ------------------- | -------------------------------------------------------- | ------------------------------------ |
-| `claude-code-local` | your own `claude` program and its login (`claude login`) | your Claude plan                     |
-| `claude-api`        | an Anthropic API key (Claude Agent SDK)                  | per token: only if you allow it      |
-| `codex`             | your own `codex` program and Sign in with ChatGPT        | your ChatGPT plan                    |
-| `gemini`            | a Google AI Studio key                                   | free tier, or per token if allowed   |
-| `openrouter`        | an OpenRouter key                                        | free models, or per token if allowed |
+A **vendor** (Anthropic, OpenAI, Moonshot…) may have several
+**connections**, one per way to reach it, and a connection offers models.
+`/connect` opens on how to connect:
+
+1. **CLI / Subscription**: the vendors' official programs on this
+   computer, signed in their own way. Each is checked for real: its
+   `--version`, and a session opened (spends nothing). A program that is
+   only installed is never shown as connected.
+2. **API Key**: the vendors' official APIs, with your key. It is typed in
+   a masked field, checked with the vendor for free when its API can be,
+   and kept in the system's secure store. They bill per token, so each is
+   used only once you allow it.
+3. **Coding Plan**: a membership or prepaid plan's own key, which is not an
+   API key and works only on the plan's endpoint. The vendors' terms limit
+   these keys to the coding tools they list, or do not say, so each starts
+   **off**.
+4. **View connections**: every connection and its state.
+5. **Manage connections**: switch one on or off, check it, set or change
+   its key, disconnect it, allow or forbid per-token billing.
+
+Every choice can be clicked, chosen with its number, or reached with
+`/connect cli`, `/connect api`, `/connect plans`, `/connect list`,
+`/connect status` (with each one's detail), `/connect manage` and
+`/connect disconnect <connection>`.
+
+| Vendor             | CLI / Subscription                   | API Key      | Coding Plan          |
+| ------------------ | ------------------------------------ | ------------ | -------------------- |
+| Anthropic          | `claude-code-local` (Claude Code)    | `claude-api` | —                    |
+| OpenAI             | `codex` (Codex CLI, ChatGPT sign-in) | `openai`     | —                    |
+| GitHub             | `copilot` (Copilot CLI, over ACP)    | —            | —                    |
+| Alibaba (Qwen)     | `qwen-code` (Qwen Code, over ACP)    | `qwen`       | `qwen-plan` (off)    |
+| Moonshot AI (Kimi) | `kimi-code` (Kimi Code, over ACP)    | `moonshot`   | `kimi-plan` (off)    |
+| Mistral AI         | `mistral-vibe` (Vibe, over ACP)      | `mistral`    | —                    |
+| Google             | — (not offered: Google's terms)      | `gemini`     | —                    |
+| DeepSeek           | — (no official CLI)                  | `deepseek`   | —                    |
+| Z.ai (GLM)         | —                                    | `zai`        | `zai-plan` (off)     |
+| MiniMax            | —                                    | `minimax`    | `minimax-plan` (off) |
+| xAI (Grok)         | —                                    | `xai`        | —                    |
+| OpenRouter         | —                                    | `openrouter` | —                    |
+
+The CLIs marked "over ACP" are driven through the Agent Client Protocol,
+the interface their vendors document for editors and scripts.
 
 ```bash
 grafeno-agent providers                       # each: sign-in, on/off, ready or why not
@@ -686,6 +721,8 @@ grafeno-agent providers disable claude-code-local
 grafeno-agent providers enable claude-code-local
 grafeno-agent providers install claude-api    # the Claude Agent SDK, pinned (about 335 MB unpacked)
 grafeno-agent login claude-api                # its API key, checked; asks before allowing billing
+grafeno-agent login deepseek                  # any connection by key: checked, kept in the secure store
+grafeno-agent logout deepseek                 # disconnect: its key is removed
 ```
 
 - **claude-code-local** (`claude-code` in older settings) runs the official,

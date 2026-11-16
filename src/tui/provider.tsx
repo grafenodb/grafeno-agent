@@ -8,6 +8,10 @@ import { Clickable } from "./clicks.js";
 
 export interface ProviderPanelProps {
   readonly providers: readonly Provider[];
+  /** The panel's title (a section of /connect); default: Provider. */
+  readonly title?: string;
+  /** A line under the title: what the section is. */
+  readonly subtitle?: string;
   /** The first run: Enter goes on even when the provider is not ready yet. */
   readonly firstRun?: boolean;
   /** The provider the chat uses now. */
@@ -132,7 +136,7 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
     <Box flexDirection="column" borderStyle="round" borderColor={theme.brand} paddingX={1}>
       <Text>
         <Text bold color={theme.brand}>
-          Provider
+          {props.title ?? "Provider"}
         </Text>
         <Text dimColor> · {String(props.providers.length)} known · search: </Text>
         <Text color={theme.accent}>{query === "" ? "type a name" : query}</Text>

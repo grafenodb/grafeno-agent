@@ -853,9 +853,11 @@ async function replanCommand(argv: readonly string[]): Promise<number> {
 /** `login gemini|openrouter` / `logout …`: a provider's key, checked, kept in the system's secure store. */
 async function loginCommand(command: "login" | "logout", args: readonly string[]): Promise<number> {
   const which = args[0];
-  if (which !== "gemini" && which !== "openrouter" && which !== "claude-api") {
+  const { apiKeySpec, API_KEY_SPECS } = await import("./providers/api-key.js");
+  const keySpec = which === undefined ? undefined : apiKeySpec(which);
+  if (which !== "gemini" && which !== "openrouter" && which !== "claude-api" && !keySpec) {
     console.error(
-      "Providers with an API key sign in here: login claude-api, login gemini, login openrouter. Claude Code and Codex sign in with their own programs (claude login, codex login).",
+      `Connections by key sign in here: login claude-api, gemini, openrouter, ${API_KEY_SPECS.map((s) => s.id).join(", ")}. CLIs sign in with their own programs (claude login, codex login, copilot /login, qwen /auth, kimi /login, vibe).`,
     );
     return 2;
   }
@@ -887,6 +889,19 @@ async function loginCommand(command: "login" | "logout", args: readonly string[]
   };
   if (which === "openrouter") {
     return command === "login" ? openRouterLogin(options) : openRouterLogout(options);
+  }
+  if (keySpec) {
+    const { keyLogin, keyLogout } = await import("./app/login.js");
+    const { providerEnabled } = await import("./providers/profiles.js");
+    if (command === "logout") return keyLogout(keySpec, options);
+    return keyLogin(keySpec, {
+      ...options,
+      allowedBilling: (process.env.AGENT_ALLOW_BILLING ?? "")
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean),
+      enabled: providerEnabled(keySpec.id),
+    });
   }
   if (which === "claude-api") {
     if (command === "logout") return claudeApiLogout(options);

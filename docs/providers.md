@@ -243,12 +243,150 @@ Asked by the user:
   [app-server](https://learn.chatgpt.com/docs/app-server) and
   [non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode).
 
+## Connections: a registry, the new vendors, and /connect (2026-11-16)
+
+The user asked for:
+
+- Qwen, GitHub Copilot, Kimi, DeepSeek and Mistral, each as its
+  documentation allows;
+- API keys for OpenAI, Moonshot, Qwen, Z.ai, MiniMax and xAI;
+- coding plans kept apart from API keys;
+- a registry that tells vendor, connection and model apart;
+- \`/connect\` in five clickable sections.
+
+**What was there:** five connections, each a \`Provider\` built from three
+parts:
+
+- claude-code, by the CLI;
+- claude-api, by the Agent SDK;
+- codex, by \`codex exec\`;
+- gemini and openrouter, by key.
+
+\`/connect\` was one list of them, with Auto. The OpenAI-compatible adapter
+(\`ChatCompletionsModel\`) already served OpenRouter.
+
+**Decisions:**
+
+- **A connection registry** (\`profiles.ts\`). Each connection has:
+  - its vendor and connection type (\`cli\`, \`api-key\`, \`coding-plan\`);
+  - its auth method, cost model, compliance status and whether it starts
+    on;
+  - what its interface supports: streaming, sessions, tools, MCP,
+    cancellation and headless runs.
+
+  \`ConnectionRecord\` (\`src/app/connections.ts\`) adds the live state:
+  enabled, installed, authenticated and available. A vendor has as many
+  connections as ways to reach it (Anthropic: \`claude-code-local\` and
+  \`claude-api\`; Moonshot: \`kimi-code\`, \`moonshot\` and \`kimi-plan\`).
+  Models belong to a connection.
+
+- **CLIs over ACP** (Agent Client Protocol, \`src/model/acp.ts\`), one
+  adapter for every vendor that documents it, on the official
+  \`@agentclientprotocol/sdk\` (2.4.0, pinned):
+  - Copilot: \`copilot --acp --stdio\`.
+  - Qwen Code: \`qwen --acp\`.
+  - Kimi Code: \`kimi acp\`.
+  - Mistral Vibe: \`vibe-acp\`.
+
+  As with Claude Code and Codex:
+  - the CLI runs in a private folder, with no key variables except those
+    of its own documented sign-in (Copilot's GitHub tokens);
+  - the agent's tools reach it through the agent's MCP server, passed in
+    \`session/new\` (an agent without HTTP MCP is refused);
+  - a permission request for one of the CLI's built-in tools is refused,
+    while the agent's own tools go through to the agent's approvals.
+
+  Each turn streams (\`agent_message_chunk\`), reports its context
+  (\`usage_update\`) and is cancelled with \`session/cancel\`. The session is
+  kept across turns. A sign-in error (\`-32000\`) means not signed in.
+  Status means \`--version\` answers and a session opens with no prompt, so
+  nothing is spent.
+
+- **Connections by key** (\`src/providers/api-key.ts\`), one adapter over
+  the existing OpenAI-compatible model. No new HTTP client was written.
+  - Each vendor's spec holds what its documentation says: the endpoints
+    (one is chosen by \`<ID>_ENDPOINT\`, and only documented ones are
+    taken), the key variable, and the free check (\`GET /models\`).
+  - A balance is shown where the API reports it for free: DeepSeek's
+    \`/user/balance\`, and MiniMax's plan \`/token_plan/remains\`.
+  - With no model chosen, the vendor's first listed model is used.
+  - Keys go to the system's secure store (\`login <connection>\`, or
+    \`/connect\`), never to Grafeno, the settings file or a log, and
+    commands never see their variables.
+  - APIs bill per token and need \`AGENT_ALLOW_BILLING\`, asked plainly.
+- **Coding plans** are separate connections with their own keys and
+  endpoints, not interchangeable with API keys.
+  - Z.ai and Alibaba limit their plan keys to the coding tools they list,
+    and this agent is not one of them. Kimi and MiniMax do not say.
+  - So all four start **off**. Switching one on asks first, and says why.
+- **/connect** opens on five sections (a \`Picker\`: clickable, by number,
+  or by arrows):
+  - The three connection types reuse the provider panel, filtered by type,
+    with search and Auto.
+  - A connection by key with no key opens a masked key entry. The key is
+    never shown, is checked first, and is followed by the billing or plan
+    question.
+  - "View connections" is the table.
+  - "Manage" offers switch on or off, check now, set or change the key,
+    disconnect, and allow or forbid billing.
+  - \`/connect cli|api|plans|list|status|manage|disconnect <connection>\`
+    go straight there.
+
+**What is really supported:**
+
+| Vendor    | CLI / Subscription                                           | API Key                           | Coding Plan                            | Not offered, and why                                                    |
+| --------- | ------------------------------------------------------------ | --------------------------------- | -------------------------------------- | ----------------------------------------------------------------------- |
+| Anthropic | Claude Code (\`claude -p\`); compliance pending              | Agent SDK (claude-api)            | —                                      | —                                                                       |
+| OpenAI    | Codex (\`codex exec\`, ChatGPT sign-in)                      | Chat Completions                  | —                                      | —                                                                       |
+| GitHub    | Copilot CLI over ACP (public preview)                        | —                                 | —                                      | No public pay-per-token Copilot API for this                            |
+| Alibaba   | Qwen Code over ACP (its free OAuth tier ended on 2026-04-15) | Model Studio (Singapore, Beijing) | Coding Plan (restricted, off)          | —                                                                       |
+| Moonshot  | Kimi Code over ACP                                           | Moonshot API (.ai, .cn)           | Kimi Code membership (unverified, off) | —                                                                       |
+| Mistral   | Vibe over ACP                                                | Mistral API                       | —                                      | —                                                                       |
+| Google    | —                                                            | Gemini (AI Studio)                | —                                      | Antigravity/Gemini CLI with a consumer sign-in (forbidden by the terms) |
+| DeepSeek  | —                                                            | DeepSeek API                      | —                                      | No official CLI is documented                                           |
+| Z.ai      | —                                                            | Z.ai API                          | GLM Coding Plan (restricted, off)      | —                                                                       |
+| MiniMax   | —                                                            | MiniMax API (global, mainland)    | Coding/Token Plan (unverified, off)    | —                                                                       |
+| xAI       | —                                                            | xAI API (global, US)              | —                                      | —                                                                       |
+
+**Verified:**
+
+- **Tests:**
+  - ACP against a fake agent that is a real process, on the real SDK:
+    streaming, the agent's tools over MCP, built-ins refused, the private
+    folder and environment, cancellation, not signed in, no HTTP MCP;
+  - the registry and the states (never "connected" for only installed);
+  - connections by key with a fake vendor: the free check, refused keys,
+    documented endpoints only, billing and plans, the default model, the
+    balance;
+  - \`login\` and the \`/connect\` actions;
+  - the menu, its sections and the masked key entry.
+- **Mutation-checked:** the CLI's built-ins refused, plans starting off,
+  the key never shown.
+- **For real:** the providers table on this machine. The CLIs are not
+  installed here, and the Copilot "shim" is reported not installed.
+
+**Sources:**
+
+- [Copilot CLI ACP server](https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server);
+- [Kimi Code: kimi acp](https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-acp);
+- [Qwen Code: Zed integration](https://qwenlm.github.io/qwen-code-docs/en/users/integration-zed);
+- [Mistral Vibe in other IDEs](https://docs.mistral.ai/vibe/code/use-vibe-in-other-ides);
+- [ACP schema](https://agentclientprotocol.com/protocol/schema);
+- [DeepSeek API](https://api-docs.deepseek.com/);
+- [Z.ai coding tools](https://docs.z.ai/scenario-example/develop-tools/others);
+- [Alibaba Coding Plan](https://www.alibabacloud.com/help/en/model-studio/coding-plan);
+- [MiniMax M Plan](https://platform.minimax.io/docs/m-plan/quickstart);
+- [xAI quickstart](https://docs.x.ai/developers/quickstart).
+
 ## Open
 
 - A Codex sign-in of the agent's own, through OpenAI's documented flow
   above, if the user wants it.
-- Gemini, OpenRouter and claude-api have not been run for real yet: no
-  key is set up on this machine.
+- No connection by key, and none of the new CLIs (not installed here), has
+  run a real turn yet. A real turn spends the user's quota or credits, which is
+  their call.
+- More than one connection of the same vendor and type (two DeepSeek keys)
+  is not supported yet; one key per connection.
 - claude-code-local's standing awaits Anthropic's answer; if it is no,
   `providers disable claude-code-local` (or the setting) turns it off. OpenRouter's public model list was checked for real.
   `login gemini`, then a short real turn on the free tier, will show it.

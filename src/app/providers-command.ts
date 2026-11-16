@@ -37,7 +37,7 @@ export function describeProviders(
     const ready = on && status.installed && status.signedIn;
     const billed = status.billing?.kind === "metered";
     lines.push(
-      `${(profile?.shownAs ?? provider.id).padEnd(18)} ${provider.name.padEnd(24)} ${(profile?.auth ?? "?").padEnd(17)} ${on ? "on " : "off"}  ${ready ? "ready" : "not ready"}${auto.includes(provider.id) ? " · in Auto" : ""}`,
+      `${(profile?.shownAs ?? provider.id).padEnd(18)} ${provider.name.slice(0, 24).padEnd(24)} ${(profile?.auth ?? "?").padEnd(17)} ${on ? "on " : "off"}  ${ready ? "ready" : "not ready"}${auto.includes(provider.id) ? " · in Auto" : ""}`,
     );
     lines.push(`${" ".repeat(19)}${status.detail}`);
     if (billed) {

@@ -7,6 +7,8 @@ import {
 } from "../providers/openrouter.js";
 import type { SecretStore } from "../providers/secrets.js";
 import { CLAUDE_API_ACCOUNT } from "../providers/claude-api.js";
+import { checkKey, keyAccount, type ApiKeySpec } from "../providers/api-key.js";
+import { PROVIDER_PROFILES, switchVariables } from "../providers/profiles.js";
 
 export interface LoginIo {
   /** Asks for a line; `hidden`: what is typed is not shown. */
@@ -235,5 +237,95 @@ export async function claudeApiLogin(options: ClaudeApiLoginOptions): Promise<nu
 export async function claudeApiLogout(options: Omit<ApiKeyLoginOptions, "fetch">): Promise<number> {
   await options.store.delete(CLAUDE_API_ACCOUNT).catch(() => undefined);
   options.io.say(`The Anthropic API key was removed from ${options.store.name}.`);
+  return 0;
+}
+
+/** What a connection by key needs besides the common options. */
+export interface KeyLoginOptions extends ApiKeyLoginOptions {
+  /** The connections already allowed to bill per token (AGENT_ALLOW_BILLING). */
+  readonly allowedBilling: readonly string[];
+  /** Whether the connection is switched on now. */
+  readonly enabled: boolean;
+  readonly env?: Record<string, string | undefined>;
+}
+
+/**
+ * Sets up a connection by key (an API key, or a coding plan's own key):
+ * the key is checked with the vendor for free, when its API can, before it
+ * is kept in the system's secure store. Then, plainly asked: per-token
+ * billing for an API (no by default), and for a coding plan whose terms do
+ * not clearly allow a third-party agent, whether to switch it on anyway
+ * (no by default). Logging in again replaces the key.
+ */
+export async function keyLogin(spec: ApiKeySpec, options: KeyLoginOptions): Promise<number> {
+  const { io } = options;
+  const profile = PROVIDER_PROFILES[spec.id];
+  io.say(`${spec.name}: ${spec.signIn}`);
+  if (spec.kind === "coding-plan") {
+    io.say("A coding plan's key is not an API key: it works only on the plan's own endpoint.");
+    if (profile?.note) io.say(profile.note);
+  }
+  const key = (await io.ask(`${spec.name} key: `, { hidden: true })).trim();
+  if (!key) {
+    io.say("No key given: nothing changed.");
+    return 1;
+  }
+  const checked = await checkKey(spec, key, {
+    ...(options.env ? { env: options.env } : {}),
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+  });
+  if (!checked.ok && checked.refused) {
+    io.say(`${checked.reason}: nothing changed.`);
+    return 1;
+  }
+  if (!checked.ok) {
+    const answer = (await io.ask(`${checked.reason}. Keep the key anyway? [y/N]: `)).trim();
+    if (!/^(y|yes|s|si|sí)$/i.test(answer)) {
+      io.say("Nothing changed.");
+      return 1;
+    }
+  } else {
+    io.say(`${spec.name} accepted the key (${String(checked.models.length)} models).`);
+  }
+  await options.store.set(keyAccount(spec.id), key);
+  io.say(`Saved in ${options.store.name} (never in Grafeno or the settings file).`);
+  if (spec.kind === "api-key" && !options.allowedBilling.includes(spec.id)) {
+    io.say(
+      `It bills per token to your ${spec.name} account${spec.pricing ? ` (prices: ${spec.pricing})` : ""}.`,
+    );
+    const answer = (await io.ask("Allow the agent to use it, billed per token? [y/N]: ")).trim();
+    if (/^(y|yes|s|si|sí)$/i.test(answer)) {
+      options.saveSettings({ AGENT_ALLOW_BILLING: [...options.allowedBilling, spec.id].join(",") });
+      io.say(`Allowed (AGENT_ALLOW_BILLING includes ${spec.id}).`);
+    } else {
+      io.say(`Not allowed: ${spec.id} stays unused until AGENT_ALLOW_BILLING includes it.`);
+    }
+  }
+  if (spec.kind === "coding-plan" && !options.enabled) {
+    const answer = (
+      await io.ask(
+        "Its terms do not clearly allow this agent. Switch it on anyway, at your own risk? [y/N]: ",
+      )
+    ).trim();
+    if (/^(y|yes|s|si|sí)$/i.test(answer)) {
+      options.saveSettings(Object.fromEntries(switchVariables(spec.id).map((n) => [n, "true"])));
+      io.say(
+        `${spec.id} is switched on (grafeno-agent providers disable ${spec.id} switches it off).`,
+      );
+    } else {
+      io.say(`${spec.id} stays off: the key is kept for when you switch it on.`);
+    }
+  }
+  await askAuto(options, spec.id, spec.name);
+  return 0;
+}
+
+/** Removes a connection's stored key: it is disconnected (its settings stay). */
+export async function keyLogout(
+  spec: ApiKeySpec,
+  options: Omit<ApiKeyLoginOptions, "fetch">,
+): Promise<number> {
+  await options.store.delete(keyAccount(spec.id)).catch(() => undefined);
+  options.io.say(`The ${spec.name} key was removed from ${options.store.name}.`);
   return 0;
 }

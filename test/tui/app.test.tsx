@@ -158,7 +158,12 @@ async function until(
 type App = ReturnType<typeof render>;
 
 /** Presses a key, again every half second, until `done`: a key sent before a menu listens is lost. */
-async function press(app: App, key: string, done: () => boolean, what: string): Promise<void> {
+async function press(
+  app: App,
+  key: string,
+  done: () => boolean,
+  what: string | (() => string),
+): Promise<void> {
   for (let tries = 0; tries < 20 && !done(); tries++) {
     app.stdin.write(key);
     await until(done, what, 500).catch(() => undefined);
@@ -330,7 +335,20 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     await ready(app);
     await type(app, "/connect");
     app.stdin.write(ENTER);
-    await until(() => now(app).includes("Auto") && !now(app).includes("checking"), "the panel");
+    // The menu first: how to connect, five choices; 2 opens the API Key section.
+    await until(() => now(app).includes("Connect · choose how"), "the menu");
+    expect(now(app)).toContain("1. CLI / Subscription");
+    expect(now(app)).toContain("3. Coding Plan");
+    await press(
+      app,
+      "2",
+      () => !now(app).includes("Connect · choose how") && now(app).includes("API Key"),
+      () => `the API Key section; screen: ${now(app)}`,
+    );
+    await until(
+      () => now(app).includes("Auto") && !now(app).includes("checking"),
+      () => `the panel; screen: ${now(app)}`,
+    );
     // Auto is the first row, above the providers.
     app.stdin.write(UP);
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -390,7 +408,8 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.stdin.write(ENTER);
     await until(() => seen(app).includes("From-First"), "the first answer");
     await ready(app);
-    await type(app, "/connect");
+    // Straight to a section: /connect api.
+    await type(app, "/connect api");
     app.stdin.write(ENTER);
     await until(
       () => now(app).includes("Other Provider") && now(app).includes("in use"),

@@ -30,18 +30,21 @@ describe("choosing providers", () => {
   });
 
   it("shows every known provider in /connect, the chosen ones first", () => {
-    expect(allProviders({ AGENT_PROVIDERS: "codex" }).map((p) => p.id)).toEqual([
-      "codex",
-      "claude-code",
-      "claude-api",
-      "gemini",
-      "openrouter",
-    ]);
+    const ids = allProviders({ AGENT_PROVIDERS: "codex" }).map((p) => p.id);
+    // The chosen first, then every other known connection, each once.
+    expect(ids.slice(0, 2)).toEqual(["codex", "claude-code"]);
+    expect(ids).toEqual(
+      expect.arrayContaining(["claude-api", "gemini", "openrouter", "copilot", "deepseek"]),
+    );
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("lets the user choose what Auto includes; an API-key provider only when named", () => {
     expect(autoMembers({})).toEqual([]);
-    expect(API_KEY_PROVIDERS).toEqual(["claude-api", "gemini", "openrouter"]);
+    expect(API_KEY_PROVIDERS).toEqual(
+      expect.arrayContaining(["claude-api", "gemini", "openrouter", "deepseek", "kimi-plan"]),
+    );
+    expect(API_KEY_PROVIDERS).not.toContain("copilot");
     expect(autoMembers({ AGENT_AUTO_PROVIDERS: " claude-code , gemini, gemini " })).toEqual([
       "claude-code",
       "gemini",

@@ -317,14 +317,17 @@ describe("the Gemini provider", () => {
   });
 
   it("hides the key variables from the commands the agent runs", () => {
-    expect(PROVIDER_SECRET_ENV).toEqual([
-      "ANTHROPIC_API_KEY",
-      "CODEX_API_KEY",
-      "OPENAI_API_KEY",
-      "GEMINI_API_KEY",
-      "GOOGLE_API_KEY",
-      "OPENROUTER_API_KEY",
-    ]);
+    expect(PROVIDER_SECRET_ENV).toEqual(
+      expect.arrayContaining([
+        "ANTHROPIC_API_KEY",
+        "CODEX_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENROUTER_API_KEY",
+        "DEEPSEEK_API_KEY",
+      ]),
+    );
   });
 });
 

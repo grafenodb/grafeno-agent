@@ -83,6 +83,15 @@ import { PalacePanel } from "./palace.js";
 import { Picker, type PickerItem } from "./picker.js";
 import { Prompt } from "./prompt.js";
 import { ProviderPanel } from "./provider.js";
+import { ConnectMenu, KeyEntry, sectionOf } from "./connect-menu.js";
+import {
+  complianceText,
+  connectionRecord,
+  describeConnections,
+  stateOf,
+} from "../app/connections.js";
+import { apiKeySpec } from "../providers/api-key.js";
+import { PROVIDER_PROFILES, providerEnabled, type ConnectionType } from "../providers/profiles.js";
 import { Sidebar, type AutoUsage } from "./sidebar.js";
 import { Spinner } from "./spinner.js";
 import { theme } from "./theme.js";
@@ -208,6 +217,16 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   });
   const [items, setItems] = useState<Item[]>([]);
   const [mode, setMode] = useState<Mode>("chat");
+  // Where /connect is: its menu, a section, a key being typed, or managing one connection.
+  const [connectView, setConnectView] = useState<
+    | { kind: "menu" }
+    | { kind: "section"; type: ConnectionType }
+    | { kind: "key"; provider: Provider; back: ConnectionType }
+    | { kind: "manage" }
+    | { kind: "actions"; provider: Provider }
+    | { kind: "billing"; provider: Provider }
+    | { kind: "plan"; provider: Provider }
+  >({ kind: "menu" });
   /** For each provider in Auto, the models chosen (AGENT_AUTO_MODELS). */
   const [autoModelChoice, setAutoModelChoice] = useState<Record<string, string[]>>(() =>
     autoModels(process.env),
@@ -351,6 +370,39 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   useEffect(() => {
     void refreshAutoUsage();
   }, [refreshAutoUsage]);
+
+  /** The connections and their state (list), with each one's detail (status). */
+  const showConnections = useCallback(
+    async (detailed: boolean) => {
+      setBusy("Checking the connections");
+      try {
+        const records = await Promise.all(
+          services.providers.map(async (p) =>
+            connectionRecord(
+              p,
+              await p.status().catch((error: unknown) => ({
+                installed: false,
+                signedIn: false,
+                detail: error instanceof Error ? error.message : String(error),
+              })),
+            ),
+          ),
+        );
+        push({
+          kind: "block",
+          title: detailed ? "Connections · status" : "Connections",
+          lines: [
+            ...describeConnections(records, detailed),
+            "",
+            "/connect cli · api · plans · manage · disconnect <connection>",
+          ],
+        });
+      } finally {
+        setBusy(undefined);
+      }
+    },
+    [services, push],
+  );
 
   /** Starts a session with the settings as they are now. */
   const connect = useCallback(async () => {
@@ -946,9 +998,48 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
         case "effort":
           setMode("effort");
           break;
-        case "connect":
+        case "connect": {
+          const section = sectionOf(command.args);
+          if (section === undefined) {
+            notice(
+              "/connect takes: cli, api, plans, list, status, manage, disconnect <connection>.",
+              "warning",
+            );
+            break;
+          }
+          if (section === "list" || section === "status") {
+            void showConnections(section === "status");
+            break;
+          }
+          if (section === "disconnect") {
+            const id = command.args.trim().split(/\s+/)[1];
+            const target = id
+              ? services.providers.find(
+                  (p) => p.id === id || PROVIDER_PROFILES[p.id]?.shownAs === id,
+                )
+              : undefined;
+            if (!target || !services.connections) {
+              notice(
+                "Say which: /connect disconnect <connection> (as /connect list names it).",
+                "warning",
+              );
+              break;
+            }
+            void services.connections.disconnect(target.id).then((said) => {
+              notice(said, "success");
+            });
+            break;
+          }
+          setConnectView(
+            section === "menu"
+              ? { kind: "menu" }
+              : section === "manage"
+                ? { kind: "manage" }
+                : { kind: "section", type: section },
+          );
           setMode("connect");
           break;
+        }
         case "palace":
           setMode("palace");
           break;
@@ -1674,9 +1765,249 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                 }}
               />
             )}
-            {mode === "connect" && (
+            {mode === "connect" && connectView.kind === "menu" && (
+              <ConnectMenu
+                onCancel={() => {
+                  setMode("chat");
+                }}
+                onSection={(section) => {
+                  if (section === "list") {
+                    setMode("chat");
+                    void showConnections(false);
+                  } else if (section === "manage") setConnectView({ kind: "manage" });
+                  else if (section !== "menu") setConnectView({ kind: "section", type: section });
+                }}
+              />
+            )}
+            {mode === "connect" && connectView.kind === "key" && (
+              <KeyEntry
+                name={connectView.provider.name}
+                hint={apiKeySpec(connectView.provider.id)?.signIn ?? connectView.provider.signIn}
+                onSubmit={async (key) => {
+                  if (!services.connections)
+                    return { ok: false, message: "Keys are set from the terminal here." };
+                  const result = await services.connections.setKey(connectView.provider.id, key);
+                  return result;
+                }}
+                onCancel={() => {
+                  const target = connectView.provider;
+                  void target.status().then((found) => {
+                    const spec = apiKeySpec(target.id);
+                    if (
+                      found.signedIn &&
+                      spec?.kind === "api-key" &&
+                      found.billing?.kind === "metered" &&
+                      !(process.env.AGENT_ALLOW_BILLING ?? "")
+                        .split(",")
+                        .map((x) => x.trim())
+                        .includes(target.id)
+                    ) {
+                      setConnectView({ kind: "billing", provider: target });
+                    } else if (
+                      found.signedIn &&
+                      spec?.kind === "coding-plan" &&
+                      !providerEnabled(target.id)
+                    ) {
+                      setConnectView({ kind: "plan", provider: target });
+                    } else {
+                      setConnectView({ kind: "section", type: connectView.back });
+                    }
+                  });
+                }}
+              />
+            )}
+            {mode === "connect" && connectView.kind === "billing" && (
+              <Picker
+                title={`${connectView.provider.name} bills per token: allow the agent to use it?`}
+                items={[
+                  {
+                    id: "no",
+                    label: "No, keep it unused",
+                    hint: "nothing is billed; it stays connected",
+                  },
+                  {
+                    id: "yes",
+                    label: "Yes, allow per-token billing",
+                    hint:
+                      apiKeySpec(connectView.provider.id)?.pricing ?? "prices on the vendor's site",
+                  },
+                ]}
+                onCancel={() => {
+                  setConnectView({ kind: "section", type: "api-key" });
+                }}
+                onSelect={(item) => {
+                  if (item.id === "yes" && services.connections) {
+                    notice(
+                      services.connections.setBilling(connectView.provider.id, true),
+                      "warning",
+                    );
+                  }
+                  setConnectView({ kind: "section", type: "api-key" });
+                }}
+              />
+            )}
+            {mode === "connect" && connectView.kind === "plan" && (
+              <Picker
+                title={`Switch on ${connectView.provider.name}? ${complianceText(PROVIDER_PROFILES[connectView.provider.id]?.compliance ?? "unverified")}`}
+                items={[
+                  { id: "no", label: "No, keep it off", hint: "the key is kept for later" },
+                  {
+                    id: "yes",
+                    label: "Yes, at my own risk",
+                    hint: "it can be switched off at any time",
+                  },
+                ]}
+                onCancel={() => {
+                  setConnectView({ kind: "section", type: "coding-plan" });
+                }}
+                onSelect={(item) => {
+                  if (item.id === "yes" && services.connections) {
+                    notice(
+                      services.connections.setEnabled(connectView.provider.id, true),
+                      "warning",
+                    );
+                  }
+                  setConnectView({ kind: "section", type: "coding-plan" });
+                }}
+              />
+            )}
+            {mode === "connect" && connectView.kind === "manage" && (
+              <Picker
+                title="Manage connections"
+                rows={12}
+                items={services.providers.map((p) => ({
+                  id: p.id,
+                  label: `${PROVIDER_PROFILES[p.id]?.shownAs ?? p.id} · ${p.name}`,
+                  hint: providerEnabled(p.id) ? "on" : "off",
+                }))}
+                onCancel={() => {
+                  setConnectView({ kind: "menu" });
+                }}
+                onSelect={(item) => {
+                  const chosen = services.providers.find((p) => p.id === item.id);
+                  if (chosen) setConnectView({ kind: "actions", provider: chosen });
+                }}
+              />
+            )}
+            {mode === "connect" && connectView.kind === "actions" && (
+              <Picker
+                title={connectView.provider.name}
+                items={[
+                  providerEnabled(connectView.provider.id)
+                    ? { id: "off", label: "Switch off", hint: "at once: nothing uses it" }
+                    : {
+                        id: "on",
+                        label: "Switch on",
+                        hint:
+                          PROVIDER_PROFILES[connectView.provider.id]?.compliance === "documented"
+                            ? ""
+                            : complianceText(
+                                PROVIDER_PROFILES[connectView.provider.id]?.compliance ??
+                                  "unverified",
+                              ),
+                      },
+                  {
+                    id: "check",
+                    label: "Check now",
+                    hint: "installed, signed in, ready (spends nothing)",
+                  },
+                  ...(apiKeySpec(connectView.provider.id)
+                    ? [
+                        {
+                          id: "key",
+                          label: "Set or change the key",
+                          hint: "checked before it is kept",
+                        },
+                        {
+                          id: "disconnect",
+                          label: "Disconnect",
+                          hint: "remove its key from the secure store",
+                        },
+                      ]
+                    : []),
+                  ...(apiKeySpec(connectView.provider.id)?.kind === "api-key"
+                    ? (process.env.AGENT_ALLOW_BILLING ?? "")
+                        .split(",")
+                        .map((x) => x.trim())
+                        .includes(connectView.provider.id)
+                      ? [
+                          {
+                            id: "forbid",
+                            label: "Forbid per-token billing",
+                            hint: "it stays connected, unused",
+                          },
+                        ]
+                      : [
+                          {
+                            id: "allow",
+                            label: "Allow per-token billing",
+                            hint: "only if you mean it",
+                          },
+                        ]
+                    : []),
+                  { id: "back", label: "Back" },
+                ]}
+                onCancel={() => {
+                  setConnectView({ kind: "manage" });
+                }}
+                onSelect={(item) => {
+                  const target = connectView.provider;
+                  const actions = services.connections;
+                  switch (item.id) {
+                    case "on":
+                    case "off":
+                      if (actions)
+                        notice(actions.setEnabled(target.id, item.id === "on"), "success");
+                      setConnectView({ kind: "manage" });
+                      break;
+                    case "check":
+                      void target.status().then((found) => {
+                        const record = connectionRecord(target, found);
+                        notice(
+                          `${record.displayName}: ${stateOf(record)}. ${found.detail}`,
+                          record.available ? "success" : "warning",
+                        );
+                      });
+                      break;
+                    case "key":
+                      setConnectView({
+                        kind: "key",
+                        provider: target,
+                        back: apiKeySpec(target.id)?.kind ?? "api-key",
+                      });
+                      break;
+                    case "disconnect":
+                      if (actions)
+                        void actions.disconnect(target.id).then((said) => {
+                          notice(said, "success");
+                        });
+                      setConnectView({ kind: "manage" });
+                      break;
+                    case "allow":
+                    case "forbid":
+                      if (actions)
+                        notice(actions.setBilling(target.id, item.id === "allow"), "warning");
+                      setConnectView({ kind: "manage" });
+                      break;
+                    default:
+                      setConnectView({ kind: "manage" });
+                  }
+                }}
+              />
+            )}
+            {mode === "connect" && connectView.kind === "section" && (
               <ProviderPanel
-                providers={services.providers}
+                title={
+                  connectView.type === "cli"
+                    ? "CLI / Subscription"
+                    : connectView.type === "api-key"
+                      ? "API Key"
+                      : "Coding Plan"
+                }
+                providers={services.providers.filter(
+                  (p) =>
+                    (PROVIDER_PROFILES[p.id]?.connectionType ?? "api-key") === connectView.type,
+                )}
                 {...(provider && !auto ? { current: provider.id } : {})}
                 auto={auto}
                 autoMembers={autoIds}
@@ -1741,6 +2072,20 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                   });
                 }}
                 onDone={(found, chosen) => {
+                  if (
+                    found &&
+                    chosen &&
+                    !found.signedIn &&
+                    apiKeySpec(chosen.id) !== undefined &&
+                    providerEnabled(chosen.id)
+                  ) {
+                    setConnectView({
+                      kind: "key",
+                      provider: chosen,
+                      back: connectView.type,
+                    });
+                    return;
+                  }
                   setMode("chat");
                   if (!found || !chosen) return;
                   const ready = found.installed && found.signedIn;
