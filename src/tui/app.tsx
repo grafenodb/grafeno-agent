@@ -48,6 +48,10 @@ import {
 import { AgentsPanel, AgentView, agentKey } from "./agents-panel.js";
 import { ClickArea, Clickable } from "./clicks.js";
 import { ProjectsPanel } from "./projects.js";
+import { deleteProjectEverywhere, describeDeletion } from "../app/project-delete.js";
+import { projectFootprint } from "../projects.js";
+import { sessionsDir } from "../sessions/store.js";
+import { dataDir } from "../data-dir.js";
 import { SessionsPanel } from "./sessions.js";
 import { ActionLine, describeAction, summarizeOutcome, type Action } from "./activity.js";
 import {
@@ -1364,6 +1368,12 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
             {mode === "projects" && (
               <ProjectsPanel
                 current={session?.workspace.root ?? process.cwd()}
+                onDelete={async (project) =>
+                  describeDeletion(await deleteProjectEverywhere(project.name))
+                }
+                footprint={(project) =>
+                  projectFootprint(project, { sessionsDir: sessionsDir(), dataDir: dataDir() })
+                }
                 onDone={(project, message) => {
                   setMode("chat");
                   if (message) notice(message, "success");

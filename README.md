@@ -96,8 +96,13 @@ Run `grafeno-agent` in a terminal. The first time, it asks two things:
      namespace. The server's administrator makes the key:
 
      ```bash
-     grafeno keys create grafeno-agent --grant grafeno-agent:write --config grafeno.toml
+     grafeno keys create grafeno-agent --grant 'grafeno-agent*:admin' --config grafeno.toml
      ```
+
+     Admin on `grafeno-agent*` lets the agent make each project's own
+     namespace (`grafeno-agent--<project>`) and drop it with the project.
+     With `grafeno-agent:write` only, sessions outside a project work, but
+     not those in one.
 
 2. **The provider**: Claude, through your Claude Code. It shows whether
    Claude Code is installed and signed in, and with which plan.
@@ -244,6 +249,19 @@ a name and a folder (made when it does not exist, with a git repository);
 `grafeno-agent projects`, `projects add <folder> [--name n]`,
 `projects new <folder>`, `projects remove <name>`. The list is
 `projects.json`, next to the settings.
+
+**Each project has its own memory.** Every session opened in a project's
+folder (or one inside it) reads and writes the project's own namespace in
+Grafeno, `grafeno-agent--<project>`: several sessions at once share what
+each one learns. The namespace is made by the project's first session.
+Sessions outside any project share one namespace of their own,
+`GRAFENO_NAMESPACE` (`grafeno-agent`). **− Delete a project** (in
+`[Projects]`, or `grafeno-agent projects remove <name>`) asks first, then
+drops the project's namespace with everything in it, its conversations
+and its runs, so nothing is left behind; its folder, with your code,
+stays. If the namespace cannot be dropped, nothing else is deleted. With
+the included Grafeno, the agent's key is remade once with the rights this
+needs; with another server, see the key above.
 
 **Long work goes on by itself.** A turn that reaches its step limit (40
 model requests) carries on in the same conversation, up to ten rounds,
@@ -785,14 +803,15 @@ its key. `grafeno-agent check` shows the name it works under.
 
 ## Troubleshooting
 
-| Message                                          | What to do                                                            |
-| ------------------------------------------------ | --------------------------------------------------------------------- |
-| `GRAFENO_AGENT_KEY is not set`                   | `grafeno-agent init`, then put the key in the settings file           |
-| `Grafeno does not answer at …`                   | Start the Grafeno server (on Windows, the service `grafeno`)          |
-| `Grafeno refused the agent's key`                | The key is wrong, revoked or expired: ask for a new one               |
-| `The agent's key may not use namespace …`        | The key needs `--grant <namespace>:write`, or set `GRAFENO_NAMESPACE` |
-| `Claude Code was not found` / `is not signed in` | Install Claude Code, run `claude`, sign in with `/login`              |
-| `The Claude plan's usage limit is reached`       | Wait until the time it says; the agent does not work around it        |
+| Message                                           | What to do                                                            |
+| ------------------------------------------------- | --------------------------------------------------------------------- |
+| `GRAFENO_AGENT_KEY is not set`                    | `grafeno-agent init`, then put the key in the settings file           |
+| `Grafeno does not answer at …`                    | Start the Grafeno server (on Windows, the service `grafeno`)          |
+| `Grafeno refused the agent's key`                 | The key is wrong, revoked or expired: ask for a new one               |
+| `The agent's key may not use namespace …`         | The key needs `--grant <namespace>:write`, or set `GRAFENO_NAMESPACE` |
+| `… may not make or use the project's namespace …` | Projects need `--grant '<namespace>*:admin'` on the agent's key       |
+| `Claude Code was not found` / `is not signed in`  | Install Claude Code, run `claude`, sign in with `/login`              |
+| `The Claude plan's usage limit is reached`        | Wait until the time it says; the agent does not work around it        |
 
 ## How it works
 

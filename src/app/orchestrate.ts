@@ -45,8 +45,7 @@ export async function createOrchestrator(
   settings: OrchestrateSettings,
   extra: Partial<OrchestratorOptions> = {},
 ): Promise<Orchestrator> {
-  const config = loadConfig();
-  await prepareGrafeno(config);
+  const config = await prepareGrafeno(loadConfig());
   await checkGrafeno(config);
   const cwd = settings.cwd ?? process.cwd();
   const project = detectProject(cwd, config.project);

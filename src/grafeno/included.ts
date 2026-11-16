@@ -243,12 +243,15 @@ export async function makeAgentKey(
   name = "grafeno-agent",
 ): Promise<string> {
   const owner = new Grafeno({ url, token: ownerToken });
-  const exists = (await owner.keys()).some((key) => key.name === name);
-  if (exists) return (await owner.rotateKey(name)).secret;
+  // Admin on the namespace and every one under it: each project has its own,
+  // made by its first session and dropped with the project.
+  const grants = [{ namespace: `${namespace}*`, role: "admin" as const }];
+  const known = (await owner.keys()).find((key) => key.name === name);
+  if (known) await owner.revokeKey(name);
   const made = await owner.createKey({
     name,
-    grants: [{ namespace, role: "write" }],
-    description: "Grafeno Agent's own key",
+    grants,
+    description: "Grafeno Agent's own key: its memory, and each project's",
   });
   return made.secret;
 }

@@ -24,6 +24,14 @@
 - **Projects**: `/projects` and `[Projects]` list, add and make projects
   (a folder with git); opening one starts a session in its folder.
   `grafeno-agent projects` does the same from the shell.
+- **A namespace per project**: the sessions of a project share its own
+  namespace in Grafeno (`<GRAFENO_NAMESPACE>--<project>`, made by its first
+  session); sessions outside a project share `GRAFENO_NAMESPACE`.
+  Deleting a project (`− Delete a project`, `projects remove <name>`) asks
+  first, then drops its namespace, conversations and runs; never its
+  folder, and nothing if the namespace cannot be dropped. The agent's key
+  needs admin on `<GRAFENO_NAMESPACE>*`: the included Grafeno's is remade
+  once by itself.
 
 ## 0.1.4 (2026-11-16)
 

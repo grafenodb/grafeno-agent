@@ -31,6 +31,7 @@ import {
 import { lightModel, mostRoom, triage, type PoolMember, type TriageDecision } from "./triage.js";
 import type { ModelChoice, Provider } from "../providers/types.js";
 import { settingsPath, updateSettings } from "../settings-file.js";
+import { Grafeno } from "@grafenodb/client";
 import { checkGrafeno } from "../startup.js";
 import { AgentSession, type SessionExtensions } from "./session.js";
 import type { Orchestrator, OrchestratorOptions } from "../orchestrator/orchestrator.js";
@@ -153,12 +154,29 @@ export async function embedderFor(
   return localEmbedder("e5-small");
 }
 
-/** Starts the included Grafeno when the settings use it; nothing otherwise. */
-export async function prepareGrafeno(config: Config, env = process.env): Promise<void> {
-  if (config.grafenoMode !== "included") return;
+/**
+ * Starts the included Grafeno when the settings use it, and returns the
+ * settings to go on with. In a project, the agent's key must reach the
+ * project's own namespace: a key made before projects had one (write on
+ * the shared namespace only) is made again, with admin on every namespace
+ * under the shared one, and saved.
+ */
+export async function prepareGrafeno(config: Config, env = process.env): Promise<Config> {
+  if (config.grafenoMode !== "included") return config;
   const owner = env.GRAFENO_OWNER_TOKEN?.trim();
   if (!owner) throw new Error("The included Grafeno has no owner token yet: /palace sets it up.");
-  await startIncluded(owner);
+  const url = await startIncluded(owner);
+  const shared = config.sharedNamespace ?? config.namespace;
+  if (!config.projectEntry || !config.agentKey) return config;
+  const me = await new Grafeno({ url, token: config.agentKey }).whoami().catch(() => undefined);
+  const reaches = (me?.grants ?? []).some(
+    (g) => g.namespace === `${shared}*` && g.role === "admin",
+  );
+  if (reaches) return config;
+  const agentKey = await makeAgentKey(url, owner, shared);
+  updateSettings({ GRAFENO_AGENT_KEY: agentKey });
+  env.GRAFENO_AGENT_KEY = agentKey;
+  return { ...config, agentKey };
 }
 
 /**
@@ -273,8 +291,7 @@ export function realServices(version: string): AppServices {
       return undefined;
     },
     async start(extra) {
-      const config = loadConfig();
-      await prepareGrafeno(config);
+      const config = await prepareGrafeno(loadConfig());
       const report = await checkGrafeno(config);
       embedder ??= embedderFor(config.embedder, () => undefined);
       const chosen = await embedder;

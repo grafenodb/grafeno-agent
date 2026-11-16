@@ -1,4 +1,5 @@
 import { parseLimits, type RetrievalLimits } from "./memory/budget.js";
+import { projectAt, projectsFile } from "./projects.js";
 
 /** The agent's settings, read from the environment. */
 export interface Config {
@@ -11,8 +12,16 @@ export interface Config {
   readonly grafenoUrl: string;
   /** The agent's own Grafeno key. A secret: never log or store it. */
   readonly agentKey: string;
-  /** The namespace the agent keeps its memory in. */
+  /**
+   * The namespace the agent keeps its memory in: the project's own when the
+   * folder is in one of the person's projects, else the one sessions outside
+   * any project share (`GRAFENO_NAMESPACE`).
+   */
   readonly namespace: string;
+  /** The namespace sessions outside any project share; projects' own start with it. */
+  readonly sharedNamespace?: string;
+  /** The project (of `/projects`) the folder is in, when it is in one. */
+  readonly projectEntry?: { readonly name: string; readonly path: string };
   /** Which model the agent reasons with (an adapter name, such as `claude-code`). */
   readonly model: string;
   /** For `claude-code`: the Claude model alias (`haiku`, `sonnet`, `opus`…); unset: Claude Code's own. */
@@ -79,7 +88,10 @@ function read(env: Record<string, string | undefined>, name: string): string | u
 }
 
 /** Reads and checks the settings; throws a `ConfigError` listing every problem. */
-export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
+export function loadConfig(
+  env: Record<string, string | undefined> = process.env,
+  folder: string = process.cwd(),
+): Config {
   const problems: string[] = [];
 
   const mode = read(env, "GRAFENO_MODE") ?? "external";
@@ -104,12 +116,19 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     problems.push("GRAFENO_AGENT_KEY is not set (an administrator makes it: grafeno keys create)");
   }
 
-  const namespace = read(env, "GRAFENO_NAMESPACE") ?? DEFAULTS.namespace;
-  if (!NAMESPACE.test(namespace)) {
+  const shared = read(env, "GRAFENO_NAMESPACE") ?? DEFAULTS.namespace;
+  if (!NAMESPACE.test(shared)) {
     problems.push(
-      `GRAFENO_NAMESPACE must be letters, digits, '.', '_' or '-', starting with a letter or digit: ${namespace}`,
+      `GRAFENO_NAMESPACE must be letters, digits, '.', '_' or '-', starting with a letter or digit: ${shared}`,
     );
   }
+  // In one of the person's projects: its own namespace, shared by its sessions.
+  // (Only for the real settings, or a settings file named: a test's own environment lists none.)
+  const inProject =
+    env === process.env || env.GRAFENO_AGENT_CONFIG !== undefined
+      ? projectAt(folder, projectsFile(env), shared)
+      : undefined;
+  const namespace = inProject?.namespace ?? shared;
 
   const model = read(env, "AGENT_MODEL") ?? DEFAULTS.model;
   const claudeModel = read(env, "CLAUDE_MODEL");
@@ -117,7 +136,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (claudeEffort !== undefined && !EFFORTS.includes(claudeEffort)) {
     problems.push(`AGENT_EFFORT must be one of ${EFFORTS.join(", ")}: ${claudeEffort}`);
   }
-  const project = read(env, "AGENT_PROJECT");
+  const project = inProject?.name ?? read(env, "AGENT_PROJECT");
   const embedder = read(env, "AGENT_EMBEDDER") ?? DEFAULTS.embedder;
   if (!(EMBEDDERS as readonly string[]).includes(embedder)) {
     problems.push(`AGENT_EMBEDDER must be one of ${EMBEDDERS.join(", ")}: ${embedder}`);
@@ -138,6 +157,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     grafenoUrl,
     agentKey,
     namespace,
+    sharedNamespace: shared,
+    ...(inProject ? { projectEntry: { name: inProject.name, path: inProject.path } } : {}),
     model,
     embedder,
     palace: palace as PalaceMode,
@@ -152,7 +173,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 export function describeConfig(config: Config): string {
   return [
     `server:    ${config.grafenoUrl}${config.grafenoMode === "included" ? " (included)" : ""}`,
-    `namespace: ${config.namespace}`,
+    `namespace: ${config.namespace}${config.projectEntry ? ` (project ${config.projectEntry.name})` : config.namespace === config.sharedNamespace ? " (sessions outside a project)" : ""}`,
     `model:     ${config.model}${config.claudeModel === undefined ? "" : ` (${config.claudeModel})`}`,
     `meaning:   ${config.embedder}`,
     `palace:    ${config.palace}`,

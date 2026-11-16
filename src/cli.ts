@@ -63,7 +63,10 @@ Commands:
                  --yes). /resume in the interface does the same (d, or [delete]).
   projects [add|new|remove]
                  Your projects (a name and a folder each): /projects in the interface opens
-                 one, a session in its folder, with its own conversations, runs and memory.
+                 one, a session in its folder, with its own conversations, runs and memory
+                 (its own namespace in Grafeno, shared by its sessions). remove <name>
+                 deletes it: its namespace, conversations and runs (asked first, unless
+                 --yes); never its folder.
   plugins [enable|disable] <id>
                  Services the agent works with, as you: github, gitlab. Off until you turn
                  one on; each is checked first, with the service's own documented sign-in
@@ -199,8 +202,7 @@ async function init(argv: readonly string[]): Promise<number> {
 }
 
 async function check(): Promise<number> {
-  const config = loadConfig();
-  await prepareGrafeno(config);
+  const config = await prepareGrafeno(loadConfig());
   const file = settingsPath();
   console.log(`settings:  ${file}${existsSync(file) ? "" : " (not there: grafeno-agent init)"}`);
   console.log(describeConfig(config));
@@ -243,8 +245,7 @@ async function chat(plain: boolean): Promise<number> {
     await runTui(realServices(version()));
     return 0;
   }
-  const config = loadConfig();
-  await prepareGrafeno(config);
+  const config = await prepareGrafeno(loadConfig());
   const { identity } = await checkGrafeno(config);
   const embedder = await embedderFor(config.embedder);
   const { memory, project } = await startMemory(config, identity, embedder);
@@ -299,8 +300,7 @@ async function chat(plain: boolean): Promise<number> {
 }
 
 async function runUpkeep(apply: boolean): Promise<number> {
-  const config = loadConfig();
-  await prepareGrafeno(config);
+  const config = await prepareGrafeno(loadConfig());
   const { identity } = await checkGrafeno(config);
   const { memory, vault, project } = await startMemory(config, identity);
   const report = await upkeep({ vault, palace: memory.palace, projectId: memory.projectId, apply });
@@ -978,12 +978,12 @@ async function main(argv: readonly string[]): Promise<number> {
       return 2;
     }
     case "projects": {
-      const { addProject, loadProjects, removeProject } = await import("./projects.js");
+      const { addProject, loadProjects, projectFootprint } = await import("./projects.js");
       const sub = argv[1] ?? "list";
       if (sub === "list" || sub === "ls") {
         const projects = loadProjects();
         if (projects.length === 0) console.log("No projects yet: grafeno-agent projects add .");
-        for (const p of projects) console.log(`  ${p.name.padEnd(24)} ${p.path}`);
+        for (const p of projects) console.log(`  ${p.name.padEnd(24)} ${p.path}  (${p.namespace})`);
         return 0;
       }
       if (sub === "add" || sub === "new") {
@@ -998,17 +998,34 @@ async function main(argv: readonly string[]): Promise<number> {
         );
         return 0;
       }
-      if (sub === "remove" || sub === "rm") {
-        const removed = removeProject(argv[2] ?? "");
+      if (sub === "remove" || sub === "rm" || sub === "delete") {
+        const name = argv[2] ?? "";
+        const project = loadProjects().find((p) => p.name.toLowerCase() === name.toLowerCase());
+        if (!project) {
+          console.error(`No project is named ${name}: grafeno-agent projects lists them.`);
+          return 1;
+        }
+        const { deleteProjectEverywhere, describeDeletion } =
+          await import("./app/project-delete.js");
+        const { sessionsDir } = await import("./sessions/store.js");
+        const { dataDir } = await import("./data-dir.js");
+        const { sessions, runs } = projectFootprint(project, {
+          sessionsDir: sessionsDir(),
+          dataDir: dataDir(),
+        });
         console.log(
-          removed
-            ? `Removed ${argv[2] ?? ""} from the list (its folder is as it was).`
-            : `No project is named ${argv[2] ?? ""}.`,
+          `Deleting ${project.name} drops its namespace "${project.namespace}" in Grafeno with everything in it, ${String(sessions)} conversation(s)${runs ? " and its runs" : ""}. Its folder ${project.path} stays.`,
         );
-        return removed ? 0 : 1;
+        if (!argv.includes("--yes") && !(await confirm("Delete it for good?"))) {
+          console.log("Kept.");
+          return 0;
+        }
+        const result = await deleteProjectEverywhere(project.name);
+        console.log(describeDeletion(result));
+        return typeof result.namespace === "object" ? 1 : 0;
       }
       console.log(
-        "grafeno-agent projects                       your projects\ngrafeno-agent projects add <folder> [--name n]  a folder you have\ngrafeno-agent projects new <folder> [--name n]  a new folder, with git\ngrafeno-agent projects remove <name>",
+        "grafeno-agent projects                       your projects\ngrafeno-agent projects add <folder> [--name n]  a folder you have\ngrafeno-agent projects new <folder> [--name n]  a new folder, with git\ngrafeno-agent projects remove <name> [--yes]  delete it, its memory too",
       );
       return 2;
     }

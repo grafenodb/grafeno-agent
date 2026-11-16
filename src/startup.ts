@@ -84,7 +84,7 @@ export async function checkGrafeno(
 
   let tools: { name: string }[];
   try {
-    tools = await client.namespace(config.namespace).tools();
+    tools = await toolsOf(client, config);
   } catch (error) {
     if (error instanceof GrafenoError && error.status === 401) {
       throw new StartupError(
@@ -96,7 +96,9 @@ export async function checkGrafeno(
     if (error instanceof GrafenoError && error.status === 403) {
       throw new StartupError(
         "forbidden",
-        `The agent's key may not use namespace "${config.namespace}" (${error.code}). Grant it, or set GRAFENO_NAMESPACE.`,
+        config.projectEntry && config.sharedNamespace
+          ? `The agent's key may not make or use the project's namespace "${config.namespace}" (${error.code}). Each project has its own namespace: give the key admin on "${config.sharedNamespace}*" (grafeno keys create grafeno-agent --grant "${config.sharedNamespace}*:admin").`
+          : `The agent's key may not use namespace "${config.namespace}" (${error.code}). Grant it, or set GRAFENO_NAMESPACE.`,
         { cause: error },
       );
     }
@@ -114,6 +116,25 @@ export async function checkGrafeno(
     tools: tools.map((tool) => tool.name),
     ...(identity === undefined ? {} : { identity }),
   };
+}
+
+/**
+ * The memory tools of the agent's namespace; a project's namespace that does
+ * not exist yet is made first, the first time one of its sessions starts.
+ */
+async function toolsOf(client: Grafeno, config: Config): Promise<{ name: string }[]> {
+  try {
+    return await client.namespace(config.namespace).tools();
+  } catch (error) {
+    if (!(error instanceof GrafenoError && error.status === 404) || !config.projectEntry) {
+      throw error;
+    }
+    await client.createNamespace(
+      config.namespace,
+      `Grafeno Agent's memory of the project ${config.projectEntry.name} (${config.projectEntry.path})`,
+    );
+    return client.namespace(config.namespace).tools();
+  }
 }
 
 /**
