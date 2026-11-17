@@ -2,13 +2,14 @@ import { Box, measureElement, Text, useApp, useInput, useWindowSize, type DOMEle
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { readEnvironment, type Environment } from "../app/environment.js";
 import type { AppServices } from "../app/services.js";
+import { chatProvider } from "../providers/chat.js";
 import { describeCall, type AgentSession } from "../app/session.js";
 import { describeError } from "../chat.js";
 import type { ToolCall } from "../model/index.js";
 import {
   API_KEY_PROVIDERS,
   autoMembers,
-  isAuto,
+  autoMode,
   isLocalProvider,
   providerIds,
   autoModels,
@@ -157,6 +158,7 @@ type Mode =
   | "models"
   | "leader"
   | "effort"
+  | "mode"
   | "resume"
   | "connect"
   | "palace"
@@ -209,7 +211,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   // The provider the chat reasons with: the session's, which /connect may change.
   const provider = session?.provider ?? services.providers[0];
   // General Auto (B7c): each message is triaged, and may be orchestrated across providers.
-  const [auto, setAuto] = useState(() => isAuto(process.env.AGENT_PROVIDERS));
+  const [auto, setAuto] = useState(() => autoMode(process.env));
   // The providers Auto includes (AGENT_AUTO_PROVIDERS): by default, the official CLIs only.
   // In Auto, the usage of each provider it includes, for the side panel.
   const [autoUsage, setAutoUsage] = useState<readonly AutoUsage[]>([]);
@@ -1102,6 +1104,14 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
         case "effort":
           setMode("effort");
           break;
+        case "mode": {
+          const word = command.args.trim().toLowerCase();
+          if (word === "auto") enableAuto();
+          else if (word === "specific" || word === "manual") enableSpecific();
+          else if (word !== "") notice("/mode takes: auto, specific.", "warning");
+          else setMode("mode");
+          break;
+        }
         case "connect": {
           const section = sectionOf(command.args);
           if (section === undefined) {
@@ -1498,6 +1508,53 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     );
   }
 
+  /** /mode → Auto: each message triaged, answered directly or planned across Auto's providers. */
+  const enableAuto = () => {
+    setMode("chat");
+    if (!session) return;
+    if (autoIds.length === 0) {
+      notice(
+        "Auto includes no provider yet: in /connect, mark the ones it may use with space, then choose Auto in /mode.",
+        "warning",
+      );
+      return;
+    }
+    setAuto(true);
+    services.saveChoice({ mode: "auto" });
+    void services.pool().then(async (members) => {
+      const best = mostRoom(members);
+      if (best && best.provider.id !== session.provider.id) {
+        await session.setProvider(best.provider);
+        setModels([]);
+        setUsage(undefined);
+      }
+      notice(
+        `General Auto: each message is triaged by a light model, answered directly or planned across ${String(members.length)} ready provider${members.length === 1 ? "" : "s"}.`,
+        "success",
+      );
+      setTick((t) => t + 1);
+    });
+  };
+
+  /** /mode → specific: the provider chosen in /connect again (or no model, said as such). */
+  const enableSpecific = () => {
+    setMode("chat");
+    setAuto(false);
+    services.saveChoice({ mode: "specific" });
+    if (!session) return;
+    const next = chatProvider(services.providers, { ...process.env, AGENT_MODE: "specific" });
+    void (async () => {
+      if (next.id !== session.provider.id) {
+        await session.setProvider(next);
+        setModels([]);
+        setUsage(undefined);
+      }
+      if (isNoModel(next)) notice((await next.status()).detail, "warning");
+      else notice(`Specific: the chat uses ${next.name}. General Auto is off.`, "success");
+      setTick((t) => t + 1);
+    })();
+  };
+
   /** Makes a provider the chat's (from /connect): said when it cannot be, and why. */
   const chooseProvider = (found: ProviderStatus, chosen: Provider) => {
     const ready = found.installed && found.signedIn;
@@ -1812,6 +1869,42 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                     `Permissions: ${PERMISSION_LABELS[chosen]}, ${SCOPE_LABELS[scope].toLowerCase()}.${chosen === "skip" ? " Everything runs without asking, except what is never allowed." : ""}`,
                     chosen === "skip" ? "warning" : "success",
                   );
+                }}
+              />
+            )}
+            {mode === "mode" && (
+              <Picker
+                title="Mode"
+                items={[
+                  {
+                    id: "auto",
+                    label: "Auto",
+                    hint:
+                      autoIds.length === 0
+                        ? "includes no provider yet: mark them in /connect with space"
+                        : `each message triaged, answered directly or planned across ${autoIds.join(", ")}`,
+                    current: auto,
+                  },
+                  {
+                    id: "specific",
+                    label: `Specific · ${
+                      session && !auto
+                        ? session.provider.name
+                        : chatProvider(services.providers, {
+                            ...process.env,
+                            AGENT_MODE: "specific",
+                          }).name
+                    }`,
+                    hint: "the provider chosen in /connect (choosing one there switches to it)",
+                    current: !auto,
+                  },
+                ]}
+                onCancel={() => {
+                  setMode("chat");
+                }}
+                onSelect={(item) => {
+                  if (item.id === "auto") enableAuto();
+                  else enableSpecific();
                 }}
               />
             )}
@@ -2271,32 +2364,6 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                     }`,
                     next.includes(id) && API_KEY_PROVIDERS.includes(id) ? "warning" : "success",
                   );
-                }}
-                onAuto={() => {
-                  setMode("chat");
-                  if (!session) return;
-                  if (autoIds.length === 0) {
-                    notice(
-                      "Auto includes no provider yet: in /connect, mark the ones it may use with space, then choose Auto.",
-                      "warning",
-                    );
-                    return;
-                  }
-                  setAuto(true);
-                  services.saveChoice({ provider: "auto" });
-                  void services.pool().then(async (members) => {
-                    const best = mostRoom(members);
-                    if (best && best.provider.id !== session.provider.id) {
-                      await session.setProvider(best.provider);
-                      setModels([]);
-                      setUsage(undefined);
-                    }
-                    notice(
-                      `General Auto: each message is triaged by a light model, answered directly or planned across ${String(members.length)} ready provider${members.length === 1 ? "" : "s"}.`,
-                      "success",
-                    );
-                    setTick((t) => t + 1);
-                  });
                 }}
                 onDone={(found, chosen) => {
                   if (
@@ -2892,6 +2959,7 @@ const MENU: readonly (readonly [label: string, command: string])[] = [
   ["Model", "models"],
   ["Effort", "effort"],
   ["Provider", "connect"],
+  ["Mode", "mode"],
   ["Permissions", "permissions"],
   ["Memory", "palace"],
   ["Runs", "runs"],
@@ -2907,6 +2975,7 @@ const MENU_MODE: Readonly<Record<string, Mode>> = {
   models: "models",
   effort: "effort",
   connect: "connect",
+  mode: "mode",
   permissions: "permissions",
   palace: "palace",
   runs: "runs",

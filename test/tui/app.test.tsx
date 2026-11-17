@@ -139,7 +139,6 @@ function render(tree: Parameters<typeof renderInk>[0]): ReturnType<typeof render
 
 const ENTER = "\r";
 const DOWN = "\u001B[B";
-const UP = "\u001B[A";
 
 async function until(
   check: () => boolean,
@@ -279,7 +278,7 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.unmount();
   });
 
-  it("turns General Auto on with /connect: a light model triages each message, answered directly or planned across providers", async () => {
+  it("turns General Auto on with /mode, by hand: a light model triages each message, answered directly or planned across providers", async () => {
     const asked: string[] = [];
     const pooled: (boolean | undefined)[] = [];
     const saves: Record<string, unknown>[] = [];
@@ -346,17 +345,25 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
       () => `the API Key section; screen: ${now(app)}`,
     );
     await until(
-      () => now(app).includes("Auto") && !now(app).includes("checking"),
+      () => now(app).includes("No model") && !now(app).includes("checking"),
       () => `the panel; screen: ${now(app)}`,
     );
-    // Auto is the first row, above the providers.
-    app.stdin.write(UP);
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    app.stdin.write(UP);
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    // Auto is not switched on here any more: /mode does it, by hand.
+    expect(now(app)).not.toMatch(/▸ Auto|Auto · in use/);
+    await press(app, "\u001B", () => now(app).includes("Connect · choose how"), "the menu");
+    await press(app, "\u001B", () => now(app).includes("Ask anything"), "the chat");
+    await type(app, "/mode");
     app.stdin.write(ENTER);
-    await until(() => seen(app).includes("General Auto: each message is triaged"), "Auto on");
-    expect(saves).toEqual([{ provider: "auto" }]);
+    await until(() => now(app).includes("Specific ·"), "the modes");
+    expect(now(app)).toContain("the provider chosen in /connect");
+    // 1 Auto, 2 Specific: chosen by its number.
+    await press(
+      app,
+      "1",
+      () => seen(app).includes("General Auto: each message is triaged"),
+      "Auto on",
+    );
+    expect(saves).toEqual([{ mode: "auto" }]);
 
     await ready(app);
     await type(app, "what does this repo do?");
@@ -411,10 +418,7 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     // Straight to a section: /connect api.
     await type(app, "/connect api");
     app.stdin.write(ENTER);
-    await until(
-      () => now(app).includes("Other Provider") && now(app).includes("in use"),
-      "the providers",
-    );
+    await until(() => now(app).includes("Other Provider"), "the providers");
     await until(() => !now(app).includes("checking"), "their status");
     // Down to the last row: Auto, then the first provider, then the other one.
     for (let i = 0; i < 3; i++) {
@@ -444,6 +448,32 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     await press(app, "\u001B", () => now(app).includes("Connect · choose how"), "the menu again");
     expect(now(app)).not.toContain("Ask anything");
     await press(app, "\u001B", () => now(app).includes("Ask anything"), "the chat");
+    app.unmount();
+  });
+
+  it("/mode specific with no provider chosen yet: no model, said, and messages are refused", async () => {
+    const saves: Record<string, unknown>[] = [];
+    const base = services({ turns: [[{ say: "Should-Not-Answer" }]] });
+    const app = render(
+      <App
+        services={{
+          ...base,
+          saveChoice: (choice) => {
+            saves.push(choice);
+          },
+        }}
+      />,
+    );
+    await ready(app);
+    await type(app, "/mode specific");
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("No provider is chosen for the chat yet"), "the warning");
+    expect(saves).toEqual([{ mode: "specific" }]);
+    await ready(app);
+    await type(app, "hello");
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("No model is selected"), "the refusal");
+    expect(seen(app)).not.toContain("Should-Not-Answer");
     app.unmount();
   });
 

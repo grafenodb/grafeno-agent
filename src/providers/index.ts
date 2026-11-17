@@ -219,6 +219,23 @@ export function isAuto(setting: string | undefined): boolean {
   return value === AUTO || value === "";
 }
 
+/** The setting that says whether the chat is in Auto or on the provider chosen (/mode). */
+export const MODE_SETTING = "AGENT_MODE";
+
+/**
+ * Whether the chat is in General Auto: as `AGENT_MODE` says (`auto` or
+ * `specific`, set by /mode, and by /connect when a provider is chosen),
+ * else as `AGENT_PROVIDERS` said before the mode had its own setting.
+ * The mode never changes which providers are chosen: switching back to
+ * specific finds the one chosen in /connect again.
+ */
+export function autoMode(env: Record<string, string | undefined> = process.env): boolean {
+  const mode = (env[MODE_SETTING] ?? "").trim().toLowerCase();
+  if (mode === "auto") return true;
+  if (mode === "specific") return false;
+  return isAuto(env.AGENT_PROVIDERS);
+}
+
 /**
  * The ids in a setting such as "claude-code,codex"; throws on one it does
  * not know. "auto", or nothing (the default), is General Auto: the
@@ -230,12 +247,11 @@ export function providerIds(
   env: Record<string, string | undefined> = process.env,
 ): string[] {
   if (isAuto(setting)) return autoMembers(env);
-  // No model at all, as the user chose: no provider is chosen.
-  if ((setting ?? "").trim().toLowerCase() === NO_MODEL) return [];
+  // "none" chooses no model for the chat only: the providers after it stay chosen for runs.
   const ids = (setting ?? "")
     .split(",")
     .map((id) => canonicalProvider(id))
-    .filter(Boolean);
+    .filter((id) => id !== "" && id !== NO_MODEL);
   const chosen = [...new Set(ids)];
   const unknown = chosen.filter((id) => !(id in KNOWN_PROVIDERS));
   if (unknown.length > 0) {

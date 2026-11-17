@@ -63,6 +63,14 @@ describe("the commands", () => {
     expect(suggest("/").length).toBeGreaterThan(8);
     expect(suggest("/models now")).toEqual([]);
   });
+
+  it("a command typed whole comes first, before longer ones that start the same", () => {
+    // Enter takes the first suggestion: "/mode" must be /mode, not /models (alias "model").
+    expect(suggest("/mode")[0]?.name).toBe("mode");
+    expect(suggest("/mode").map((c) => c.name)).toContain("models");
+    expect(suggest("/model")[0]?.name).toBe("models");
+    expect(parseCommand("/mode auto")).toEqual({ name: "mode", known: true, args: "auto" });
+  });
 });
 
 describe("markdown", () => {

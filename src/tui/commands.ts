@@ -28,6 +28,7 @@ export const COMMANDS: readonly Command[] = [
   },
   { name: "effort", description: "Choose how hard the model thinks" },
   { name: "connect", description: "Choose the provider the chat uses (Claude, Codex…)" },
+  { name: "mode", description: "Auto, or the provider chosen in /connect (auto, specific)" },
   { name: "palace", description: "Grafeno: included, or a server you already have" },
   {
     name: "permissions",
@@ -90,7 +91,10 @@ export function suggest(line: string): Command[] {
   const match = /^\/(\S*)$/.exec(line);
   if (!match) return [];
   const prefix = (match[1] ?? "").toLowerCase();
-  return COMMANDS.filter(
+  const found = COMMANDS.filter(
     (c) => c.name.startsWith(prefix) || c.aliases?.some((a) => a.startsWith(prefix)),
   );
+  // A command typed whole comes first: "/mode" is /mode, not /models (whose alias starts so).
+  const exact = (c: Command) => c.name === prefix || c.aliases?.includes(prefix) === true;
+  return [...found.filter(exact), ...found.filter((c) => !exact(c))];
 }

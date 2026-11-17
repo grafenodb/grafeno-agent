@@ -222,8 +222,8 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
           </Text>
           <Box paddingLeft={4}>
             <Text dimColor>
-              Nothing connected is used, whatever is signed in: each message is refused until you
-              choose a model.
+              The chat uses none: each message is refused until you choose one. The other
+              connections stay on (switch one off in Manage connections).
             </Text>
           </Box>
         </Clickable>

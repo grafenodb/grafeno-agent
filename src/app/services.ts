@@ -1,7 +1,8 @@
-import { isNoModel, NO_MODEL, NoModelProvider } from "../providers/none.js";
+import { chatProvider } from "../providers/chat.js";
+import { isNoModel } from "../providers/none.js";
 import { existsSync } from "node:fs";
 import { connectionActions, type ConnectionActionsApi } from "./connections.js";
-import { canonicalProvider, providerEnabled } from "../providers/profiles.js";
+import { providerEnabled } from "../providers/profiles.js";
 import { connectAll } from "../mcp/client.js";
 import { loadMcpConfig, mcpConfigPath } from "../mcp/config.js";
 import { connectPlugins } from "../plugins/index.js";
@@ -31,7 +32,7 @@ import {
   autoMembers,
   autoModels,
   autoModelsSetting,
-  isAuto,
+  MODE_SETTING,
 } from "../providers/index.js";
 import { lightModel, mostRoom, triage, type PoolMember, type TriageDecision } from "./triage.js";
 import type { ModelChoice, Provider } from "../providers/types.js";
@@ -127,6 +128,8 @@ export interface AppServices {
     autoModels?: Readonly<Record<string, readonly string[]>>;
     /** The leader of orchestrated runs, `provider/model`; "" for none (AGENT_LEADER). */
     leader?: string;
+    /** /mode: General Auto, or the provider chosen in /connect (AGENT_MODE). */
+    mode?: "auto" | "specific";
   }): void;
   /** The memory upkeep report for the session's project. */
   upkeep(session: AgentSession): Promise<string>;
@@ -379,6 +382,7 @@ export function realServices(version: string): AppServices {
         permissions?: PermissionMode;
         autoModels?: Readonly<Record<string, readonly string[]>>;
         leader?: string;
+        mode?: "auto" | "specific";
       },
     ) {
       if (choice.leader !== undefined) {
@@ -398,24 +402,29 @@ export function realServices(version: string): AppServices {
         pooled = undefined;
         return;
       }
+      if (choice.mode !== undefined) {
+        // /mode: Auto, or back to the provider chosen in /connect (kept meanwhile).
+        save({ [MODE_SETTING]: choice.mode });
+        return;
+      }
       if (choice.provider !== undefined) {
         // The chosen provider first; the model and effort are its own again.
+        // Auto is switched on by /mode alone; it keeps the provider chosen for later.
         if (choice.provider === "auto") {
-          save({ AGENT_PROVIDERS: "auto" });
+          save({ [MODE_SETTING]: "auto" });
           return;
         }
-        if (choice.provider === NO_MODEL) {
-          save({ AGENT_PROVIDERS: NO_MODEL });
-          pooled = undefined;
-          return;
-        }
-        // A run may move tasks to another provider: only to those Auto includes.
+        // A provider (or no model) chosen in /connect: the chat's, and the mode is specific.
+        // A run may move tasks to another provider: only to those Auto includes. No model is
+        // the chat's alone: the others stay chosen for runs.
         const rest = autoMembers(env).filter((id) => id !== choice.provider);
         save({
+          [MODE_SETTING]: "specific",
           AGENT_PROVIDERS: [choice.provider, ...rest].join(","),
           CLAUDE_MODEL: "",
           AGENT_EFFORT: "",
         });
+        pooled = undefined;
         return;
       }
       save({
@@ -464,32 +473,4 @@ export function realServices(version: string): AppServices {
   };
 }
 
-/**
- * The provider the chat starts with: never one switched off, and never
- * another than the one chosen in its place.
- * - none chosen (AGENT_PROVIDERS=none): no model;
- * - a provider chosen: it, if it is switched on; else no model, said as such
- *   (the next one in the list is not used behind the user's back);
- * - Auto (or nothing chosen yet): the first switched on, else no model.
- */
-export function chatProvider(
-  providers: readonly Provider[],
-  env: Record<string, string | undefined>,
-): Provider {
-  const setting = (env.AGENT_PROVIDERS ?? "").trim().toLowerCase();
-  if (setting === NO_MODEL) return new NoModelProvider();
-  if (!isAuto(setting)) {
-    const first = setting.split(",")[0]?.trim() ?? "";
-    const named = providers.find((p) => p.id === canonicalProvider(first));
-    if (named && providerEnabled(named.id, env)) return named;
-    return new NoModelProvider(
-      `${named?.name ?? first} is switched off, so no model is selected: nothing is sent to any provider. Switch it on, or choose another, in /connect.`,
-    );
-  }
-  return (
-    providers.find((p) => providerEnabled(p.id, env)) ??
-    new NoModelProvider(
-      "Every connection is switched off, so no model is selected. Switch one on in /connect.",
-    )
-  );
-}
+export { chatProvider };

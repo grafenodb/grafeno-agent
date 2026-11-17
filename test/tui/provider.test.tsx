@@ -221,7 +221,7 @@ describe("/connect: no model, and each provider's details", () => {
     const screen = app.lastFrame() ?? "";
     expect(screen.indexOf("Auto · in use")).toBeLessThan(screen.indexOf("No model"));
     expect(screen.indexOf("No model")).toBeLessThan(screen.indexOf("Claude"));
-    expect(screen).toContain("Nothing connected is used");
+    expect(screen).toContain("The chat uses none");
     app.stdin.write("\u001B[B");
     await wait();
     app.stdin.write("\r");

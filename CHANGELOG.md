@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **`/mode`**: Auto, or the provider chosen in `/connect`, with its own
+  setting (`AGENT_MODE`). Auto is switched on and off there, by hand;
+  choosing a provider in `/connect` switches to specific at once, and
+  switching Auto off finds that provider again (Auto no longer replaced
+  the choice). `/connect` no longer offers Auto as a row; it still marks
+  which providers Auto includes.
+- **No model is the chat's alone**: it no longer leaves runs with no
+  provider (`AGENT_PROVIDERS=none,…` keeps the others chosen). A
+  connection is kept from being used by switching it off in Manage
+  connections.
+- A command typed whole is the one Enter runs: `/mode` was taken for
+  `/models`, whose alias starts the same.
+
 ## 0.2.2 (2026-11-17)
 
 - **No model at all**: `/connect` offers **No model** under Auto

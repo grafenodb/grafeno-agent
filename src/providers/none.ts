@@ -2,7 +2,7 @@ import { ModelError } from "../model/errors.js";
 import type { Model } from "../model/types.js";
 import type { ModelOption, Provider, ProviderStatus } from "./types.js";
 
-/** The setting (AGENT_PROVIDERS=none) and id of choosing no model at all. */
+/** The id of choosing no model for the chat (first in AGENT_PROVIDERS: "none,…"). */
 export const NO_MODEL = "none";
 
 /** What is said when no model is selected, and how to choose one. */
@@ -10,8 +10,8 @@ export const NO_MODEL_TEXT =
   "No model is selected: nothing is sent to any provider. Choose one in /connect (or /model).";
 
 /**
- * No model at all: chosen by the user (so that nothing connected is used,
- * whatever is signed in), or what the chat falls back to when the model it
+ * No model for the chat: chosen by the user (the chat sends nothing to any
+ * provider; the other connections stay on, for runs), or what it falls back to when the model it
  * was told to use is switched off or none is ready. It never reasons: each
  * message is refused with a sentence saying how to choose one.
  */

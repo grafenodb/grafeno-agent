@@ -122,43 +122,44 @@ agent asks again when it starts.
 
 ### Settings
 
-| Variable                    | Default                 | What                                                                              |
-| --------------------------- | ----------------------- | --------------------------------------------------------------------------------- |
-| `GRAFENO_MODE`              | (asked)                 | `included` (the agent's own Grafeno) or `external`; empty: asked at start         |
-| `GRAFENO_URL`               | `http://127.0.0.1:7810` | The Grafeno server, when external                                                 |
-| `GRAFENO_AGENT_KEY`         | (required)              | The agent's key                                                                   |
-| `GRAFENO_NAMESPACE`         | `grafeno-agent`         | Where the agent keeps its memory                                                  |
-| `AGENT_MODEL`               | `claude-code`           | The model (`claude-code`: your Claude subscription)                               |
-| `CLAUDE_MODEL`              | Claude Code's own       | `haiku`, `sonnet`, `opus`, `fable` (set by `/models`)                             |
-| `AGENT_EFFORT`              | the model's own         | `low` … `max` (set by `/effort`)                                                  |
-| `AGENT_PROJECT`             | the git repository      | The project whose memory the agent uses                                           |
-| `AGENT_EMBEDDER`            | `e5-small`              | Meaning for memory (a local model), or `none`                                     |
-| `AGENT_PALACE`              | `shared`                | `shared` with other agents, or `own` (see below)                                  |
-| `AGENT_SHELL`               | system shell            | The shell for commands, with its arguments; sandboxed Windows uses `cmd.exe`      |
-| `AGENT_PROVIDERS`           | `auto`                  | `claude-code`, `codex`, `gemini`, in order, `auto`, or `none` (set by `/connect`) |
-| `AGENT_PERMISSIONS`         | `ask`                   | `ask`, `auto` or `skip`, for the whole agent (set by `/permissions`)              |
-| `AGENT_AUTO_PROVIDERS`      | none (you choose)       | The providers Auto includes (set in `/connect` with space)                        |
-| `GEMINI_TIER`               | none                    | `free` or `paid`: your Gemini key's tier (set by `login gemini`)                  |
-| `OPENROUTER_MODELS`         | `free`                  | `free` (never billed) or `all` (set by `login openrouter`)                        |
-| `AGENT_ALLOW_BILLING`       | none                    | Providers allowed to bill by consumption, such as `claude-api`                    |
-| `PROVIDER_<NAME>_ENABLED`   | on                      | `false` switches a provider off at once (`grafeno-agent providers disable`)       |
-| `CLAUDE_API_MAX_BUDGET_USD` | none                    | The most one claude-api turn may cost                                             |
-| `AGENT_AFFINITY`            | the defaults below      | Where each task kind goes first in `auto`                                         |
-| `AGENT_ROUTING`             | `balanced`              | `economy`, `balanced` or `quality`: how eagerly runs spend the plans              |
-| `AGENT_LOCAL_ROUTING`       | `light`                 | `light`, `first` or `last`: what goes to your local models (see below)            |
-| `AGENT_LEADER`              | none                    | `provider/model` that leads orchestrated runs (set by `/leader`)                  |
-| `AGENT_LEADER_AUDIT`        | `risk`                  | `risk` (low-risk tasks are decided by their checks) or `all`                      |
-| `AGENT_CHECK_REPAIR`        | on                      | `false`: a wrong check is never judged or corrected by the plan's author          |
-| `AGENT_SANDBOX`             | `auto`                  | `auto`, `required` or `off`: Grafeno Sandbox for the agent's commands             |
-| `AGENT_SANDBOX_NETWORK`     | `auto`                  | `auto` (only to install or fetch), `always` or `never`                            |
-| `AGENT_SANDBOX_KEEP`        | `never`                 | `never`, `failed` or `always`: whether a sandbox is kept when its work ends       |
-| `AGENT_AUTO_MODELS`         | (all)                   | Each Auto provider's models: `codex:gpt-6-astra,gpt-6.1-sol` (`m` in `/connect`)  |
-| `AGENT_DELIVERY`            | `live`                  | `live` (task by task), `end` or `manual`: how runs' work reaches your folder      |
-| `AGENT_MEMORY_BUDGET`       | see [Memory](#memory)   | How much memory may reach the model                                               |
-| `WEB_SEARCH`                | the first one set up    | `brave`, `tavily` or `searxng`: the service of `web_search`                       |
-| `BRAVE_SEARCH_API_KEY`      | none                    | A Brave Search API key, for `web_search`                                          |
-| `TAVILY_API_KEY`            | none                    | A Tavily API key, for `web_search`                                                |
-| `SEARXNG_URL`               | none                    | Your SearXNG's address, for `web_search`                                          |
+| Variable                    | Default                 | What                                                                                                |
+| --------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------- |
+| `GRAFENO_MODE`              | (asked)                 | `included` (the agent's own Grafeno) or `external`; empty: asked at start                           |
+| `GRAFENO_URL`               | `http://127.0.0.1:7810` | The Grafeno server, when external                                                                   |
+| `GRAFENO_AGENT_KEY`         | (required)              | The agent's key                                                                                     |
+| `GRAFENO_NAMESPACE`         | `grafeno-agent`         | Where the agent keeps its memory                                                                    |
+| `AGENT_MODEL`               | `claude-code`           | The model (`claude-code`: your Claude subscription)                                                 |
+| `CLAUDE_MODEL`              | Claude Code's own       | `haiku`, `sonnet`, `opus`, `fable` (set by `/models`)                                               |
+| `AGENT_EFFORT`              | the model's own         | `low` … `max` (set by `/effort`)                                                                    |
+| `AGENT_PROJECT`             | the git repository      | The project whose memory the agent uses                                                             |
+| `AGENT_EMBEDDER`            | `e5-small`              | Meaning for memory (a local model), or `none`                                                       |
+| `AGENT_PALACE`              | `shared`                | `shared` with other agents, or `own` (see below)                                                    |
+| `AGENT_SHELL`               | system shell            | The shell for commands, with its arguments; sandboxed Windows uses `cmd.exe`                        |
+| `AGENT_PROVIDERS`           | `auto`                  | `claude-code`, `codex`, `gemini`, in order; `none` first: no model for the chat (set by `/connect`) |
+| `AGENT_MODE`                | `auto`                  | `auto` or `specific` (set by `/mode`; choosing a provider in `/connect` sets `specific`)            |
+| `AGENT_PERMISSIONS`         | `ask`                   | `ask`, `auto` or `skip`, for the whole agent (set by `/permissions`)                                |
+| `AGENT_AUTO_PROVIDERS`      | none (you choose)       | The providers Auto includes (set in `/connect` with space)                                          |
+| `GEMINI_TIER`               | none                    | `free` or `paid`: your Gemini key's tier (set by `login gemini`)                                    |
+| `OPENROUTER_MODELS`         | `free`                  | `free` (never billed) or `all` (set by `login openrouter`)                                          |
+| `AGENT_ALLOW_BILLING`       | none                    | Providers allowed to bill by consumption, such as `claude-api`                                      |
+| `PROVIDER_<NAME>_ENABLED`   | on                      | `false` switches a provider off at once (`grafeno-agent providers disable`)                         |
+| `CLAUDE_API_MAX_BUDGET_USD` | none                    | The most one claude-api turn may cost                                                               |
+| `AGENT_AFFINITY`            | the defaults below      | Where each task kind goes first in `auto`                                                           |
+| `AGENT_ROUTING`             | `balanced`              | `economy`, `balanced` or `quality`: how eagerly runs spend the plans                                |
+| `AGENT_LOCAL_ROUTING`       | `light`                 | `light`, `first` or `last`: what goes to your local models (see below)                              |
+| `AGENT_LEADER`              | none                    | `provider/model` that leads orchestrated runs (set by `/leader`)                                    |
+| `AGENT_LEADER_AUDIT`        | `risk`                  | `risk` (low-risk tasks are decided by their checks) or `all`                                        |
+| `AGENT_CHECK_REPAIR`        | on                      | `false`: a wrong check is never judged or corrected by the plan's author                            |
+| `AGENT_SANDBOX`             | `auto`                  | `auto`, `required` or `off`: Grafeno Sandbox for the agent's commands                               |
+| `AGENT_SANDBOX_NETWORK`     | `auto`                  | `auto` (only to install or fetch), `always` or `never`                                              |
+| `AGENT_SANDBOX_KEEP`        | `never`                 | `never`, `failed` or `always`: whether a sandbox is kept when its work ends                         |
+| `AGENT_AUTO_MODELS`         | (all)                   | Each Auto provider's models: `codex:gpt-6-astra,gpt-6.1-sol` (`m` in `/connect`)                    |
+| `AGENT_DELIVERY`            | `live`                  | `live` (task by task), `end` or `manual`: how runs' work reaches your folder                        |
+| `AGENT_MEMORY_BUDGET`       | see [Memory](#memory)   | How much memory may reach the model                                                                 |
+| `WEB_SEARCH`                | the first one set up    | `brave`, `tavily` or `searxng`: the service of `web_search`                                         |
+| `BRAVE_SEARCH_API_KEY`      | none                    | A Brave Search API key, for `web_search`                                                            |
+| `TAVILY_API_KEY`            | none                    | A Tavily API key, for `web_search`                                                                  |
+| `SEARXNG_URL`               | none                    | Your SearXNG's address, for `web_search`                                                            |
 
 Variables set in the environment win over the file. The agent never reads
 the `.env` of the folder it runs in: that belongs to your project.
@@ -190,33 +191,34 @@ for the commands), and a side panel with:
 
 The panel hides on narrow windows, or with Ctrl+B.
 
-| Command        | What it does                                                 |
-| -------------- | ------------------------------------------------------------ |
-| `/help`        | Commands and keys                                            |
-| `/new`         | A new conversation (the current one is kept)                 |
-| `/resume`      | Take up an earlier conversation of this project              |
-| `/models`      | Choose the model, by its exact name (type to search)         |
-| `/leader`      | Choose the leader of orchestrated runs (see below)           |
-| `/sandbox`     | Grafeno Sandbox: status, list, inspect, stop, destroy        |
-| `/effort`      | Choose how hard the model thinks (Low … Max)                 |
-| `/connect`     | Connections: CLI, API key, coding plan, local; manage, list  |
-| `/palace`      | Grafeno: included, or a server you already have              |
-| `/permissions` | Ask, automatic or skip permissions, and for what (see below) |
-| `/unattended`  | Work on alone until the task is done (see below)             |
-| `/usage`       | Your provider's real usage, and this session's tokens        |
-| `/status`      | Provider, Grafeno, agent, project and model                  |
-| `/memory`      | What memory brought back when the session started            |
-| `/checkpoint`  | Save where the work stands, in memory                        |
-| `/orchestrate` | Plan a request and run it with several workers (see below)   |
-| `/runs`        | Earlier runs of this project: see one, or resume it          |
-| `/agents`      | The main agent and its sub-agents: view one, read only       |
-| `/skills`      | The skills the agent can use                                 |
-| `/mcp`         | MCP servers: Grafeno's own (always on) and yours             |
-| `/plugins`     | Services the agent works with: GitHub, GitLab                |
-| `/upkeep`      | Report on the memory: duplicates, contradictions             |
-| `/sidebar`     | Show or hide the side panel                                  |
-| `/clear`       | Clear the conversation from the screen                       |
-| `/exit`        | Leave, saving where the session stands                       |
+| Command        | What it does                                                    |
+| -------------- | --------------------------------------------------------------- |
+| `/help`        | Commands and keys                                               |
+| `/new`         | A new conversation (the current one is kept)                    |
+| `/resume`      | Take up an earlier conversation of this project                 |
+| `/models`      | Choose the model, by its exact name (type to search)            |
+| `/leader`      | Choose the leader of orchestrated runs (see below)              |
+| `/sandbox`     | Grafeno Sandbox: status, list, inspect, stop, destroy           |
+| `/effort`      | Choose how hard the model thinks (Low … Max)                    |
+| `/connect`     | Connections: CLI, API key, coding plan, local; manage, list     |
+| `/mode`        | Auto, or the provider chosen in `/connect` (`auto`, `specific`) |
+| `/palace`      | Grafeno: included, or a server you already have                 |
+| `/permissions` | Ask, automatic or skip permissions, and for what (see below)    |
+| `/unattended`  | Work on alone until the task is done (see below)                |
+| `/usage`       | Your provider's real usage, and this session's tokens           |
+| `/status`      | Provider, Grafeno, agent, project and model                     |
+| `/memory`      | What memory brought back when the session started               |
+| `/checkpoint`  | Save where the work stands, in memory                           |
+| `/orchestrate` | Plan a request and run it with several workers (see below)      |
+| `/runs`        | Earlier runs of this project: see one, or resume it             |
+| `/agents`      | The main agent and its sub-agents: view one, read only          |
+| `/skills`      | The skills the agent can use                                    |
+| `/mcp`         | MCP servers: Grafeno's own (always on) and yours                |
+| `/plugins`     | Services the agent works with: GitHub, GitLab                   |
+| `/upkeep`      | Report on the memory: duplicates, contradictions                |
+| `/sidebar`     | Show or hide the side panel                                     |
+| `/clear`       | Clear the conversation from the screen                          |
+| `/exit`        | Leave, saving where the session stands                          |
 
 Keys: Enter sends; `\` then Enter (or Shift+Enter) starts a new line; ↑ ↓
 go through earlier messages; Tab completes a command; PgUp/PgDn scroll the
@@ -770,12 +772,21 @@ status says (installed, signed in, plan, how to sign in) is folded:
 **→** opens the selected one's, **←** folds it, **Tab** opens or folds them
 all. The first run shows them all.
 
-**No model at all.** Under Auto, **No model** leaves the chat with none,
-whatever is signed in (`AGENT_PROVIDERS=none`): nothing is sent to any
-provider, and each message is refused with a line saying how to choose
-one. The chat also starts with no model, said as such, when the one you
-chose is switched off or every connection is: it never moves to the next
-one in the list behind your back.
+**Mode: Auto or specific.** `/mode` switches **Auto** on or off, by hand
+(`AGENT_MODE=auto` or `specific`): Auto triages each message across the
+providers it includes (marked in `/connect` with space); **specific** uses
+the provider chosen in `/connect`. Choosing a provider in `/connect`
+switches to specific at once; it never switches Auto on. Switching Auto
+off finds the provider chosen before again.
+
+**No model.** In a section, **No model** chooses none for the chat:
+nothing is sent to any provider from it, and each message is refused with
+a line saying how to choose one. It is the chat's choice alone: the other
+connections stay on, for runs and for when you choose one again. To keep a
+connection from being used at all, switch it off in **Manage
+connections**. The chat also starts with no model, said as such, when the
+one you chose is switched off: it never moves to the next one in the list
+behind your back.
 
 **Off means off.** A connection switched off (in **Manage connections**,
 or `grafeno-agent providers disable`) is never used: not by the chat,
@@ -1010,7 +1021,7 @@ Ollama, `keepAlive`; `timeoutMs` is the longest one request may take
   chooses the one the chat uses; the conversation goes on with it.
   `/models` lists that provider's models, starting with **Auto** (its own
   choice). `/usage` shows each one's plan.
-- **Auto**, the default (`AGENT_PROVIDERS=auto`, or nothing set; `/connect` too), uses every ready
+- **Auto**, the default (`AGENT_MODE=auto`, or nothing set; switched on and off in `/mode`), uses every ready
   provider. Before each message a light model decides whether to answer
   directly or to plan the request across providers. A question never
   starts several workers.

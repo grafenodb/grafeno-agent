@@ -12,7 +12,7 @@ import { TASK_KINDS, type TaskKind } from "../orchestrator/plan.js";
 import type { Planned } from "../orchestrator/planner.js";
 import type { Autonomy } from "../orchestrator/policy.js";
 import type { Route } from "../orchestrator/router.js";
-import { affinityFor, autoModels, chosenProviders, isAuto } from "../providers/index.js";
+import { affinityFor, autoMode, autoModels, chosenProviders } from "../providers/index.js";
 import type { Provider } from "../providers/types.js";
 import { checkGrafeno } from "../startup.js";
 import { embedderFor, prepareGrafeno } from "./services.js";
@@ -71,7 +71,7 @@ export async function createOrchestrator(
     ...(exploreOn(process.env.AGENT_ROUTER_EXPLORE)
       ? { explore: { share: exploreShare(process.env.AGENT_ROUTER_EXPLORE) } }
       : { explore: false }),
-    ...((settings.auto ?? isAuto(process.env.AGENT_PROVIDERS))
+    ...((settings.auto ?? autoMode(process.env))
       ? { auto: true, affinity: affinityFor(process.env.AGENT_AFFINITY, TASK_KINDS) }
       : {}),
     project,
@@ -114,7 +114,7 @@ function providerOptions(settings: OrchestrateSettings): {
   const first = providers[0];
   if (!first) {
     throw new Error(
-      isAuto(process.env.AGENT_PROVIDERS)
+      autoMode(process.env)
         ? "Auto includes no provider yet: choose them in /connect (space marks one), or set AGENT_AUTO_PROVIDERS."
         : "No provider is chosen: set AGENT_PROVIDERS",
     );

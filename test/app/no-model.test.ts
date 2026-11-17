@@ -6,7 +6,7 @@ import { chatProvider } from "../../src/app/services.js";
 import { AgentSession } from "../../src/app/session.js";
 import type { Config } from "../../src/config.js";
 import { FakeModel, ModelError } from "../../src/model/index.js";
-import { providerIds } from "../../src/providers/index.js";
+import { autoMode, providerIds } from "../../src/providers/index.js";
 import { isNoModel, NO_MODEL, NoModelProvider } from "../../src/providers/none.js";
 import type { Provider } from "../../src/providers/types.js";
 import { SessionStore } from "../../src/sessions/store.js";
@@ -69,6 +69,30 @@ describe("which model the chat starts with", () => {
     });
     expect(isNoModel(none)).toBe(true);
     expect((await none.status()).detail).toContain("Every connection is switched off");
+  });
+
+  it("no model is the chat's alone: the providers after it stay chosen for runs", () => {
+    const env = { AGENT_MODE: "specific", AGENT_PROVIDERS: "none,codex,claude-code" };
+    expect(isNoModel(chatProvider(providers, env))).toBe(true);
+    expect(providerIds(env.AGENT_PROVIDERS, env)).toEqual(["codex", "claude-code"]);
+  });
+
+  it("the mode has its own setting: Auto keeps the provider chosen for when it is off", async () => {
+    const chosen = { AGENT_PROVIDERS: "codex,claude-code" };
+    // Before the mode had its setting, AGENT_PROVIDERS said it.
+    expect(autoMode(chosen)).toBe(false);
+    expect(autoMode({ AGENT_PROVIDERS: "auto" })).toBe(true);
+    expect(autoMode({})).toBe(true);
+    // /mode → Auto: the chat is Auto's (the first switched on), codex stays chosen.
+    const inAuto = { ...chosen, AGENT_MODE: "auto" };
+    expect(autoMode(inAuto)).toBe(true);
+    expect(chatProvider(providers, inAuto).id).toBe("claude-code");
+    // /mode → specific: codex again.
+    expect(chatProvider(providers, { ...chosen, AGENT_MODE: "specific" }).id).toBe("codex");
+    // Specific with nothing chosen yet: no model, said as such.
+    const nothing = chatProvider(providers, { AGENT_MODE: "specific" });
+    expect(isNoModel(nothing)).toBe(true);
+    expect((await nothing.status()).detail).toContain("No provider is chosen for the chat yet");
   });
 
   it("no model never reasons: it says how to choose one", async () => {
