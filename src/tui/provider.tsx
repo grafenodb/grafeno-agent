@@ -22,6 +22,10 @@ export interface ProviderPanelProps {
   readonly auto?: boolean;
   /** Chosen General Auto; without it, the row is not offered (the first run). */
   readonly onAuto?: () => void;
+  /** No model is selected now (the chat uses none). */
+  readonly none?: boolean;
+  /** Chosen no model at all: offered as a row under Auto; without it, not offered. */
+  readonly onNone?: () => void;
   /** The providers General Auto includes; with `onToggleAuto`, space includes or leaves one out. */
   readonly autoMembers?: readonly string[];
   readonly onToggleAuto?: (id: string) => void;
@@ -51,10 +55,15 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
   const [query, setQuery] = useState("");
   // The row of what is in use: Auto (the first row) or the current provider.
   const [choosingModels, setChoosingModels] = useState<Provider | undefined>(undefined);
+  // What each provider's status says (installed, signed in…) is folded until asked for.
+  const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
+  // The first run shows them all: it is where the user sees what is installed and signed in.
+  const [allOpen, setAllOpen] = useState(props.firstRun === true);
   const [selected, setSelected] = useState(() => {
     if (props.auto && props.onAuto) return 0;
+    if (props.none && props.onNone) return props.onAuto ? 1 : 0;
     const index = props.providers.findIndex((p) => p.id === props.current);
-    return index < 0 ? 0 : index + (props.onAuto ? 1 : 0);
+    return index < 0 ? 0 : index + (props.onAuto ? 1 : 0) + (props.onNone ? 1 : 0);
   });
 
   const shown = useMemo(
@@ -64,14 +73,26 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
   const offerAuto =
     props.onAuto !== undefined &&
     (query.trim() === "" || "auto".includes(query.trim().toLowerCase()));
-  // Auto is always the first row; the providers follow it.
-  const first = offerAuto ? 1 : 0;
+  const offerNone =
+    props.onNone !== undefined &&
+    (query.trim() === "" ||
+      // Space is Auto's key here, so what is typed has none: "nomodel" and "none" both match.
+      ["nomodel", "none"].some((w) => w.includes(query.replace(/\s/g, "").toLowerCase())));
+  // Auto is always the first row, then no model; the providers follow them.
+  const noneRow = offerAuto ? 1 : 0;
+  const first = (offerAuto ? 1 : 0) + (offerNone ? 1 : 0);
   const rows = shown.length + first;
   const at = Math.min(selected, Math.max(0, rows - 1));
   const onAuto = offerAuto && at === 0;
+  const onNone = offerNone && at === noneRow;
+  const onSpecial = onAuto || onNone;
+  const isOpen = (id: string) => allOpen || opened.has(id);
   const autoEmpty = props.autoMembers !== undefined && props.autoMembers.length === 0;
-  // Each provider takes about five lines: as many as fit (three at least), the selected one in view.
-  const visible = Math.max(3, Math.floor(useListRows(undefined, 80, offerAuto ? 16 : 12) / 5));
+  // A folded provider takes two lines, an open one about five: as many as fit (three at least).
+  const visible = Math.max(
+    3,
+    Math.floor(useListRows(undefined, 80, offerAuto ? 18 : 14) / (allOpen ? 5 : 2)),
+  );
   const providerAt = Math.max(0, at - first);
   const start = windowStart(providerAt, visible, shown.length);
   const hiddenAbove = start;
@@ -107,6 +128,17 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
       } else props.onDone(undefined);
     } else if (key.upArrow) setSelected(Math.max(0, at - 1));
     else if (key.downArrow) setSelected(Math.min(rows - 1, at + 1));
+    else if (key.rightArrow || key.leftArrow) {
+      const chosen = shown[at - first];
+      if (chosen && !onSpecial) {
+        setOpened((was) => {
+          const next = new Set(was);
+          if (key.rightArrow) next.add(chosen.id);
+          else next.delete(chosen.id);
+          return next;
+        });
+      }
+    } else if (key.tab) setAllOpen((open) => !open);
     else if (key.pageUp) setSelected(Math.max(0, at - visible));
     else if (key.pageDown) setSelected(Math.min(rows - 1, at + visible));
     else if (key.ctrl && input === "r") {
@@ -116,15 +148,16 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
       (input === "m" || input === "M") &&
       query === "" &&
       props.onAutoModels &&
-      !onAuto &&
+      !onSpecial &&
       shown[at - first] !== undefined
     ) {
       setChoosingModels(shown[at - first]);
-    } else if (input === " " && props.onToggleAuto && !onAuto) {
+    } else if (input === " " && props.onToggleAuto && !onSpecial) {
       const chosen = shown[at - first];
       if (chosen) props.onToggleAuto(chosen.id);
     } else if (key.return) {
       if (onAuto) props.onAuto();
+      else if (onNone) props.onNone();
       else {
         const chosen = shown[at - first];
         if (chosen) props.onDone(statuses.get(chosen.id), chosen);
@@ -132,7 +165,7 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
     } else if (key.backspace || key.delete) {
       setQuery((q) => q.slice(0, -1));
       setSelected(0);
-    } else if (input && !key.ctrl && !key.meta && input !== " " && !key.tab) {
+    } else if (input && !key.ctrl && !key.meta && input !== " ") {
       setQuery((q) => q + input);
       setSelected(0);
     }
@@ -181,6 +214,20 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
           </Box>
         </Clickable>
       )}
+      {offerNone && (
+        <Clickable flexDirection="column" marginTop={1} onClick={props.onNone}>
+          <Text {...(onNone ? { color: theme.accent } : {})} bold={onNone}>
+            {onNone ? "▸ " : "  "}
+            No model{props.none ? " · in use" : ""}
+          </Text>
+          <Box paddingLeft={4}>
+            <Text dimColor>
+              Nothing connected is used, whatever is signed in: each message is refused until you
+              choose a model.
+            </Text>
+          </Box>
+        </Clickable>
+      )}
       {shown.length === 0 && (
         <Text color={theme.warning}>No provider matches “{query}”. esc clears the search.</Text>
       )}
@@ -202,6 +249,11 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
                   {provider.name}
                   {provider.id === props.current ? " · in use" : ""}
                 </Text>
+                {status === undefined ? (
+                  <Text dimColor> …</Text>
+                ) : (
+                  <Text> {<Mark ok={status.installed && status.signedIn} />}</Text>
+                )}
               </Clickable>
               {props.autoMembers ? (
                 <Clickable
@@ -241,7 +293,7 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
                 <Text dimColor>API key: may bill per token; in Auto only if you include it.</Text>
               </Box>
             )}
-            {status === undefined ? (
+            {!isOpen(provider.id) ? null : status === undefined ? (
               <Box paddingLeft={4}>
                 <Spinner />
                 <Text dimColor> checking…</Text>
@@ -279,8 +331,9 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
         type to search · enter {props.firstRun ? "continue" : "use it"}
         {props.onToggleAuto ? " · space in Auto or not" : ""}
         {props.onAutoModels ? " · m its models" : ""} · ctrl+r check again · esc{" "}
-        {props.firstRun ? "skip" : "close"}
+        {props.firstRun ? "skip" : "back"}
       </Text>
+      <Text dimColor>→ a provider's details (installed, signed in) · ← fold them · tab all</Text>
     </Box>
   );
 }

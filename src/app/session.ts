@@ -35,6 +35,7 @@ import {
   type Usage,
   type UsageWindow,
 } from "../model/index.js";
+import { providerEnabled } from "../providers/profiles.js";
 import {
   previousConversation,
   SessionStore,
@@ -348,6 +349,15 @@ export class AgentSession {
 
   /** Sends a message; what happens is kept in the conversation as it comes. */
   async send(text: string, options: SendOptions = {}): Promise<AgentTurn> {
+    // A connection switched off is never used, not even by a conversation
+    // already open with it: read at each message, so off takes effect at once.
+    if (!providerEnabled(this.provider.id)) {
+      await this.#dropAgent();
+      throw new ModelError(
+        "setup",
+        `${this.provider.name} is switched off: nothing is sent to it. Choose another model, or switch it on, in /connect.`,
+      );
+    }
     await this.#renewIfDue(options);
     const agent = this.#ensureAgent();
     this.#onMemory = options.onMemory;

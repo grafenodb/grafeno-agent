@@ -84,6 +84,7 @@ import { PalacePanel } from "./palace.js";
 import { Picker, type PickerItem } from "./picker.js";
 import { Prompt } from "./prompt.js";
 import { ProviderPanel } from "./provider.js";
+import { isNoModel, NO_MODEL, NO_MODEL_TEXT, NoModelProvider } from "../providers/none.js";
 import { ConnectMenu, KeyEntry, sectionOf } from "./connect-menu.js";
 import { LocalPanel } from "./local-connect.js";
 import {
@@ -226,7 +227,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   // Where /connect is: its menu, a section, a key being typed, or managing one connection.
   const [connectView, setConnectView] = useState<
     | { kind: "menu" }
-    | { kind: "section"; type: ConnectionType }
+    | { kind: "section"; type: ConnectionType; back?: "local" }
     | { kind: "key"; provider: Provider; back: ConnectionType }
     | { kind: "manage" }
     | { kind: "actions"; provider: Provider }
@@ -450,6 +451,14 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
         });
       setSession(fresh);
       setPhase("ready");
+      void fresh.provider.status().then((found) => {
+        if (isNoModel(fresh.provider)) notice(found.detail, "warning");
+        else if (!found.installed || !found.signedIn)
+          notice(
+            `${fresh.provider.name} is not ready, so no model is available yet: ${found.detail}`,
+            "warning",
+          );
+      });
       // External MCP servers and plugins: one not reached, or a variable not set, is said.
       for (const note of fresh.extensions?.notes ?? []) notice(note, "warning");
       void readEnvironment(fresh.workspace.root).then(setEnvironment);
@@ -932,6 +941,10 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           );
           return;
         }
+        if (!auto && isNoModel(session.provider)) {
+          notice(NO_MODEL_TEXT, "warning");
+          return;
+        }
         if (auto && autoIds.length === 0) {
           // Auto with nothing in it: said, and the chat answers with its own provider.
           notice(
@@ -1391,12 +1404,11 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       else if (input === "n" || input === "N" || key.escape) answerApproval(false);
       return;
     }
-    // Esc closes the menu that is open (each closes itself too), or goes back to
-    // the main agent from a sub-agent: it stops work only from the conversation.
-    if (key.escape && mode !== "chat" && mode !== "exiting") {
-      setMode("chat");
-      return;
-    }
+    // Esc in a menu is the menu's own: each goes back one step (a section of
+    // /connect to its menu, a step to the one before) and closes at its first.
+    // Here it goes back to the main agent from a sub-agent, or stops work,
+    // only from the conversation.
+    if (key.escape && mode !== "chat" && mode !== "exiting") return;
     if (key.escape && viewed) {
       setViewing(undefined);
       setScroll(0);
@@ -1485,6 +1497,47 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       </Box>
     );
   }
+
+  /** Makes a provider the chat's (from /connect): said when it cannot be, and why. */
+  const chooseProvider = (found: ProviderStatus, chosen: Provider) => {
+    const ready = found.installed && found.signedIn;
+    if (ready && auto) {
+      // A named provider: General Auto ends.
+      setAuto(false);
+      if (session && chosen.id === session.provider.id) {
+        services.saveChoice({ provider: chosen.id });
+        notice(`Provider: ${chosen.name}. General Auto is off.`, "success");
+        return;
+      }
+    }
+    if (!ready || !session || chosen.id === session.provider.id) {
+      if (chosen.id === provider?.id) setStatus(found);
+      notice(`${chosen.name}: ${found.detail}`, ready ? "success" : "warning");
+      return;
+    }
+    void session.setProvider(chosen).then(() => {
+      services.saveChoice({ provider: chosen.id });
+      setStatus(found);
+      setModels([]);
+      setUsage(undefined);
+      notice(`Provider: ${chosen.name}, model Auto. The conversation goes on with it.`, "success");
+      setTick((t) => t + 1);
+    });
+  };
+
+  /** No model at all (from /connect): nothing connected is used until one is chosen. */
+  const chooseNoModel = () => {
+    setMode("chat");
+    if (!session) return;
+    setAuto(false);
+    services.saveChoice({ provider: NO_MODEL });
+    void session.setProvider(new NoModelProvider()).then(() => {
+      setModels([]);
+      setUsage(undefined);
+      notice(NO_MODEL_TEXT, "warning");
+      setTick((t) => t + 1);
+    });
+  };
 
   return (
     <Box flexDirection="column" height={rows} width={columns}>
@@ -1903,7 +1956,21 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
               <LocalPanel
                 actions={services.connections}
                 onUse={() => {
-                  setConnectView({ kind: "section", type: "local" });
+                  setConnectView({ kind: "section", type: "local", back: "local" });
+                }}
+                onUseConnection={(id) => {
+                  const chosen = services.providers.find((p) => p.id === id);
+                  if (!chosen) {
+                    notice(
+                      `${id} is not registered as a provider yet: try again in a moment.`,
+                      "warning",
+                    );
+                    return;
+                  }
+                  void chosen.status().then((found) => {
+                    setMode("chat");
+                    chooseProvider(found, chosen);
+                  });
                 }}
                 onCancel={() => {
                   setConnectView({ kind: "menu" });
@@ -2098,6 +2165,24 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                     case "off":
                       if (actions)
                         notice(actions.setEnabled(target.id, item.id === "on"), "success");
+                      if (item.id === "off" && session && session.provider.id === target.id) {
+                        // Off means off, now: the chat leaves it, with no model until another is chosen.
+                        void session
+                          .setProvider(
+                            new NoModelProvider(
+                              `${target.name} is switched off, so no model is selected: nothing is sent to any provider. Choose another in /connect.`,
+                            ),
+                          )
+                          .then(() => {
+                            setModels([]);
+                            setUsage(undefined);
+                            notice(
+                              `${target.name} was the chat's model: no model is selected now. Choose another in /connect.`,
+                              "warning",
+                            );
+                            setTick((t) => t + 1);
+                          });
+                      }
                       setConnectView({ kind: "manage" });
                       break;
                     case "check":
@@ -2228,35 +2313,19 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                     });
                     return;
                   }
-                  setMode("chat");
-                  if (!found || !chosen) return;
-                  const ready = found.installed && found.signedIn;
-                  if (ready && auto) {
-                    // A named provider: General Auto ends.
-                    setAuto(false);
-                    if (session && chosen.id === session.provider.id) {
-                      services.saveChoice({ provider: chosen.id });
-                      notice(`Provider: ${chosen.name}. General Auto is off.`, "success");
-                      return;
-                    }
-                  }
-                  if (!ready || !session || chosen.id === session.provider.id) {
-                    if (chosen.id === provider?.id) setStatus(found);
-                    notice(`${chosen.name}: ${found.detail}`, ready ? "success" : "warning");
+                  if (!chosen) {
+                    // Esc: back to where the section was opened from.
+                    setConnectView(
+                      connectView.back === "local" ? { kind: "local" } : { kind: "menu" },
+                    );
                     return;
                   }
-                  void session.setProvider(chosen).then(() => {
-                    services.saveChoice({ provider: chosen.id });
-                    setStatus(found);
-                    setModels([]);
-                    setUsage(undefined);
-                    notice(
-                      `Provider: ${chosen.name}, model Auto. The conversation goes on with it.`,
-                      "success",
-                    );
-                    setTick((t) => t + 1);
-                  });
+                  setMode("chat");
+                  if (!found) return;
+                  chooseProvider(found, chosen);
                 }}
+                none={session !== undefined && isNoModel(session.provider) && !auto}
+                onNone={chooseNoModel}
               />
             )}
             {mode === "palace" && (

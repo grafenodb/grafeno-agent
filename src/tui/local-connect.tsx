@@ -22,6 +22,8 @@ export interface LocalPanelProps {
   >;
   /** Opens the local connections as providers: use one for the chat, put it in Auto, its models. */
   readonly onUse: () => void;
+  /** Makes one connection the chat's model (its default model, else the one it picks). */
+  readonly onUseConnection?: (id: string) => void;
   /** Leaves the panel, with what to say. */
   readonly onDone: (message?: string, tone?: "success" | "warning" | "error") => void;
   readonly onCancel: () => void;
@@ -273,6 +275,15 @@ export function LocalPanel(props: LocalPanelProps): ReactNode {
         <Picker
           title={`${step.connection.name} · ${step.connection.url}`}
           items={[
+            ...(props.onUseConnection
+              ? [
+                  {
+                    id: "use",
+                    label: "Use it for the chat",
+                    hint: `the main model: ${step.connection.defaultModel ?? "its default (a loaded model that takes tools)"}`,
+                  },
+                ]
+              : []),
             {
               id: "check",
               label: "Check now",
@@ -306,6 +317,9 @@ export function LocalPanel(props: LocalPanelProps): ReactNode {
             const c = step.connection;
             const draft: Draft = { kind: c.kind, url: c.url, id: c.id };
             switch (item.id) {
+              case "use":
+                props.onUseConnection?.(c.id);
+                break;
               case "check":
                 setBusy(`Checking ${c.name}`);
                 void props.actions.checkServer(c.kind, c.url).then((result) => {

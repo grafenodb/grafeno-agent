@@ -1,3 +1,4 @@
+import { NO_MODEL } from "./none.js";
 import { ACP_CLI_SPECS, AcpCliProvider } from "./acp-cli.js";
 import { API_KEY_SPECS, ApiKeyProvider } from "./api-key.js";
 import { ClaudeApiProvider } from "./claude-api.js";
@@ -229,6 +230,8 @@ export function providerIds(
   env: Record<string, string | undefined> = process.env,
 ): string[] {
   if (isAuto(setting)) return autoMembers(env);
+  // No model at all, as the user chose: no provider is chosen.
+  if ((setting ?? "").trim().toLowerCase() === NO_MODEL) return [];
   const ids = (setting ?? "")
     .split(",")
     .map((id) => canonicalProvider(id))

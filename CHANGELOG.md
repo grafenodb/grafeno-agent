@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- **No model at all**: `/connect` offers **No model** under Auto
+  (`AGENT_PROVIDERS=none`): nothing connected is used, whatever is signed
+  in, and each message is refused with a line saying how to choose one.
+  The chat starts with no model, said as such, when the one chosen is
+  switched off or every connection is, instead of moving to the next one
+  in the list; a model that is not ready is said at start too.
+- **Off means off**: a connection switched off is never used, not even by
+  a conversation already open with it (checked at each message); turning
+  off the one in use leaves the chat with no model at once; Auto's pool
+  leaves it out at once rather than within a minute.
+- **A local model as the chat's**: each local connection's actions start
+  with **Use it for the chat**.
+- **/connect**: each connection's status (installed, signed in…) is folded
+  until asked for (→ one, Tab all; the first run shows them); Esc goes back
+  one step everywhere instead of closing every menu.
+
 ## 0.2.1 (2026-11-17)
 
 - **The leader advises, the router decides**: a leader's recommended

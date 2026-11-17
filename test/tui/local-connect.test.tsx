@@ -117,6 +117,33 @@ describe("/connect · Local models / Self-hosted", () => {
     expect(done).toEqual(["Ollama is connected."]);
     app.unmount();
   });
+
+  it("a connection is made the chat's model from its own actions", async () => {
+    const used: string[] = [];
+    const actions: LocalPanelProps["actions"] = {
+      checkServer: () => Promise.resolve({ ok: false, message: "not asked" }),
+      saveServer: () => Promise.resolve({ id: "x", message: "" }),
+      setServerModel: () => "",
+      removeServer: () => Promise.resolve(""),
+    };
+    const app = render(
+      <LocalPanel
+        actions={actions}
+        file={join(dir, "local-connections.json")}
+        onUse={() => undefined}
+        onUseConnection={(id) => used.push(id)}
+        onCancel={() => undefined}
+        onDone={() => undefined}
+      />,
+    );
+    await until(() => (app.lastFrame() ?? "").includes("lmstudio · LM Studio"));
+    // 1 use, 2 ollama, 3 lmstudio: its actions, the first of which makes it the chat's.
+    await press(app, "3", () => (app.lastFrame() ?? "").includes("Use it for the chat"));
+    expect(app.lastFrame()).toContain("the main model");
+    await press(app, ENTER, () => used.length > 0);
+    expect(used).toEqual(["lmstudio"]);
+    app.unmount();
+  });
 });
 
 describe("grafeno-agent local", () => {

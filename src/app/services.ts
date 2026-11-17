@@ -1,6 +1,7 @@
+import { isNoModel, NO_MODEL, NoModelProvider } from "../providers/none.js";
 import { existsSync } from "node:fs";
 import { connectionActions, type ConnectionActionsApi } from "./connections.js";
-import { providerEnabled } from "../providers/profiles.js";
+import { canonicalProvider, providerEnabled } from "../providers/profiles.js";
 import { connectAll } from "../mcp/client.js";
 import { loadMcpConfig, mcpConfigPath } from "../mcp/config.js";
 import { connectPlugins } from "../plugins/index.js";
@@ -30,6 +31,7 @@ import {
   autoMembers,
   autoModels,
   autoModelsSetting,
+  isAuto,
 } from "../providers/index.js";
 import { lightModel, mostRoom, triage, type PoolMember, type TriageDecision } from "./triage.js";
 import type { ModelChoice, Provider } from "../providers/types.js";
@@ -249,6 +251,8 @@ export function realServices(version: string): AppServices {
     const members = (async () => {
       const found = await Promise.all(
         all.map(async (provider) => {
+          // Switched off: never in the pool, whatever its status says.
+          if (!providerEnabled(provider.id, env)) return undefined;
           const status = await provider.status().catch(() => undefined);
           if (!status?.installed || !status.signedIn) return undefined;
           // Billed per token without the user's express say: never in the pool.
@@ -260,7 +264,8 @@ export function realServices(version: string): AppServices {
       return found.filter((m): m is PoolMember => m !== undefined);
     })();
     pooled = { at: Date.now(), members };
-    return members;
+    // Read again on the way out: one switched off within the minute is left out at once.
+    return members.then((all) => all.filter((m) => providerEnabled(m.provider.id, env)));
   };
 
   /** Saves settings to the file and to this run. */
@@ -305,10 +310,8 @@ export function realServices(version: string): AppServices {
       embedder ??= embedderFor(config.embedder, () => undefined);
       const chosen = await embedder;
       // A provider that bills by consumption is not used without the user's express say.
-      // The chat uses the first provider that is switched on.
-      const chat = providers.find((p) => providerEnabled(p.id, env)) ?? providers[0];
-      if (!chat) throw new Error("No provider is known.");
-      await assertBillingAllowed(chat, env);
+      const chat = chatProvider(providers, env);
+      if (!isNoModel(chat)) await assertBillingAllowed(chat, env);
       // External MCP servers and plugins: their tools join the agent's; one not reached is said.
       const extensions = await connectExtensions(env, version, process.cwd());
       const tools = [...(extra?.tools ?? []), ...extensions.tools];
@@ -401,6 +404,11 @@ export function realServices(version: string): AppServices {
           save({ AGENT_PROVIDERS: "auto" });
           return;
         }
+        if (choice.provider === NO_MODEL) {
+          save({ AGENT_PROVIDERS: NO_MODEL });
+          pooled = undefined;
+          return;
+        }
         // A run may move tasks to another provider: only to those Auto includes.
         const rest = autoMembers(env).filter((id) => id !== choice.provider);
         save({
@@ -454,4 +462,34 @@ export function realServices(version: string): AppServices {
       return describeUpkeep(report);
     },
   };
+}
+
+/**
+ * The provider the chat starts with: never one switched off, and never
+ * another than the one chosen in its place.
+ * - none chosen (AGENT_PROVIDERS=none): no model;
+ * - a provider chosen: it, if it is switched on; else no model, said as such
+ *   (the next one in the list is not used behind the user's back);
+ * - Auto (or nothing chosen yet): the first switched on, else no model.
+ */
+export function chatProvider(
+  providers: readonly Provider[],
+  env: Record<string, string | undefined>,
+): Provider {
+  const setting = (env.AGENT_PROVIDERS ?? "").trim().toLowerCase();
+  if (setting === NO_MODEL) return new NoModelProvider();
+  if (!isAuto(setting)) {
+    const first = setting.split(",")[0]?.trim() ?? "";
+    const named = providers.find((p) => p.id === canonicalProvider(first));
+    if (named && providerEnabled(named.id, env)) return named;
+    return new NoModelProvider(
+      `${named?.name ?? first} is switched off, so no model is selected: nothing is sent to any provider. Switch it on, or choose another, in /connect.`,
+    );
+  }
+  return (
+    providers.find((p) => providerEnabled(p.id, env)) ??
+    new NoModelProvider(
+      "Every connection is switched off, so no model is selected. Switch one on in /connect.",
+    )
+  );
 }

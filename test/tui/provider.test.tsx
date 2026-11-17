@@ -161,3 +161,86 @@ describe("each provider's models in Auto", () => {
     app.unmount();
   });
 });
+
+describe("/connect: no model, and each provider's details", () => {
+  it("each provider's status is folded until asked for: → one, tab all", async () => {
+    const app = render(
+      <ProviderPanel
+        providers={[fake("claude-code", "Claude"), fake("codex", "Codex")]}
+        onDone={() => undefined}
+      />,
+    );
+    await wait();
+    let screen = app.lastFrame() ?? "";
+    expect(screen).toContain("Claude");
+    expect(screen).toMatch(/Claude ✓/);
+    expect(screen).not.toContain("Installed");
+    expect(screen).not.toContain("Signed in");
+    expect(screen).toContain("→ a provider's details");
+    app.stdin.write("\u001B[C");
+    await wait();
+    screen = app.lastFrame() ?? "";
+    // Only the selected one (Claude) opens.
+    expect(screen.match(/Signed in/g)).toHaveLength(1);
+    app.stdin.write("\u001B[D");
+    await wait();
+    expect(app.lastFrame()).not.toContain("Signed in");
+    app.stdin.write("\t");
+    await wait();
+    expect((app.lastFrame() ?? "").match(/Signed in/g)).toHaveLength(2);
+    app.unmount();
+  });
+
+  it("the first run shows each status: it is where what is installed is seen", async () => {
+    const app = render(
+      <ProviderPanel
+        providers={[fake("claude-code", "Claude")]}
+        firstRun
+        onDone={() => undefined}
+      />,
+    );
+    await wait();
+    expect(app.lastFrame()).toContain("Signed in");
+    app.unmount();
+  });
+
+  it("offers no model at all under Auto; enter chooses it", async () => {
+    let none = 0;
+    const app = render(
+      <ProviderPanel
+        providers={[fake("claude-code", "Claude")]}
+        auto
+        onAuto={() => undefined}
+        onNone={() => {
+          none++;
+        }}
+        onDone={() => undefined}
+      />,
+    );
+    await wait();
+    const screen = app.lastFrame() ?? "";
+    expect(screen.indexOf("Auto · in use")).toBeLessThan(screen.indexOf("No model"));
+    expect(screen.indexOf("No model")).toBeLessThan(screen.indexOf("Claude"));
+    expect(screen).toContain("Nothing connected is used");
+    app.stdin.write("\u001B[B");
+    await wait();
+    app.stdin.write("\r");
+    await wait();
+    expect(none).toBe(1);
+    app.unmount();
+  });
+
+  it("marks no model as in use when it is", async () => {
+    const app = render(
+      <ProviderPanel
+        providers={[fake("claude-code", "Claude")]}
+        none
+        onNone={() => undefined}
+        onDone={() => undefined}
+      />,
+    );
+    await wait();
+    expect(app.lastFrame()).toContain("▸ No model · in use");
+    app.unmount();
+  });
+});

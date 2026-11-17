@@ -435,6 +435,85 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.unmount();
   });
 
+  it("goes back a step with esc in /connect: a section to its menu, the menu to the chat", async () => {
+    const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
+    await ready(app);
+    await type(app, "/connect api");
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("API Key"), "the section");
+    await press(app, "\u001B", () => now(app).includes("Connect · choose how"), "the menu again");
+    expect(now(app)).not.toContain("Ask anything");
+    await press(app, "\u001B", () => now(app).includes("Ask anything"), "the chat");
+    app.unmount();
+  });
+
+  it("no model at all, chosen in /connect: each message is refused, nothing is sent", async () => {
+    const saves: Record<string, unknown>[] = [];
+    const base = services({ turns: [[{ say: "Should-Not-Answer" }]] });
+    const svc: AppServices = {
+      ...base,
+      saveChoice: (choice) => {
+        saves.push(choice);
+      },
+    };
+    const app = render(<App services={svc} />);
+    await ready(app);
+    await type(app, "/connect api");
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("No model"), "the no model row");
+    // Searching "no model" leaves it the first row.
+    await type(app, "no model");
+    await until(() => now(app).includes("▸ No model"), "it selected");
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("No model is selected"), "the warning");
+    expect(saves).toContainEqual({ provider: "none" });
+    await ready(app);
+    await type(app, "hello");
+    app.stdin.write(ENTER);
+    await until(
+      () => (seen(app).match(/No model is selected/g)?.length ?? 0) >= 2,
+      "the message refused",
+    );
+    expect(seen(app)).not.toContain("Should-Not-Answer");
+    app.unmount();
+  });
+
+  it("switching off the provider in use leaves the chat with no model at once", async () => {
+    const base = services({ turns: [[{ say: "Should-Not-Answer" }]] });
+    const svc: AppServices = {
+      ...base,
+      connections: {
+        setEnabled: (id: string, on: boolean) => {
+          process.env[`PROVIDER_${id.toUpperCase()}_ENABLED`] = on ? "true" : "false";
+          return `${id} is switched ${on ? "on" : "off"}.`;
+        },
+      } as unknown as NonNullable<AppServices["connections"]>,
+    };
+    try {
+      const app = render(<App services={svc} />);
+      await ready(app);
+      await type(app, "/connect manage");
+      app.stdin.write(ENTER);
+      await until(() => now(app).includes("Manage connections"), "the connections");
+      await press(app, ENTER, () => now(app).includes("Switch off"), "its actions");
+      await press(
+        app,
+        ENTER,
+        () => seen(app).includes("was the chat's model: no model is selected now"),
+        "the chat left it",
+      );
+      await press(app, "\u001B", () => now(app).includes("Connect · choose how"), "the menu");
+      await press(app, "\u001B", () => now(app).includes("Ask anything"), "the chat");
+      await type(app, "hello");
+      app.stdin.write(ENTER);
+      await until(() => seen(app).includes("Fake Provider is switched off"), "the refusal");
+      expect(seen(app)).not.toContain("Should-Not-Answer");
+      app.unmount();
+    } finally {
+      Reflect.deleteProperty(process.env, "PROVIDER_FAKE_ENABLED");
+    }
+  });
+
   it("asks the provider anew for its usage after each turn, since the turn spent some", async () => {
     const base = services({ turns: [[{ say: "Answered" }]] });
     const asked: ({ fresh?: boolean } | undefined)[] = [];
