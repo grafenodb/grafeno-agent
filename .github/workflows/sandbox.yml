@@ -1,9 +1,8 @@
 name: Sandbox
 
-# Grafeno Sandbox: builds the Linux helper on each architecture, attacks it
-# (escape attempts as an unprivileged user) and runs the agent's sandbox
-# tests on Linux and macOS. The release takes the helpers built here into
-# the package.
+# Grafeno Sandbox: builds the Linux and Windows helpers on each architecture,
+# attacks the Linux helper as an unprivileged user and runs the real sandbox
+# tests on Linux, Windows and macOS. Releases take the helpers from here.
 on:
   push:
     branches: [main]
@@ -58,3 +57,34 @@ jobs:
       - run: npm ci
       - name: The agent's sandbox tests (sandbox-exec)
         run: npx vitest run test/sandbox
+
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+          cache: npm
+      - name: Build the helper
+        run: node scripts/sandbox-helper.mjs build
+      - name: What AppContainer and Job Objects allow here
+        run: vendor/sandbox/windows-${{ matrix.arch }}/grafeno-sandbox.exe --probe
+      - run: npm ci
+      - name: The agent's sandbox tests (AppContainer and Job Objects)
+        env:
+          GRAFENO_SANDBOX_HELPER: ${{ github.workspace }}\vendor\sandbox\windows-${{ matrix.arch }}\grafeno-sandbox.exe
+        run: npx vitest run test/sandbox
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sandbox-windows-${{ matrix.arch }}
+          path: vendor/sandbox/windows-${{ matrix.arch }}/grafeno-sandbox.exe
+          if-no-files-found: error

@@ -134,7 +134,7 @@ agent asks again when it starts.
 | `AGENT_PROJECT`             | the git repository      | The project whose memory the agent uses                                          |
 | `AGENT_EMBEDDER`            | `e5-small`              | Meaning for memory (a local model), or `none`                                    |
 | `AGENT_PALACE`              | `shared`                | `shared` with other agents, or `own` (see below)                                 |
-| `AGENT_SHELL`               | Git's bash on Windows   | The shell for commands, with its arguments                                       |
+| `AGENT_SHELL`               | system shell            | The shell for commands, with its arguments; sandboxed Windows uses `cmd.exe`     |
 | `AGENT_PROVIDERS`           | `auto`                  | `claude-code`, `codex`, `gemini`, in order, or `auto` (set by `/connect`)        |
 | `AGENT_PERMISSIONS`         | `ask`                   | `ask`, `auto` or `skip`, for the whole agent (set by `/permissions`)             |
 | `AGENT_AUTO_PROVIDERS`      | none (you choose)       | The providers Auto includes (set in `/connect` with space)                       |
@@ -389,8 +389,9 @@ no Docker or other engine, no daemon.
   the project; writes only the project and its own home and temp; gets no
   network unless it installs or fetches.
 - **macOS**: `sandbox-exec`, with a profile per command.
-- **Windows**: no engine yet; commands run on the computer, and each
-  result says `not sandboxed`.
+- **Windows**: a native helper in the package launches each command in an
+  AppContainer (files, processes and network) and owns its process tree in
+  a Job Object (memory, CPU and process limits).
 
 Each command's result says what isolated it (`sandboxed (files closed
 off, no network, own processes, limits)`), never more than was applied.

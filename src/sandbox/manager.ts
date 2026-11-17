@@ -50,6 +50,10 @@ export interface SandboxRecord {
   readonly keep: KeepPolicy;
   /** Stopped: its processes were ended; it takes no more commands until it is used again. */
   readonly stopped?: boolean;
+  /** The agent's process that made it: when it is gone, a sandbox it would have removed is stale. */
+  readonly owner?: number;
+  /** Removing what the system kept for it (Windows' permissions and profile) failed: tried again later. */
+  readonly cleanupFailed?: boolean;
 }
 
 /** A sandbox as the commands see it now: its record, and whether something runs in it. */
@@ -134,6 +138,7 @@ export class SandboxManager {
   readonly #env: Record<string, string | undefined>;
   readonly #running = new Map<string, Set<ChildProcess>>();
   #report: Promise<EngineReport> | undefined;
+  #swept = false;
 
   constructor(options: SandboxManagerOptions = {}) {
     this.#env = options.env ?? process.env;
@@ -158,6 +163,10 @@ export class SandboxManager {
     readonly writable?: readonly string[];
     readonly keep?: KeepPolicy;
   }): SandboxRecord {
+    if (!this.#swept) {
+      this.#swept = true;
+      this.sweep();
+    }
     const id = `${new Date().toISOString().slice(0, 10)}-${randomUUID().slice(0, 8)}`;
     const dir = join(this.dir, id);
     const record: SandboxRecord = {
@@ -170,6 +179,7 @@ export class SandboxManager {
       home: join(dir, "home"),
       tmp: join(dir, "tmp"),
       keep: options.keep ?? keepPolicy(this.#env),
+      owner: process.pid,
     };
     mkdirSync(record.home, { recursive: true, mode: 0o700 });
     mkdirSync(record.tmp, { recursive: true, mode: 0o700 });
@@ -249,8 +259,33 @@ export class SandboxManager {
     if (!state) return false;
     for (const child of this.#running.get(id) ?? []) killGroup(child);
     this.#running.delete(id);
+    const { policy } = this.policy(state, "");
+    // What the system kept for it first; its folder stays when that fails, to try again.
+    if (this.engine.cleanup && !this.engine.cleanup(policy, state)) {
+      this.#save({ ...without(state), stopped: true, cleanupFailed: true });
+      this.#event(state, { event: "cleanup-failed" });
+      return false;
+    }
     rmSync(state.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     return true;
+  }
+
+  /**
+   * Removes the sandboxes left by an agent that ended without removing them
+   * (killed, crashed): not kept on purpose, nothing running, their maker
+   * gone. With them goes what the system kept for them (Windows'
+   * permissions on the project's folders). Says how many.
+   */
+  sweep(): number {
+    let removed = 0;
+    for (const s of this.list()) {
+      if (s.running > 0) continue;
+      const stale =
+        s.cleanupFailed === true ||
+        (s.keep === "never" && s.owner !== undefined && s.owner !== process.pid && !alive(s.owner));
+      if (stale && this.destroy(s.id)) removed++;
+    }
+    return removed;
   }
 
   /** What a sandbox is done for: destroyed, or kept as its policy says. */
@@ -266,7 +301,7 @@ export class SandboxManager {
 
   /** Removes the sandboxes where nothing runs (older than `olderThanMs`, when given); says how many. */
   cleanup(olderThanMs = 0): number {
-    let removed = 0;
+    let removed = this.sweep();
     for (const s of this.list()) {
       if (s.running > 0) continue;
       if (olderThanMs > 0 && Date.now() - Date.parse(s.created) < olderThanMs) continue;
@@ -408,9 +443,31 @@ function without(state: SandboxState): SandboxRecord {
   return record as unknown as SandboxRecord;
 }
 
+/** Whether a process is still there. */
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: there, someone else's.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 /** Ends a command and everything it started: its process group. */
 function killGroup(child: ChildProcess): void {
   if (child.pid === undefined) return;
+  if (process.platform === "win32") {
+    try {
+      execFileSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+    } catch {
+      child.kill("SIGKILL");
+    }
+    return;
+  }
   try {
     process.kill(-child.pid, "SIGKILL");
   } catch {

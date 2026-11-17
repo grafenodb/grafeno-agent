@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
-import { describeIsolation, type Isolation } from "../sandbox/engines.js";
+import { describeIsolation, windowsHelper, type Isolation } from "../sandbox/engines.js";
 import type { Spawner } from "../sandbox/manager.js";
+import { sandboxMode } from "../sandbox/policy.js";
 import type { PermissionDecision, Tool } from "../agent/tools.js";
 import type { Workspace } from "./workspace.js";
 
@@ -200,8 +201,7 @@ export function runCommandTool(workspace: Workspace, options: CommandToolOptions
           const text = clip(output.trimEnd(), maxOutput);
           void (applied ?? Promise.resolve(undefined)).then((done) => {
             // 125 from the sandbox: it could not be made as required, and the command did not run.
-            const refused =
-              done !== undefined && code === 125 && done.engine === "linux" && !done.files;
+            const refused = done !== undefined && code === 125 && !done.files;
             resolvePromise(
               refused
                 ? `Not run: the sandbox could not be made as required here (see /sandbox status). Output:\n${text === "" ? "(none)" : text}`
@@ -238,8 +238,9 @@ export function killTree(child: ChildProcess): void {
 
 /**
  * The shell for commands: `AGENT_SHELL` when set (the program, then its
- * arguments, such as `bash -c`), else Git's bash on Windows when installed,
- * else the system's.
+ * arguments, such as `bash -c`), else cmd on Windows when its sandbox can
+ * run (MSYS needs global named objects that AppContainer refuses), Git's bash
+ * on Windows otherwise when installed, or the system shell elsewhere.
  */
 export function defaultShell(
   env: Record<string, string | undefined> = process.env,
@@ -251,6 +252,11 @@ export function defaultShell(
     return [program, ...args];
   }
   if (process.platform === "win32") {
+    // Sandboxed, cmd: Git's bash (MSYS) needs global named objects AppContainer refuses.
+    // Only when the sandbox can really run here: without its helper, bash as before.
+    if (sandboxMode(env) !== "off" && !("problem" in windowsHelper(env))) {
+      return [env.ComSpec ?? "cmd.exe", "/d", "/s", "/c"];
+    }
     for (const bash of [
       "C:/Program Files/Git/bin/bash.exe",
       "C:/Program Files (x86)/Git/bin/bash.exe",

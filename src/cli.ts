@@ -78,8 +78,8 @@ Commands:
                  or write your own. grafeno-agent skills help says more.
   sandbox [status|list|create|inspect|stop|destroy|cleanup]
                  Grafeno Sandbox: what isolates the agent's commands here (namespaces,
-                 Landlock, seccomp, cgroups on Linux; sandbox-exec on macOS; none yet on
-                 Windows), and the sandboxes kept. AGENT_SANDBOX=auto|required|off.
+                 Landlock, seccomp, cgroups on Linux; sandbox-exec on macOS; AppContainer
+                 and Job Objects on Windows), and the kept sandboxes. AGENT_SANDBOX=auto|required|off.
   local [add|check|model|remove]
                  Local models and self-hosted servers: Ollama, LM Studio, Bionic, any
                  OpenAI-compatible endpoint. add <kind> <url> [--id i] [--model m]

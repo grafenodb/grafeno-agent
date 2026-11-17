@@ -39,6 +39,7 @@
     "dist",
     "vendor",
     "native/sandbox/grafeno-sandbox.c",
+    "native/sandbox/grafeno-sandbox-windows.c",
     "README.md",
     "CHANGELOG.md",
     "LICENSE-MIT",

@@ -57,13 +57,21 @@ jobs:
           pattern: sandbox-linux-*
           path: vendor-artifacts
       - if: steps.published.outputs.skip != 'true'
+        name: Grafeno Sandbox's Windows helpers
+        uses: actions/download-artifact@v7
+        with:
+          pattern: sandbox-windows-*
+          path: vendor-artifacts
+      - if: steps.published.outputs.skip != 'true'
         name: The helpers in the package, with their manifest
         run: |
           for arch in x64 arm64; do
             mkdir -p "vendor/sandbox/linux-$arch"
             cp "vendor-artifacts/sandbox-linux-$arch/grafeno-sandbox" "vendor/sandbox/linux-$arch/grafeno-sandbox"
+            mkdir -p "vendor/sandbox/windows-$arch"
+            cp "vendor-artifacts/sandbox-windows-$arch/grafeno-sandbox.exe" "vendor/sandbox/windows-$arch/grafeno-sandbox.exe"
           done
-          node scripts/sandbox-helper.mjs manifest --require linux-x64,linux-arm64
+          node scripts/sandbox-helper.mjs manifest --require linux-x64,linux-arm64,windows-x64,windows-arm64
       - name: Publish
         if: steps.published.outputs.skip != 'true'
         run: npm publish

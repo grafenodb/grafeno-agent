@@ -77,13 +77,13 @@ cli|api|plans|list|status|manage|disconnect <connection>`. A key is typed
   with it (no Docker, no daemon). Linux: a native helper in the package,
   checked against its SHA-256 (user, PID, mount and network namespaces,
   Landlock, seccomp, cgroups v2 or rlimits, as the kernel allows without
-  privileges); macOS: `sandbox-exec`; Windows: none yet, said on every
-  command. Each result says what isolated it, never more; `AGENT_SANDBOX`
+  privileges); macOS: `sandbox-exec`; Windows: AppContainer and Job
+  Objects. Each result says what isolated it, never more; `AGENT_SANDBOX`
   (`auto`, `required`, `off`), `AGENT_SANDBOX_NETWORK`,
   `AGENT_SANDBOX_KEEP`; `/sandbox status|list|create|inspect|stop|destroy|cleanup`
   and `grafeno-agent sandbox`. A sandbox has its own home and caches, so
   installs never change the computer's; no credentials go in. The release
-  builds and attacks the helper on x64 and arm64 before packing it.
+  builds and tests the helpers on x64 and arm64 before packing them.
 - **Local providers show tokens, not a quota**: the side panel and
   `/usage` show only the tokens a local or self-hosted server used.
 - The OpenAI-compatible adapter streams (for local servers), sends no key

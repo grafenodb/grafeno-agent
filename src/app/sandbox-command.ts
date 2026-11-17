@@ -64,6 +64,11 @@ export async function sandboxCommand(
           : []),
         "",
         `Sandboxes kept: ${String(kept.length)}${kept.some((s) => s.running > 0) ? ` (${String(kept.filter((s) => s.running > 0).length)} running)` : ""} · in ${manager.dir}`,
+        ...(kept.some((s) => s.cleanupFailed)
+          ? [
+              `${String(kept.filter((s) => s.cleanupFailed).length)} could not be cleaned up (permissions left on the folders they used): /sandbox cleanup tries again.`,
+            ]
+          : []),
       ];
       return { title: "Grafeno Sandbox", lines, ok: true };
     }
@@ -123,8 +128,17 @@ export async function sandboxCommand(
         ? { title: "Sandbox", lines: [`Everything in ${id} was ended; it stays.`], ok: true }
         : { title: "Sandbox", lines: [`No sandbox ${id}.`], ok: false };
     case "destroy":
-      return manager.destroy(id)
-        ? { title: "Sandbox", lines: [`${id} was ended and removed.`], ok: true }
+      if (manager.destroy(id)) {
+        return { title: "Sandbox", lines: [`${id} was ended and removed.`], ok: true };
+      }
+      return manager.get(id)?.cleanupFailed
+        ? {
+            title: "Sandbox",
+            lines: [
+              `${id} was ended, but what the system kept for it (its permissions on the folders it used) could not be removed: it is kept, and tried again by /sandbox cleanup and the next session.`,
+            ],
+            ok: false,
+          }
         : { title: "Sandbox", lines: [`No sandbox ${id}.`], ok: false };
     case "cleanup": {
       const removed = manager.cleanup();

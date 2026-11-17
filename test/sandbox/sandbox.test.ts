@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -83,7 +91,7 @@ describe("the sandbox's policies", () => {
       "sandboxed (files closed off, no TCP, limits)",
     );
     expect(describeIsolation(new NoEngine("x").isolation())).toBe("not sandboxed");
-    expect(detectEngine({}, "win32").name).toBe("none");
+    expect(detectEngine({}, "win32").name).toBe("windows");
     expect(detectEngine({}, "linux").name).toBe("linux");
     expect(detectEngine({}, "darwin").name).toBe("macos");
   });
@@ -223,6 +231,40 @@ describe("the sandbox manager", () => {
     expect(manager.get(kept.id)).toBeDefined();
     expect(manager.cleanup()).toBe(1);
     expect(manager.list()).toEqual([]);
+  });
+
+  it("sweeps what a dead agent left, and keeps a sandbox whose cleanup failed until it can be done", () => {
+    let cleanups = 0;
+    let failing = true;
+    const engine: IsolationEngine = {
+      ...fakeEngine(),
+      cleanup: () => {
+        cleanups++;
+        return !failing;
+      },
+    };
+    const manager = new SandboxManager({ dir: join(dir, "sandboxes"), engine, env: {} });
+    const work = join(dir, "work");
+    mkdirSync(work);
+    const made = manager.create({ label: "chat", workspace: work });
+    // Its cleanup fails: the folder stays, marked, and said.
+    expect(manager.destroy(made.id)).toBe(false);
+    expect(manager.get(made.id)?.cleanupFailed).toBe(true);
+    failing = false;
+    // Left by an agent that is gone: a record whose maker is no longer running.
+    const stale = manager.create({ label: "chat", workspace: work });
+    const file = join(stale.dir, "sandbox.json");
+    const record = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+    writeFileSync(file, JSON.stringify({ ...record, owner: 2_147_483_000 }));
+    const mine = manager.create({ label: "chat", workspace: work });
+    const kept = manager.create({ label: "manual", workspace: work, keep: "always" });
+    expect(manager.sweep()).toBe(2);
+    expect(manager.get(made.id)).toBeUndefined();
+    expect(manager.get(stale.id)).toBeUndefined();
+    // Its own, and those kept on purpose, stay.
+    expect(manager.get(mine.id)).toBeDefined();
+    expect(manager.get(kept.id)).toBeDefined();
+    expect(cleanups).toBe(3);
   });
 
   it("without an engine: refused when required, on the computer and said so in auto", async () => {

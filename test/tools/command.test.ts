@@ -135,4 +135,16 @@ describe("defaultShell", () => {
       "-Command",
     ]);
   });
+
+  it("uses cmd only where the Windows sandbox can run, and keeps Git bash otherwise", () => {
+    if (process.platform !== "win32") return;
+    const helper = { GRAFENO_SANDBOX_HELPER: process.execPath, ComSpec: "cmd.exe" };
+    expect(defaultShell(helper)).toEqual(["cmd.exe", "/d", "/s", "/c"]);
+    const bash = ["C:/Program Files/Git/bin/bash.exe", "-c"];
+    expect(defaultShell({ ...helper, AGENT_SANDBOX: "off" }, () => true)).toEqual(bash);
+    // No helper in this installation: no sandbox, so bash as before.
+    expect(
+      defaultShell({ GRAFENO_SANDBOX_HELPER: "C:/nowhere/grafeno-sandbox.exe" }, () => true),
+    ).toEqual(bash);
+  });
 });

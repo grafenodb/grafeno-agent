@@ -74,10 +74,35 @@ processes are limited per user.
 
 ### Windows
 
-No isolation engine yet (AppContainer and Job Objects are planned). With
-`AGENT_SANDBOX=auto` commands run on the computer with your rights, and
-every command's result says `not sandboxed`; with `required` they do not
-run.
+A native helper (`grafeno-sandbox.exe`, built for x64 and arm64 and checked
+against the package manifest) launches each command in its sandbox's
+AppContainer. The AppContainer SID is granted access to the project and the
+sandbox's own home and temporary folders; Windows denies other user files
+and the network, and the command cannot open or signal other processes
+(it may still list them, so the sandbox does not claim process isolation). Commands that install or fetch receive the
+public and private network capabilities for that command only.
+
+The process starts suspended and is placed in a Job Object before it runs.
+The Job Object limits total memory, CPU time and process count, owns every
+descendant, and ends the tree when the command ends or the sandbox is stopped.
+The AppContainer profile and its inheritable ACL entries live for the sandbox,
+so only its first command prepares the project tree (on a large tree, such
+as one with `node_modules`, that first grant takes a while); `destroy` and
+`cleanup` remove them. Those ACL entries are the one thing a sandbox leaves
+on your folders while it exists, so they are never left behind on purpose:
+
+- if removing them fails, the sandbox is kept, marked, and said in
+  `/sandbox status`; `/sandbox cleanup` and the next session try again;
+- a sandbox left by an agent that ended without removing it (killed,
+  crashed) is swept, with its ACL entries, when a later session makes its
+  first sandbox, or by `/sandbox cleanup`.
+
+**Limitations on Windows**: Job Objects do not cap the number of open files.
+MSYS/Git Bash needs a global named object that AppContainer denies, so the
+default shell is `cmd.exe` when the sandbox can run here (its helper is
+installed and checks out); otherwise, and with `AGENT_SANDBOX=off`, Git Bash
+as before. `AGENT_SHELL` may still
+select another AppContainer-compatible shell explicitly.
 
 ## Policies
 
@@ -121,14 +146,16 @@ The same from a terminal: `grafeno-agent sandbox …`.
 
 ## Distribution and integrity
 
-The release builds the helper on each architecture (x64 and arm64 Linux
-runners), attacks it (`native/sandbox/escape-test.sh`: files, network,
-namespaces, mounts, fork bombs, CPU, memory, leftovers) and runs the
-agent's sandbox tests, on Linux and macOS. Only then are the helpers put
-in the package, with a manifest of their SHA-256, which the agent checks
-before running one. Nothing is downloaded or run at install time.
+The release builds the native helpers on each architecture (x64 and arm64
+Linux and Windows runners), attacks the Linux helper
+(`native/sandbox/escape-test.sh`: files, network, namespaces, mounts, fork
+bombs, CPU, memory, leftovers) and runs the agent's real sandbox tests on
+Linux, Windows and macOS. Only then are the helpers put in the package, with
+a manifest of their SHA-256, which the agent checks before running one.
+Nothing is downloaded or run at install time.
 Uninstalling the package removes everything: there is no service, and
 nothing outlives the commands.
 
-To build the helper yourself (on Linux): `npm run build:sandbox`, or point
-`GRAFENO_SANDBOX_HELPER` at your own build (said in `/sandbox status`).
+To build the helper yourself (on Linux or Windows with Visual C++ Build
+Tools): `npm run build:sandbox`, or point `GRAFENO_SANDBOX_HELPER` at your
+own build (said in `/sandbox status`).

@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -28,7 +28,7 @@ export interface SandboxPlace {
  * a mechanism is true only when it was applied, never assumed.
  */
 export interface Isolation {
-  readonly engine: "linux" | "macos" | "none";
+  readonly engine: "linux" | "macos" | "windows" | "none";
   /** Files outside what it may read and write are out of its reach. */
   readonly files: boolean;
   /** `none`: no network at all; `tcp-blocked`: no TCP; `open`: the network as the computer has it. */
@@ -45,7 +45,7 @@ export interface Isolation {
 
 /** What an engine can do on this computer, found by asking it (never assumed). */
 export interface EngineReport {
-  readonly engine: "linux" | "macos" | "none";
+  readonly engine: "linux" | "macos" | "windows" | "none";
   readonly available: boolean;
   /** Why it is not available, when it is not. */
   readonly reason?: string;
@@ -63,11 +63,13 @@ export interface Wrapped {
 }
 
 export interface IsolationEngine {
-  readonly name: "linux" | "macos" | "none";
+  readonly name: "linux" | "macos" | "windows" | "none";
   probe(): Promise<EngineReport>;
   wrap(argv: readonly [string, ...string[]], policy: SandboxPolicy, place: SandboxPlace): Wrapped;
   /** What was applied, from the engine's report (or none, for engines without one). */
   isolation(report: string | undefined, policy: SandboxPolicy): Isolation;
+  /** Removes persistent OS state made for one sandbox; false when it could not. */
+  cleanup?(policy: SandboxPolicy, place: SandboxPlace): boolean;
 }
 
 /** The package's own folder (where `vendor/` is), from this file's place in `dist/sandbox/`. */
@@ -175,6 +177,48 @@ export function linuxHelper(
       problem = "the sandbox helper does not match the package's manifest (changed or damaged)";
     } else if ((statSync(path).mode & 0o111) === 0) {
       problem = "the sandbox helper is not executable";
+    }
+  } catch {
+    problem = "the package's sandbox manifest cannot be read";
+  }
+  verified.set(path, problem);
+  return problem ? { problem } : { path, own: false };
+}
+
+/** The signed-by-the-package Windows helper for this architecture, or why it cannot be used. */
+export function windowsHelper(
+  env: Record<string, string | undefined> = process.env,
+  root = packageRoot(),
+): { path: string; own: boolean } | { problem: string } {
+  const own = env.GRAFENO_SANDBOX_HELPER?.trim();
+  if (own) {
+    try {
+      accessSync(own, constants.F_OK);
+      return { path: own, own: true };
+    } catch {
+      return { problem: `GRAFENO_SANDBOX_HELPER (${own}) is not a file` };
+    }
+  }
+  const arch = process.arch === "x64" ? "x64" : process.arch === "arm64" ? "arm64" : undefined;
+  if (!arch) return { problem: `no sandbox helper is built for ${process.arch}` };
+  const relative = `windows-${arch}/grafeno-sandbox.exe`;
+  const path = join(root, "vendor", "sandbox", relative);
+  if (!existsSync(path)) {
+    return { problem: `the sandbox helper is not in this installation (${path})` };
+  }
+  const cached = verified.get(path);
+  if (cached !== undefined || verified.has(path)) {
+    return cached === undefined ? { path, own: false } : { problem: cached };
+  }
+  let problem: string | undefined;
+  try {
+    const manifest = JSON.parse(
+      readFileSync(join(root, "vendor", "sandbox", "manifest.json"), "utf8"),
+    ) as { files?: Record<string, string> };
+    const expected = manifest.files?.[relative];
+    if (!expected) problem = "the sandbox helper is not in the package's manifest";
+    else if (sha256(path) !== expected) {
+      problem = "the sandbox helper does not match the package's manifest (changed or damaged)";
     }
   } catch {
     problem = "the package's sandbox manifest cannot be read";
@@ -429,6 +473,171 @@ export class MacEngine implements IsolationEngine {
   }
 }
 
+/** Program folders in the person's home that a Windows AppContainer must be granted explicitly. */
+function windowsUserProgramFolders(
+  env: Record<string, string | undefined>,
+  home = homedir(),
+): string[] {
+  const prefix = `${resolve(home).toLowerCase()}${sep}`;
+  const out = new Set<string>();
+  for (const entry of (env.PATH ?? "").split(delimiter)) {
+    if (!entry) continue;
+    const folder = resolve(entry);
+    if (folder.toLowerCase().startsWith(prefix) && existsSync(folder)) out.add(folder);
+  }
+  const node = dirname(process.execPath);
+  if (node.toLowerCase().startsWith(prefix)) out.add(node);
+  return [...out];
+}
+
+function windowsProfile(place: SandboxPlace): string {
+  return `GrafenoSandbox.${createHash("sha256").update(resolve(place.dir)).digest("hex").slice(0, 24)}`;
+}
+
+/** Windows: AppContainer for files, processes and network; Job Object for the whole tree's limits. */
+export class WindowsEngine implements IsolationEngine {
+  readonly name = "windows" as const;
+
+  constructor(
+    private readonly env: Record<string, string | undefined> = process.env,
+    private readonly root = packageRoot(),
+  ) {}
+
+  async probe(): Promise<EngineReport> {
+    const helper = windowsHelper(this.env, this.root);
+    if ("problem" in helper) {
+      return {
+        engine: "windows",
+        available: false,
+        reason: helper.problem,
+        mechanisms: [],
+        limitations: [],
+      };
+    }
+    try {
+      const found = JSON.parse(await run(helper.path, ["--probe"])) as {
+        appContainer?: number;
+        job?: number;
+      };
+      if (!found.appContainer || !found.job) throw new Error("incomplete probe report");
+    } catch (error) {
+      return {
+        engine: "windows",
+        available: false,
+        reason: `the sandbox helper did not answer: ${error instanceof Error ? error.message : String(error)}`,
+        mechanisms: [],
+        limitations: [],
+        helper: helper.path,
+      };
+    }
+    return {
+      engine: "windows",
+      available: true,
+      mechanisms: ["AppContainer (files, processes, network)", "Job Object (limits, process tree)"],
+      limitations: [
+        "Open files are not capped on Windows; memory, CPU time and process count are capped by the Job Object.",
+        ...(helper.own
+          ? [`A helper of your own is used (GRAFENO_SANDBOX_HELPER): ${helper.path}`]
+          : []),
+      ],
+      helper: helper.path,
+    };
+  }
+
+  #paths(policy: SandboxPolicy, place: SandboxPlace): { writable: string[]; readable: string[] } {
+    const writable = [
+      ...new Set([...policy.writable, place.home, place.tmp].map((path) => resolve(path))),
+    ];
+    const writableLower = writable.map((path) => `${path.toLowerCase()}${sep}`);
+    const readable = [
+      ...policy.readable.map((path) => resolve(path)),
+      ...windowsUserProgramFolders(this.env),
+    ].filter((path, index, all) => {
+      const lower = path.toLowerCase();
+      return (
+        all.findIndex((other) => other.toLowerCase() === lower) === index &&
+        !writableLower.some((root) => `${lower}${sep}`.startsWith(root))
+      );
+    });
+    return { writable, readable };
+  }
+
+  wrap(argv: readonly [string, ...string[]], policy: SandboxPolicy, place: SandboxPlace): Wrapped {
+    const helper = windowsHelper(this.env, this.root);
+    if ("problem" in helper) throw new Error(helper.problem);
+    const paths = this.#paths(policy, place);
+    return {
+      file: helper.path,
+      args: [
+        "--name",
+        windowsProfile(place),
+        ...paths.readable.flatMap((path) => ["--ro", path]),
+        ...paths.writable.flatMap((path) => ["--rw", path]),
+        ...(policy.network === "open" ? ["--network"] : []),
+        "--memory",
+        String(policy.limits.memoryMb * 1024 * 1024),
+        "--cpu",
+        String(policy.limits.cpuSeconds),
+        "--procs",
+        String(policy.limits.processes),
+        "--report-fd",
+        "3",
+        "--",
+        ...argv,
+      ],
+      reportFd: 3,
+    };
+  }
+
+  isolation(report: string | undefined, policy: SandboxPolicy): Isolation {
+    let found: { appContainer?: number; job?: number; network?: string } = {};
+    try {
+      found = JSON.parse(report ?? "{}") as typeof found;
+    } catch {
+      found = {};
+    }
+    const appContainer = found.appContainer === 1;
+    const job = found.job === 1;
+    return {
+      engine: "windows",
+      files: appContainer,
+      network:
+        policy.network === "open" && found.network === "open"
+          ? "open"
+          : appContainer && found.network === "none"
+            ? "none"
+            : "open",
+      // It cannot open or signal the computer's processes, but may list them: not claimed.
+      processes: false,
+      syscalls: false,
+      limits: job,
+      mechanisms: [...(appContainer ? ["AppContainer"] : []), ...(job ? ["Job Object"] : [])],
+    };
+  }
+
+  cleanup(policy: SandboxPolicy, place: SandboxPlace): boolean {
+    const helper = windowsHelper(this.env, this.root);
+    // No helper, nothing it could have granted.
+    if ("problem" in helper) return true;
+    const paths = this.#paths(policy, place);
+    try {
+      execFileSync(
+        helper.path,
+        [
+          "--cleanup",
+          windowsProfile(place),
+          ...paths.readable.flatMap((path) => ["--ro", path]),
+          ...paths.writable.flatMap((path) => ["--rw", path]),
+        ],
+        { timeout: 120_000, windowsHide: true, stdio: "ignore" },
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
 /** A computer without an engine: commands are not isolated, and it is said. */
 export class NoEngine implements IsolationEngine {
   readonly name = "none" as const;
@@ -469,11 +678,8 @@ export function detectEngine(
 ): IsolationEngine {
   if (platform === "linux") return new LinuxEngine(env);
   if (platform === "darwin") return new MacEngine(env);
-  return new NoEngine(
-    platform === "win32"
-      ? "Windows has no isolation engine in Grafeno Sandbox yet (AppContainer and Job Objects are planned): commands run on this computer with your rights"
-      : `${platform} has no isolation engine in Grafeno Sandbox`,
-  );
+  if (platform === "win32") return new WindowsEngine(env);
+  return new NoEngine(`${platform} has no isolation engine in Grafeno Sandbox`);
 }
 
 /** What isolated a command, in a few words for its result (never more than was applied). */
