@@ -1,4 +1,5 @@
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useKeys } from "./core/input.js";
 import { useState, type ReactNode } from "react";
 import { Clickable } from "./clicks.js";
 import { theme } from "./theme.js";
@@ -37,7 +38,7 @@ export function SessionsPanel(props: SessionsPanelProps): ReactNode {
     setSelected((s) => Math.max(0, Math.min(s, count - 2)));
   };
 
-  useInput((input, key) => {
+  useKeys((input, key) => {
     if (confirming) {
       if (input === "y" || input === "Y") remove(confirming);
       else if (input === "n" || input === "N" || key.escape) setConfirming(undefined);

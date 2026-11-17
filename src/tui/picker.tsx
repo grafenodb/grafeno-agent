@@ -1,4 +1,5 @@
-import { Box, Text, useInput, useWindowSize } from "ink";
+import { Box, Text, useWindowSize } from "ink";
+import { useKeys } from "./core/input.js";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { theme } from "./theme.js";
 import { Clickable } from "./clicks.js";
@@ -87,7 +88,7 @@ export function Picker(props: PickerProps): ReactNode {
     ),
   );
 
-  useInput((input, key) => {
+  useKeys((input, key) => {
     if (key.escape) {
       if (query !== "") {
         setQuery("");

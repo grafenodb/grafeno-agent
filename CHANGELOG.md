@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **The interface's input, read in one place**: keys and the mouse go to
+  whoever has the focus, by layer (an approval over a menu or dialog over
+  the conversation), never to everyone: a key typed in a menu no longer
+  reaches the prompt behind it, and PgUp/PgDn and the wheel scroll the
+  menu, not the conversation. The mouse's right button and double clicks
+  are recognized (for the inspectors and menus to come).
+- **Ctrl+P opens the command palette**: every command and key, searchable;
+  a menu button, its key, the palette and the typed command run the same
+  action. Ctrl+N goes to the next agent (Ctrl+P did the previous one; Esc
+  goes back to the main agent).
+- **Typing ahead**: the prompt takes keys while the agent answers, and
+  Enter sends once it is done; what is typed and not sent stays while a
+  menu is open over it (it was lost).
 - **`/mode`**: Auto, or the provider chosen in `/connect`, with its own
   setting (`AGENT_MODE`). Auto is switched on and off there, by hand;
   choosing a provider in `/connect` switches to specific at once, and

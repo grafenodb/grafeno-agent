@@ -1,4 +1,5 @@
 import { Box, useStdin, type BoxProps, type DOMElement } from "ink";
+import { useInputHub, useMouse } from "./core/input.js";
 import {
   createContext,
   use,
@@ -153,8 +154,16 @@ export function ClickArea({
 }): ReactNode {
   const registry = useMemo(() => new ClickRegistry(), []);
   const { stdin } = useStdin();
+  const hub = useInputHub();
+  // In the interface's input area, clicks come from its one reader of the terminal.
+  useMouse(
+    (event) => {
+      if (event.kind === "press" && event.button === "left") registry.click(event);
+    },
+    { layer: "global", isActive: active && hub !== undefined },
+  );
   useEffect(() => {
-    if (!active) return;
+    if (!active || hub) return;
     const listener = (chunk: Buffer | string) => {
       for (const click of clicksIn(chunk.toString())) registry.click(click);
     };
@@ -162,7 +171,7 @@ export function ClickArea({
     return () => {
       stdin.off("data", listener);
     };
-  }, [stdin, registry, active]);
+  }, [stdin, registry, active, hub]);
   return <ClickContext value={registry}>{children}</ClickContext>;
 }
 

@@ -1,4 +1,5 @@
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useKeys } from "./core/input.js";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useWheel } from "./mouse.js";
 import { matchesQuery, useListRows, windowStart } from "./picker.js";
@@ -73,7 +74,7 @@ export function AutoModelsPanel(props: AutoModelsPanelProps): ReactNode {
   const save = () => {
     props.onDone(models?.filter((m) => marked.has(m.id)).map((m) => m.id) ?? []);
   };
-  useInput((input, key) => {
+  useKeys((input, key) => {
     if (key.escape) {
       if (query !== "") {
         setQuery("");

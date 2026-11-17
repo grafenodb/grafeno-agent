@@ -1,4 +1,5 @@
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useKeys } from "./core/input.js";
 import { useState, type ReactNode } from "react";
 import type { ConnectionActionsApi } from "../app/connections.js";
 import { describeModel, type Discovery } from "../providers/local/discover.js";
@@ -116,7 +117,7 @@ export function LocalPanel(props: LocalPanelProps): ReactNode {
       );
   };
 
-  useInput(
+  useKeys(
     (input, key) => {
       if (step.kind === "url" && key.escape) setStep({ kind: "list" });
       if (step.kind === "remove") {

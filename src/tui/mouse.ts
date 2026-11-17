@@ -1,5 +1,6 @@
 import { useStdin } from "ink";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import { useInputHub, useMouse, type Layer } from "./core/input.js";
 
 const ESC = String.fromCharCode(27);
 
@@ -23,18 +24,30 @@ export function wheelTurns(chunk: string): number[] {
 
 /**
  * Calls `onWheel` with +1 (up) or -1 (down) for each notch of the mouse
- * wheel. Ink reads the same input and drops the mouse reports, so typing is
- * never disturbed.
+ * wheel. In the interface's input area it turns only while `layer` has the
+ * focus (the conversation does not scroll behind an open menu); outside
+ * one, it reads the terminal itself. Ink reads the same input and drops the
+ * mouse reports, so typing is never disturbed.
  */
-export function useWheel(onWheel: (direction: number) => void): void {
+export function useWheel(onWheel: (direction: number) => void, layer: Layer = "overlay"): void {
   const { stdin } = useStdin();
+  const hub = useInputHub();
+  const ref = useRef(onWheel);
+  ref.current = onWheel;
+  useMouse(
+    (event) => {
+      if (event.kind === "wheel") ref.current(event.direction);
+    },
+    { layer, isActive: hub !== undefined },
+  );
   useEffect(() => {
+    if (hub) return;
     const listener = (chunk: Buffer | string) => {
-      for (const turn of wheelTurns(chunk.toString())) onWheel(turn);
+      for (const turn of wheelTurns(chunk.toString())) ref.current(turn);
     };
     stdin.on("data", listener);
     return () => {
       stdin.off("data", listener);
     };
-  }, [stdin, onWheel]);
+  }, [stdin, hub]);
 }

@@ -26,7 +26,7 @@ const MARK: Record<SubAgent["state"], { mark: string; color: string }> = {
 /**
  * The left panel: the main agent (the chat) and the sub-agents its runs
  * started, each with its model and what it is doing now. The one being
- * viewed is marked; ctrl+n and ctrl+p go through them.
+ * viewed is marked; ctrl+n goes to the next one.
  */
 export function AgentsPanel({
   width,
@@ -112,7 +112,7 @@ export function AgentsPanel({
       </Box>
       <Box marginTop={1}>
         <Text dimColor wrap="wrap">
-          click one, or ctrl+n / ctrl+p (▌ the one on screen) · /agents
+          click one, or ctrl+n next (▌ the one on screen) · /agents
         </Text>
       </Box>
     </Box>

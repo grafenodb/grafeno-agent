@@ -1,4 +1,5 @@
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useKeys } from "./core/input.js";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useWheel } from "./mouse.js";
 import { useListRows, windowStart } from "./picker.js";
@@ -119,7 +120,7 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
     };
   }, [props.providers, checking]);
 
-  useInput((input, key) => {
+  useKeys((input, key) => {
     if (choosingModels) return;
     if (key.escape) {
       if (query !== "") {

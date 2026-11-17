@@ -439,6 +439,60 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.unmount();
   });
 
+  it("ctrl+p opens the command palette; its action is the menu button's, and the keys reach only it", async () => {
+    const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
+    await ready(app);
+    // What is typed and not sent stays while a menu is open over it.
+    await type(app, "half a thought");
+    app.stdin.write("\u0010");
+    await until(() => now(app).includes("Commands ·"), "the palette");
+    expect(now(app)).toContain("Side panel  (ctrl+b)");
+    // Typed in the palette, the search: never in the prompt behind it.
+    await type(app, "models");
+    await until(() => now(app).includes("/models"), "the search");
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("Haiku 5.5"), "the model list, from the palette");
+    await press(app, "\u001B", () => now(app).includes("half a thought"), "the prompt again");
+    expect(now(app)).not.toContain("half a thoughtmodels");
+    // The menu button runs the same action.
+    clickOn(app, "[Model]");
+    await until(() => now(app).includes("Haiku 5.5"), "the model list, from the menu");
+    await press(app, "\u001B", () => now(app).includes("half a thought"), "the prompt, once more");
+    app.unmount();
+  });
+
+  it("goes on taking keys while the agent answers: typed ahead, sent once it is done", async () => {
+    const words = Array.from({ length: 200 }, (_, i) => ({ say: `w${String(i)} ` }));
+    const app = render(
+      <App
+        services={services({
+          turns: [
+            [{ wait: 400 }, ...words, { wait: 400 }, { say: "End-One" }],
+            [{ say: "End-Two" }],
+          ],
+        })}
+      />,
+    );
+    await ready(app);
+    await type(app, "first");
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("type ahead"), "the agent working");
+    // Typed while the answer streams in: it shows, and nothing moves it away.
+    await type(app, "second");
+    await until(() => now(app).includes("second"), "what was typed ahead");
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("still answering"), "the hold");
+    expect(now(app)).toContain("second");
+    await until(() => seen(app).includes("End-One"), "the first answer", 15_000);
+    // Done: the box says so (what was typed is still in it, so its placeholder does not show).
+    await until(() => !now(app).includes("Working"), "the agent done");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(now(app)).toContain("second");
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("End-Two"), "the second answer");
+    app.unmount();
+  });
+
   it("goes back a step with esc in /connect: a section to its menu, the menu to the chat", async () => {
     const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
     await ready(app);
@@ -1111,8 +1165,8 @@ describe("sub-agents in the interface", { timeout: 90_000 }, () => {
     expect(now(app)).not.toContain("now.done");
     expect(now(app)).toContain("alpha.txt");
     expect(now(app)).not.toContain("Ask anything");
-    // ctrl+p: back to the main agent and its prompt.
-    app.stdin.write("\u0010");
+    // esc: back to the main agent and its prompt (ctrl+p is the command palette).
+    app.stdin.write("\u001B");
     await until(() => now(app).includes("Ask anything"), "the main agent's prompt");
     // In Auto (nothing set), sub-agents are not pinned to the chat's provider.
     expect(extras[0]?.provider).toBeUndefined();

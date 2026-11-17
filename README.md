@@ -223,9 +223,20 @@ The panel hides on narrow windows, or with Ctrl+B.
 Keys: Enter sends; `\` then Enter (or Shift+Enter) starts a new line; ↑ ↓
 go through earlier messages; Tab completes a command; PgUp/PgDn scroll the
 conversation (so does the mouse wheel; select text with Shift and the
-mouse, or set `GRAFENO_AGENT_MOUSE=off`); Ctrl+B shows or hides the panel;
-Ctrl+N and Ctrl+P go through the main agent and its sub-agents;
-Esc interrupts the answer; Ctrl+C interrupts, or leaves.
+mouse, or set `GRAFENO_AGENT_MOUSE=off`); **Ctrl+P** opens the command
+palette (every command and key, searchable); Ctrl+B shows or hides the
+panel; Ctrl+O opens or folds every action; Ctrl+N goes to the next agent
+(the main agent, then each sub-agent; Esc goes back to the main one); Esc
+interrupts the answer; Ctrl+C interrupts, or leaves.
+
+**Typing ahead.** The prompt takes keys while the agent answers: what you
+type stays, and Enter sends it once the answer is done. What is typed and
+not sent stays, too, while a menu is open over it.
+
+**Keys go where the focus is.** A menu or a dialog takes the keys while it
+is open, and an approval takes them over everything: a key typed there
+never reaches the prompt behind it, and PgUp/PgDn or the wheel scroll the
+menu, not the conversation. Esc goes back one step.
 
 **The mouse does what the commands do.** Every click has a command or a
 key that does the same, so nothing needs the mouse:
@@ -721,7 +732,7 @@ folder and branch, and the last thing it told the orchestrator.
   description says who asked, why, and what to do, and a sub-agent does it
   as any other task. A run accepts four requests at most.
 
-- **Ctrl+N / Ctrl+P**, or `/agents`, show another agent's work as it goes:
+- **Ctrl+N** (next, round), or `/agents`, show another agent's work as it goes:
   its words and the tools it used.
 - A sub-agent is **read only**: it takes no prompts, because the main agent
   orchestrates it. Go back to the main agent to write.

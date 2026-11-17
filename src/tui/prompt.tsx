@@ -1,5 +1,6 @@
-import { Box, Text, useInput, usePaste } from "ink";
-import { useState, type ReactNode } from "react";
+import { Box, Text, usePaste } from "ink";
+import { useHasFocus, useKeys, type Layer } from "./core/input.js";
+import { useEffect, useState, type ReactNode } from "react";
 import { suggest, type Command } from "./commands.js";
 import { edit, EMPTY, insert, type EditorState } from "./editor.js";
 import { theme } from "./theme.js";
@@ -19,6 +20,20 @@ export interface PromptProps {
   readonly history?: readonly string[];
   /** What it starts with. */
   readonly initial?: string;
+  /**
+   * Its layer in the interface's input: the conversation's prompt is the
+   * `base`; one in a menu or dialog (an address, a name) is part of that
+   * `overlay`, the default.
+   */
+  readonly layer?: Layer;
+  /** Told what is typed as it changes (kept by whoever shows it again later). */
+  readonly onChange?: (text: string) => void;
+  /**
+   * Whether Enter sends now; when not, what is typed stays and `onHeld` is
+   * told (typing goes on while the agent answers). Default: true.
+   */
+  readonly canSubmit?: boolean;
+  readonly onHeld?: (text: string) => void;
 }
 
 const MENU = 8;
@@ -35,10 +50,23 @@ export function Prompt(props: PromptProps): ReactNode {
   const open = menu.length > 0;
   const choice = Math.min(selected, menu.length - 1);
 
+  const layer = props.layer ?? "overlay";
+  const focused = useHasFocus(layer, props.active);
+  const onChange = props.onChange;
+  useEffect(() => {
+    onChange?.(state.value);
+  }, [state.value, onChange]);
+
   const submit = (text: string) => {
+    if (props.canSubmit === false) {
+      props.onHeld?.(text);
+      return;
+    }
     setState(EMPTY);
     setSelected(0);
     setBack(-1);
+    // Said at once: what is sent may close this box before its effect runs.
+    onChange?.("");
     props.onSubmit(text);
   };
 
@@ -46,10 +74,10 @@ export function Prompt(props: PromptProps): ReactNode {
     (text) => {
       setState((current) => insert(current, text));
     },
-    { isActive: props.active },
+    { isActive: focused },
   );
 
-  useInput(
+  useKeys(
     (input, key) => {
       if (key.return) {
         // A line ending in "\" goes on to the next line; so does Shift+Enter.
@@ -107,7 +135,7 @@ export function Prompt(props: PromptProps): ReactNode {
         setSelected(0);
       }
     },
-    { isActive: props.active },
+    { isActive: props.active, layer },
   );
 
   return (

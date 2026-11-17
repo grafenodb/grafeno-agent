@@ -1,4 +1,4 @@
-import { Box, measureElement, Text, useApp, useInput, useWindowSize, type DOMElement } from "ink";
+import { Box, measureElement, Text, useApp, useWindowSize, type DOMElement } from "ink";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { readEnvironment, type Environment } from "../app/environment.js";
 import type { AppServices } from "../app/services.js";
@@ -49,6 +49,8 @@ import {
 } from "./agents.js";
 import { AgentsPanel, AgentView, agentKey } from "./agents-panel.js";
 import { ClickArea, Clickable } from "./clicks.js";
+import { InputArea, useGlobalKeys, useKeys } from "./core/input.js";
+import { commandAction, commandActions, paletteItems, VIEW_ACTIONS } from "./core/actions.js";
 import { ProjectsPanel } from "./projects.js";
 import { deleteProjectEverywhere, describeDeletion } from "../app/project-delete.js";
 import { projectFootprint } from "../projects.js";
@@ -159,6 +161,7 @@ type Mode =
   | "leader"
   | "effort"
   | "mode"
+  | "palette"
   | "resume"
   | "connect"
   | "palace"
@@ -194,10 +197,13 @@ interface LiveTool {
  * menu, a list, a panel or a button does too.
  */
 export function App({ services }: { readonly services: AppServices }): ReactNode {
+  // One reader of the terminal's input: keys and mouse go to whoever has the focus.
   return (
-    <ClickArea>
-      <AppBody services={services} />
-    </ClickArea>
+    <InputArea>
+      <ClickArea>
+        <AppBody services={services} />
+      </ClickArea>
+    </InputArea>
   );
 }
 
@@ -1400,20 +1406,76 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   };
 
   // The wheel scrolls the conversation when no menu is open; an open menu scrolls itself.
+  // What is typed in the conversation's prompt, kept while a menu is open over it.
+  const draft = useRef("");
+  const keepDraft = useCallback((text: string) => {
+    draft.current = text;
+  }, []);
   const modeNow = useRef(mode);
   modeNow.current = mode;
   const onWheel = useCallback((direction: number) => {
     if (modeNow.current !== "chat") return;
     setScroll((s) => Math.max(0, s + direction * 3));
   }, []);
-  useWheel(onWheel);
+  // The conversation's layer: it scrolls only while nothing is open over it.
+  useWheel(onWheel, "base");
 
-  useInput((input, key) => {
-    if (approval) {
-      if (input === "y" || input === "Y" || input === "s") answerApproval(true);
-      else if (input === "n" || input === "N" || key.escape) answerApproval(false);
+  /**
+   * An action, however it was reached: a menu button, its key, the palette
+   * or a command typed with "/" (which goes through `submit` as typed).
+   */
+  const runAction = (id: string) => {
+    if (id.startsWith("command.")) {
+      const name = id.slice("command.".length);
+      setPermissionChoice(undefined);
+      if (mode !== "chat") setMode("chat");
+      if (name !== "agents") setViewing(undefined);
+      void submit(`/${name}`);
       return;
     }
+    switch (id) {
+      case "palette":
+        setMode("palette");
+        break;
+      case "view.sidebar":
+        setMode((m) => (m === "palette" ? "chat" : m));
+        setSidebarOn((on) => !on);
+        break;
+      case "view.fold":
+        setMode((m) => (m === "palette" ? "chat" : m));
+        setAllOpen((open) => !open);
+        setFlipped(new Set());
+        break;
+      case "agents.next": {
+        setMode((m) => (m === "palette" ? "chat" : m));
+        if (agents.length === 0) {
+          notice("No sub-agent is working: the main agent is the only one.", "info");
+          break;
+        }
+        // Through the main agent and its sub-agents, round.
+        const keys = [undefined, ...agents.map(agentKey)];
+        const at = keys.indexOf(viewing);
+        setViewing(keys[(at + 1) % keys.length]);
+        setScroll(0);
+        break;
+      }
+    }
+  };
+
+  // An approval has the keys while it waits: nothing else hears them.
+  useKeys(
+    (input, key) => {
+      if (input === "y" || input === "Y" || input === "s") answerApproval(true);
+      else if (input === "n" || input === "N" || key.escape) answerApproval(false);
+    },
+    { layer: "modal", isActive: approval !== undefined },
+  );
+
+  useGlobalKeys((input, key, top) => {
+    if (top === "modal" || approval) return;
+    // A menu or dialog has the keys: only what works everywhere reaches here.
+    const inMenu = top === "overlay" || (mode !== "chat" && mode !== "exiting");
+    if (inMenu && !(key.ctrl && (input === "c" || input === "b"))) return;
     // Esc in a menu is the menu's own: each goes back one step (a section of
     // /connect to its menu, a step to the one before) and closes at its first.
     // Here it goes back to the main agent from a sub-agent, or stops work,
@@ -1440,18 +1502,11 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     }
     if (key.pageUp) setScroll((s) => s + Math.max(3, rows - 10));
     else if (key.pageDown) setScroll((s) => Math.max(0, s - Math.max(3, rows - 10)));
-    else if (key.ctrl && input === "b") setSidebarOn((on) => !on);
-    else if (key.ctrl && input === "o") {
-      setAllOpen((open) => !open);
-      setFlipped(new Set());
-    } else if (key.ctrl && (input === "n" || input === "p") && agents.length > 0) {
-      // Through the main agent and its sub-agents.
-      const keys = [undefined, ...agents.map(agentKey)];
-      const at = keys.indexOf(viewing);
-      const next = (at + (input === "n" ? 1 : keys.length - 1)) % keys.length;
-      setViewing(keys[next]);
-      setScroll(0);
-    } else if (key.ctrl && input === "c") {
+    else if (key.ctrl && input === "b") runAction("view.sidebar");
+    else if (key.ctrl && input === "o") runAction("view.fold");
+    else if (key.ctrl && input === "p") runAction("palette");
+    else if (key.ctrl && input === "n") runAction("agents.next");
+    else if (key.ctrl && input === "c") {
       if (busy !== undefined && abort.current) abort.current.abort();
       else if (mode === "exiting") exit();
       else if (mode !== "chat") setMode("chat");
@@ -1615,10 +1670,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
             setMode("chat");
             return;
           }
-          setPermissionChoice(undefined);
-          if (mode !== "chat") setMode("chat");
-          if (command !== "agents") setViewing(undefined);
-          void submit(`/${command}`);
+          runAction(commandAction(command));
         }}
       />
       <Box flexDirection="row" flexGrow={1}>
@@ -1869,6 +1921,21 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                     `Permissions: ${PERMISSION_LABELS[chosen]}, ${SCOPE_LABELS[scope].toLowerCase()}.${chosen === "skip" ? " Everything runs without asking, except what is never allowed." : ""}`,
                     chosen === "skip" ? "warning" : "success",
                   );
+                }}
+              />
+            )}
+            {mode === "palette" && (
+              <Picker
+                title="Commands"
+                search
+                rows={12}
+                items={paletteItems([...VIEW_ACTIONS, ...commandActions(COMMANDS)])}
+                onCancel={() => {
+                  setMode("chat");
+                }}
+                onSelect={(item) => {
+                  setMode("chat");
+                  runAction(item.id);
                 }}
               />
             )}
@@ -2448,20 +2515,30 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                   <Text dimColor>
                     {" "}
                     {String(agents.findIndex((a) => agentKey(a) === viewing) + 1)} of{" "}
-                    {String(agents.length)} · read only: the main agent orchestrates it · ctrl+n /
-                    ctrl+p switch · /agents
+                    {String(agents.length)} · read only: the main agent orchestrates it · ctrl+n
+                    next · /agents
                   </Text>
                 </Text>
               </Box>
             )}
             {mode === "chat" && !approval && !viewed && (
               <Prompt
-                active={busy === undefined && phase !== "starting"}
+                layer="base"
+                active={phase !== "starting"}
+                canSubmit={busy === undefined}
+                onHeld={() => {
+                  notice(
+                    "The agent is still answering: what you typed stays here; enter sends it once it is done (esc stops it).",
+                    "info",
+                  );
+                }}
+                initial={draft.current}
+                onChange={keepDraft}
                 placeholder={
                   phase === "starting"
                     ? "Connecting…"
                     : busy !== undefined
-                      ? "Working… esc to interrupt"
+                      ? "Working… type ahead, esc to interrupt"
                       : session
                         ? "Ask anything · / for commands"
                         : "Not connected · /palace · /connect"

@@ -51,7 +51,7 @@ export const COMMANDS: readonly Command[] = [
   { name: "runs", description: "Earlier runs of this project: see or resume one" },
   {
     name: "agents",
-    description: "The main agent and its sub-agents: view one (read only; ctrl+n / ctrl+p)",
+    description: "The main agent and its sub-agents: view one (read only; ctrl+n next)",
   },
   {
     name: "skills",

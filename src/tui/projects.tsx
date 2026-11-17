@@ -1,4 +1,5 @@
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useKeys } from "./core/input.js";
 import { basename, dirname, join } from "node:path";
 import { useState, type ReactNode } from "react";
 import { addProject, loadProjects, projectNameProblem, type ProjectEntry } from "../projects.js";
@@ -67,7 +68,7 @@ export function ProjectsPanel(props: ProjectsPanelProps): ReactNode {
       },
     );
   };
-  useInput(
+  useKeys(
     (input, key) => {
       if (input === "y" || input === "Y") confirmDelete();
       else if (input === "n" || input === "N" || key.escape) {

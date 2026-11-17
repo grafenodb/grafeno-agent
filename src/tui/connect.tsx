@@ -1,4 +1,5 @@
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useKeys } from "./core/input.js";
 import { useState, type ReactNode } from "react";
 import { Prompt } from "./prompt.js";
 import { theme } from "./theme.js";
@@ -25,7 +26,7 @@ export function Connect(props: ConnectProps): ReactNode {
   const [url, setUrl] = useState(props.current.url);
   const [key, setKey] = useState<string | undefined>(undefined);
 
-  useInput((_input, k) => {
+  useKeys((_input, k) => {
     if (k.escape) props.onDone(undefined);
   });
 

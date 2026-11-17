@@ -1,4 +1,5 @@
-import { Box, Text, useInput, usePaste } from "ink";
+import { Box, Text, usePaste } from "ink";
+import { useHasFocus, useKeys } from "./core/input.js";
 import { useState, type ReactNode } from "react";
 import type { ConnectionType } from "../providers/profiles.js";
 import { Clickable } from "./clicks.js";
@@ -139,13 +140,14 @@ export function KeyEntry({
     });
   };
 
+  const focused = useHasFocus("overlay", !checking);
   usePaste(
     (text) => {
       if (!checking) setValue((v) => v + text.replace(/\s+/g, ""));
     },
-    { isActive: !checking },
+    { isActive: focused },
   );
-  useInput(
+  useKeys(
     (input, key) => {
       if (key.escape) onCancel();
       else if (key.return) submit();
