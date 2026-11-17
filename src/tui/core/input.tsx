@@ -3,6 +3,7 @@ import {
   createContext,
   use,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useSyncExternalStore,
@@ -248,12 +249,14 @@ function useEntry(
 ): void {
   const active = useRef(isActive);
   active.current = isActive;
-  // Registered once; the handlers and the switch are read through refs.
-  useEffect(() => {
+  // Registered once; the handlers and the switch are read through refs. In the
+  // same commit that draws it (a layout effect): a passive effect can run after
+  // the next key, and a list that just appeared would miss the Enter pressed on it.
+  useLayoutEffect(() => {
     if (!hub) return;
     return hub.add({ layer, active, ...parts });
   }, [hub, layer]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     hub?.changed();
   }, [hub, isActive]);
 }

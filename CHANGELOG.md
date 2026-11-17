@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Views over the conversation**, with the same keys and only what the
+  system knows: `/runs` (each run's tasks and attempts: model, outcome,
+  time, tokens, checks, why routed; o opens it as before), `/providers`
+  (available, connected, configured, unavailable or error, from what each
+  answered; use one, switch it, ask again), **Models · details** (tier,
+  and context, tools, vision when a model server says so) and `/vault`
+  (search the memory, a memory with its facts, the contradictions
+  Grafeno recorded).
+- **Delete or empty a namespace** from `/vault`: a dialog asks for its name
+  typed in full; emptying deletes and makes it again with its description;
+  this session's own is not deleted (it can be emptied, with a warning);
+  Grafeno's `Drop` permission decides.
+- Keys reached a list drawn in the same moment late: its handler was
+  registered after the screen showed it, so an Enter pressed at once was
+  lost. Handlers now register as they are drawn.
 - **Panels take the keys**: Tab and Shift+Tab move between the
   conversation, the side panel and the agents panel; in a panel ↑↓ choose,
   Enter opens, Shift+F10 (or the Menu key, or a right click) shows the

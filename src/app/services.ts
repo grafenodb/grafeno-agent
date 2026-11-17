@@ -38,6 +38,7 @@ import { lightModel, mostRoom, triage, type PoolMember, type TriageDecision } fr
 import type { ModelChoice, Provider } from "../providers/types.js";
 import { settingsPath, updateSettings } from "../settings-file.js";
 import { Grafeno } from "@grafenodb/client";
+import { memoryAdmin, type MemoryAdmin } from "./memory-admin.js";
 import { checkGrafeno } from "../startup.js";
 import { localRouting } from "../orchestrator/router.js";
 import { AgentSession, type SessionExtensions } from "./session.js";
@@ -135,6 +136,12 @@ export interface AppServices {
   }): void;
   /** The memory upkeep report for the session's project. */
   upkeep(session: AgentSession): Promise<string>;
+  /**
+   * The memory as the interface explores it (search, relations, namespaces
+   * to delete or empty), with the token that may: the owner's for the
+   * included Grafeno, the agent's key otherwise.
+   */
+  memoryAdmin?(namespace: string): Promise<MemoryAdmin>;
   /** What /connect does to connections: keys, switches, billing, disconnecting. */
   readonly connections?: ConnectionActionsApi;
   /**
@@ -467,6 +474,14 @@ export function realServices(version: string): AppServices {
         `${chosen.provider.id}/${model ?? "default"}`,
         signal,
       );
+    },
+    async memoryAdmin(namespace: string) {
+      const config = await prepareGrafeno(loadConfig(env), env);
+      const token =
+        config.grafenoMode === "included"
+          ? (env.GRAFENO_OWNER_TOKEN?.trim() ?? config.agentKey)
+          : config.agentKey;
+      return memoryAdmin(new Grafeno({ url: config.grafenoUrl, token }), namespace);
     },
     async upkeep(session: AgentSession) {
       const report = await upkeep({

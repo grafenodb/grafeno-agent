@@ -207,34 +207,36 @@ without asking, a panel the window has no room for, and the keys that work
 from anywhere. Every state is a word or a mark, never a color alone; a
 terminal with fewer colors gets the nearest ones, and `NO_COLOR` none.
 
-| Command        | What it does                                                    |
-| -------------- | --------------------------------------------------------------- |
-| `/help`        | Commands and keys                                               |
-| `/new`         | A new conversation (the current one is kept)                    |
-| `/resume`      | Take up an earlier conversation of this project                 |
-| `/models`      | Choose the model, by its exact name (type to search)            |
-| `/leader`      | Choose the leader of orchestrated runs (see below)              |
-| `/sandbox`     | Grafeno Sandbox: status, list, inspect, stop, destroy           |
-| `/effort`      | Choose how hard the model thinks (Low … Max)                    |
-| `/connect`     | Connections: CLI, API key, coding plan, local; manage, list     |
-| `/mode`        | Auto, or the provider chosen in `/connect` (`auto`, `specific`) |
-| `/palace`      | Grafeno: included, or a server you already have                 |
-| `/permissions` | Ask, automatic or skip permissions, and for what (see below)    |
-| `/unattended`  | Work on alone until the task is done (see below)                |
-| `/usage`       | Your provider's real usage, and this session's tokens           |
-| `/status`      | Provider, Grafeno, agent, project and model                     |
-| `/memory`      | What memory brought back when the session started               |
-| `/checkpoint`  | Save where the work stands, in memory                           |
-| `/orchestrate` | Plan a request and run it with several workers (see below)      |
-| `/runs`        | Earlier runs of this project: see one, or resume it             |
-| `/agents`      | The main agent and its sub-agents: view one, read only          |
-| `/skills`      | The skills the agent can use                                    |
-| `/mcp`         | MCP servers: Grafeno's own (always on) and yours                |
-| `/plugins`     | Services the agent works with: GitHub, GitLab                   |
-| `/upkeep`      | Report on the memory: duplicates, contradictions                |
-| `/sidebar`     | Show or hide the side panel                                     |
-| `/clear`       | Clear the conversation from the screen                          |
-| `/exit`        | Leave, saving where the session stands                          |
+| Command        | What it does                                                      |
+| -------------- | ----------------------------------------------------------------- |
+| `/help`        | Commands and keys                                                 |
+| `/new`         | A new conversation (the current one is kept)                      |
+| `/resume`      | Take up an earlier conversation of this project                   |
+| `/models`      | Choose the model, by its exact name (type to search)              |
+| `/leader`      | Choose the leader of orchestrated runs (see below)                |
+| `/sandbox`     | Grafeno Sandbox: status, list, inspect, stop, destroy             |
+| `/effort`      | Choose how hard the model thinks (Low … Max)                      |
+| `/connect`     | Connections: CLI, API key, coding plan, local; manage, list       |
+| `/mode`        | Auto, or the provider chosen in `/connect` (`auto`, `specific`)   |
+| `/providers`   | Every connection and its state: available, connected, configured… |
+| `/palace`      | Grafeno: included, or a server you already have                   |
+| `/permissions` | Ask, automatic or skip permissions, and for what (see below)      |
+| `/unattended`  | Work on alone until the task is done (see below)                  |
+| `/usage`       | Your provider's real usage, and this session's tokens             |
+| `/status`      | Provider, Grafeno, agent, project and model                       |
+| `/memory`      | What memory brought back when the session started                 |
+| `/vault`       | Explore the memory: search, facts, contradictions, namespaces     |
+| `/checkpoint`  | Save where the work stands, in memory                             |
+| `/orchestrate` | Plan a request and run it with several workers (see below)        |
+| `/runs`        | The project's runs: each one's tasks and attempts; open or resume |
+| `/agents`      | The main agent and its sub-agents: view one, read only            |
+| `/skills`      | The skills the agent can use                                      |
+| `/mcp`         | MCP servers: Grafeno's own (always on) and yours                  |
+| `/plugins`     | Services the agent works with: GitHub, GitLab                     |
+| `/upkeep`      | Report on the memory: duplicates, contradictions                  |
+| `/sidebar`     | Show or hide the side panel                                       |
+| `/clear`       | Clear the conversation from the screen                            |
+| `/exit`        | Leave, saving where the session stands                            |
 
 Keys: Enter sends; `\` then Enter (or Shift+Enter) starts a new line; ↑ ↓
 go through earlier messages; Tab completes a command; PgUp/PgDn scroll the
@@ -259,6 +261,38 @@ the run recorded of it (its state, model, tokens, folder, branch, last
 report), "unknown" where nothing was recorded. A double click opens the
 same inspector. Esc closes what opened and gives the keys back to where
 they were; in a panel, Esc goes back to the conversation.
+
+**Views.** Each opens over the conversation, with the same keys (↑↓,
+Enter to inspect, Esc to go back) and shows only what the system knows
+("unknown" where it does not):
+
+- **`/runs`**: the project's runs (request, state, tasks done, when),
+  sortable; Enter opens one (what it recorded, and its tasks), Enter on a
+  task shows each attempt (model, outcome, time, tokens), its checks and
+  why it was routed so; **o** opens the run as before (its report when it
+  ended, or it goes on). Tool calls are not kept in a run: they show live
+  in the agents panel, and the inspector says so.
+- **`/providers`**: every connection and what it is now, from what it
+  answered (a setting alone is never a connection): **available**,
+  **connected** (signed in, but held back: it bills per token and that is
+  not allowed), **configured** (not signed in), **unavailable** (switched
+  off, not installed, not reachable) or **error**. Enter inspects one: use
+  it for the chat, switch it on or off, ask it again.
+- **Models · details** (the palette, or the side panel's Model section):
+  the chat's provider's models, with their tier, and their context, tools,
+  vision and whether they are loaded when a model server says so; Enter
+  inspects one and makes it the chat's model.
+- **`/vault`**: the memory. **Search** it (in this session's namespace),
+  open a memory with its facts (where each comes from and goes, the ones
+  that no longer hold marked) and go from one memory to the next; see the
+  **contradictions** Grafeno recorded; and **namespaces**: each with its
+  memories and facts, emptied or deleted from its inspector. A dialog asks
+  for the namespace's name, typed in full, before either; emptying is
+  deleting and making it again with its description (Grafeno has no call
+  for it), and a failure in between is said. This session's own namespace
+  is not deleted from here (it can be emptied, with a warning). Both need
+  the `Drop` permission on the namespace (the included Grafeno's owner
+  has it); without it, Grafeno's refusal is what is shown.
 
 **Keys go where the focus is.** A menu or a dialog takes the keys while it
 is open, and an approval takes them over everything: a key typed there

@@ -31,6 +31,11 @@ export const VIEW_ACTIONS: readonly ActionSpec[] = [
     hint: "the panels step aside until pressed again",
     keys: "ctrl+f",
   },
+  {
+    id: "view.models",
+    title: "Models · details",
+    hint: "the chat's provider's models, with what is verified of each",
+  },
   { id: "view.left", title: "Agents panel", hint: "show or hide it (when a run has sub-agents)" },
   { id: "view.right.wider", title: "Side panel wider", hint: "4 columns more, within its limits" },
   { id: "view.right.narrower", title: "Side panel narrower", hint: "4 columns less" },

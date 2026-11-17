@@ -61,6 +61,11 @@ import {
   type LayoutPrefs,
 } from "./core/layout.js";
 import { PanelOverlay, Shell } from "./shell.js";
+import { MemoryView } from "./views/memory.js";
+import { ModelsView } from "./views/models.js";
+import { ProvidersView } from "./views/providers.js";
+import { RunsView } from "./views/runs.js";
+import type { MemoryAdmin } from "../app/memory-admin.js";
 import { StatusBar } from "./status-bar.js";
 import { commandAction, commandActions, paletteItems, VIEW_ACTIONS } from "./core/actions.js";
 import { ProjectsPanel } from "./projects.js";
@@ -126,12 +131,15 @@ const SECTION_ACTIONS: Readonly<Record<SidebarSection, readonly MenuItem[]>> = {
     { id: "command.effort", label: "How hard it thinks" },
     { id: "command.mode", label: "Auto or specific" },
     { id: "command.connect", label: "Connections" },
+    { id: "view.models", label: "Models · details", hint: "what is verified of each" },
+    { id: "command.providers", label: "Providers · states" },
   ],
   usage: [
     { id: "command.usage refresh", label: "Usage, asked again" },
     { id: "command.usage", label: "Usage" },
   ],
   memory: [
+    { id: "command.vault", label: "Explore the memory", hint: "search, facts, namespaces" },
     { id: "command.palace", label: "Memory (Grafeno)" },
     { id: "command.memory", label: "What memory brought back" },
     { id: "command.upkeep", label: "Upkeep report" },
@@ -195,6 +203,7 @@ type Mode =
   | "palette"
   | "panels"
   | "overlay"
+  | "view"
   | "resume"
   | "connect"
   | "palace"
@@ -312,6 +321,11 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     parseLayoutPrefs(process.env.AGENT_TUI_LAYOUT),
   );
   const [maximized, setMaximized] = useState(false);
+  /** A view open over the conversation: runs, providers, models or the memory. */
+  const [view, setView] = useState<"runs" | "providers" | "models" | "memory" | undefined>(
+    undefined,
+  );
+  const [memory, setMemory] = useState<MemoryAdmin | undefined>(undefined);
   // Which region has the keys: the conversation, or a panel beside it (Tab moves between them),
   // and where the keyboard is in each panel.
   const [region, setRegion] = useState<"main" | "left" | "right">("main");
@@ -345,7 +359,6 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   const [flipped, setFlipped] = useState<ReadonlySet<number>>(new Set());
   const [, setTick] = useState(0);
   const [watched, setWatched] = useState<Watched | undefined>(undefined);
-  const [runChoices, setRunChoices] = useState<PickerItem[]>([]);
   // Sub-agents the main agent's runs started, and the one shown (undefined: the main agent).
   const [agents, setAgents] = useState<SubAgent[]>([]);
   const [viewing, setViewing] = useState<string | undefined>(undefined);
@@ -1411,14 +1424,8 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
               break;
             }
             orchestration.current = { orchestrator, running: false };
-            setRunChoices(
-              runs.map((run) => ({
-                id: run.id,
-                label: run.request.length > 60 ? `${run.request.slice(0, 59)}…` : run.request,
-                hint: `${run.state} · ${ago(run.updated)}`,
-              })),
-            );
-            setMode("runs");
+            setView("runs");
+            setMode("view");
           } catch (error) {
             notice(error instanceof Error ? error.message : String(error), "error");
           }
@@ -1427,6 +1434,24 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
         case "sidebar":
           runAction("view.sidebar");
           break;
+        case "providers":
+          setView("providers");
+          setMode("view");
+          break;
+        case "vault": {
+          if (!session || !services.memoryAdmin) {
+            notice("The memory is explored once connected to Grafeno (/palace).", "warning");
+            break;
+          }
+          try {
+            setMemory(await services.memoryAdmin(session.vault.namespace));
+            setView("memory");
+            setMode("view");
+          } catch (error) {
+            notice(error instanceof Error ? error.message : String(error), "error");
+          }
+          break;
+        }
         case "clear":
           setItems([]);
           break;
@@ -1535,6 +1560,14 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
         setMode((m) => (m === "palette" ? "chat" : m));
         setAllOpen((open) => !open);
         setFlipped(new Set());
+        break;
+      case "view.models":
+        if (!session) {
+          notice("Not connected yet: /connect chooses a provider.", "warning");
+          break;
+        }
+        setView("models");
+        setMode("view");
         break;
       case "agents.next": {
         setMode((m) => (m === "palette" ? "chat" : m));
@@ -1852,6 +1885,34 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       else notice(`Specific: the chat uses ${next.name}. General Auto is off.`, "success");
       setTick((t) => t + 1);
     })();
+  };
+
+  /**
+   * Switches a connection on or off; off means off, now: the chat leaves
+   * the one it uses, with no model until another is chosen.
+   */
+  const switchConnection = (target: Provider, on: boolean): string => {
+    const said =
+      services.connections?.setEnabled(target.id, on) ??
+      "Connections are switched on and off from the terminal here.";
+    if (!on && session && session.provider.id === target.id) {
+      void session
+        .setProvider(
+          new NoModelProvider(
+            `${target.name} is switched off, so no model is selected: nothing is sent to any provider. Choose another in /connect.`,
+          ),
+        )
+        .then(() => {
+          setModels([]);
+          setUsage(undefined);
+          notice(
+            `${target.name} was the chat's model: no model is selected now. Choose another in /connect.`,
+            "warning",
+          );
+          setTick((t) => t + 1);
+        });
+    }
+    return said;
   };
 
   /** Makes a provider the chat's (from /connect): said when it cannot be, and why. */
@@ -2207,6 +2268,86 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                 }}
               />
             )}
+            {mode === "view" && view === "runs" && orchestration.current && (
+              <RunsView
+                store={orchestration.current.orchestrator.store}
+                onOpen={(runId) => {
+                  setMode("chat");
+                  setView(undefined);
+                  const current = orchestration.current;
+                  if (!current) return;
+                  const run = current.orchestrator.store.run(runId);
+                  if (run && (run.state === "completed" || run.state === "cancelled")) {
+                    push({
+                      kind: "block",
+                      title: "Run report",
+                      lines: describeReport(current.orchestrator.report(runId)),
+                    });
+                    current.orchestrator.close();
+                    orchestration.current = undefined;
+                    return;
+                  }
+                  void driveRun(current.orchestrator, runId);
+                }}
+                onClose={() => {
+                  orchestration.current?.orchestrator.close();
+                  orchestration.current = undefined;
+                  setView(undefined);
+                  setMode("chat");
+                }}
+              />
+            )}
+            {mode === "view" && view === "providers" && (
+              <ProvidersView
+                providers={services.providers}
+                {...(session ? { current: session.provider.id } : {})}
+                onUse={(chosen, found) => {
+                  setView(undefined);
+                  setMode("chat");
+                  chooseProvider(found, chosen);
+                }}
+                onSwitch={(id, on) => {
+                  const target = services.providers.find((p) => p.id === id);
+                  return target ? switchConnection(target, on) : `${id} is not known.`;
+                }}
+                notice={(text) => {
+                  notice(text, "info");
+                }}
+                onClose={() => {
+                  setView(undefined);
+                  setMode("chat");
+                }}
+              />
+            )}
+            {mode === "view" && view === "models" && session && (
+              <ModelsView
+                provider={session.provider}
+                current={session.model}
+                onUse={(id) => {
+                  setView(undefined);
+                  setMode("chat");
+                  void session.setModel(id).then(() => {
+                    services.saveChoice({ model: id });
+                    notice(`Model: ${session.provider.modelName(id)}.`, "success");
+                    setTick((t) => t + 1);
+                  });
+                }}
+                onClose={() => {
+                  setView(undefined);
+                  setMode("chat");
+                }}
+              />
+            )}
+            {mode === "view" && view === "memory" && memory && (
+              <MemoryView
+                admin={memory}
+                notice={notice}
+                onClose={() => {
+                  setView(undefined);
+                  setMode("chat");
+                }}
+              />
+            )}
             {mode === "overlay" && overlay?.kind === "menu" && (
               <ContextMenu
                 title={overlay.title}
@@ -2355,34 +2496,6 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                     return;
                   }
                   void startPlanned();
-                }}
-              />
-            )}
-            {mode === "runs" && orchestration.current && (
-              <Picker
-                title="Runs of this project"
-                items={runChoices}
-                onCancel={() => {
-                  orchestration.current?.orchestrator.close();
-                  orchestration.current = undefined;
-                  setMode("chat");
-                }}
-                onSelect={(item) => {
-                  setMode("chat");
-                  const current = orchestration.current;
-                  if (!current) return;
-                  const run = current.orchestrator.store.run(item.id);
-                  if (run && (run.state === "completed" || run.state === "cancelled")) {
-                    push({
-                      kind: "block",
-                      title: "Run report",
-                      lines: describeReport(current.orchestrator.report(item.id)),
-                    });
-                    current.orchestrator.close();
-                    orchestration.current = undefined;
-                    return;
-                  }
-                  void driveRun(current.orchestrator, item.id);
                 }}
               />
             )}
@@ -2640,26 +2753,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                   switch (item.id) {
                     case "on":
                     case "off":
-                      if (actions)
-                        notice(actions.setEnabled(target.id, item.id === "on"), "success");
-                      if (item.id === "off" && session && session.provider.id === target.id) {
-                        // Off means off, now: the chat leaves it, with no model until another is chosen.
-                        void session
-                          .setProvider(
-                            new NoModelProvider(
-                              `${target.name} is switched off, so no model is selected: nothing is sent to any provider. Choose another in /connect.`,
-                            ),
-                          )
-                          .then(() => {
-                            setModels([]);
-                            setUsage(undefined);
-                            notice(
-                              `${target.name} was the chat's model: no model is selected now. Choose another in /connect.`,
-                              "warning",
-                            );
-                            setTick((t) => t + 1);
-                          });
-                      }
+                      notice(switchConnection(target, item.id === "on"), "success");
                       setConnectView({ kind: "manage" });
                       break;
                     case "check":
@@ -3371,7 +3465,7 @@ const MENU_MODE: Readonly<Record<string, Mode>> = {
   mode: "mode",
   permissions: "permissions",
   palace: "palace",
-  runs: "runs",
+  runs: "view",
   agents: "agents",
 };
 

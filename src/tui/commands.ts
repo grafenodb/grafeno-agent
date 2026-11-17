@@ -29,6 +29,11 @@ export const COMMANDS: readonly Command[] = [
   { name: "effort", description: "Choose how hard the model thinks" },
   { name: "connect", description: "Choose the provider the chat uses (Claude, Codex…)" },
   { name: "mode", description: "Auto, or the provider chosen in /connect (auto, specific)" },
+  {
+    name: "providers",
+    description: "Every connection and its state: available, connected, configured…",
+  },
+  { name: "vault", description: "Explore the memory: search, facts, contradictions, namespaces" },
   { name: "palace", description: "Grafeno: included, or a server you already have" },
   {
     name: "permissions",
