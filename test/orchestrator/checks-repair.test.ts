@@ -134,6 +134,13 @@ describe("the judge's answer", () => {
     });
     expect(of([{ check: "true" }]).verdict).toBe("none");
     expect(of(["rm -rf /"]).verdict).toBe("none");
+    // Also seen from a real local model: a placeholder where the command goes.
+    for (const run of ["...", "…", "<command>", "TODO"]) {
+      expect(of([{ check: "command", run }])).toMatchObject({
+        verdict: "none",
+        reason: `"${run}" is a placeholder, not a command`,
+      });
+    }
   });
 
   it("refuses corrections that check nothing, pass anything, or are forbidden", () => {
@@ -312,6 +319,41 @@ describe("checks judged in a run", { timeout: 30_000 }, () => {
     expect(describeResult(store.tasks(run.id), store.events(run.id), "failed").tasks[0]).toContain(
       `check failed: \`${LINES}\` exited 1`,
     );
+  });
+
+  it("corrected checks that cannot even run are not kept", async () => {
+    const { repo, worktrees, store, run } = await setUp([{ check: "command", run: BROKEN }]);
+    // What a real local model proposed: a script that does not exist.
+    const { judge, asked } = judgeWith({
+      verdict: "check",
+      why: "w",
+      acceptance: [{ check: "command", run: "./test_command.sh" }],
+    });
+    const pipeline = new TaskPipeline({
+      store,
+      projectRoot: repo,
+      worktrees,
+      inner: writer,
+      verify: verifier({
+        runner: runner({
+          [BROKEN]: { code: 2, output: AWK_ERROR },
+          "./test_command.sh": { code: 127, output: "sh: ./test_command.sh: not found" },
+        }),
+      }),
+      judgeChecks: judge,
+    });
+    expect(await new Scheduler({ store, runner: pipeline, maxAttempts: 2 }).run(run.id)).toBe(
+      "failed",
+    );
+    expect(asked.length).toBeGreaterThan(0);
+    expect(store.task(run.id, "greet")?.spec.acceptance).toEqual([
+      { check: "command", run: BROKEN },
+    ]);
+    expect(store.events(run.id).some((e) => e.kind === "checks_repaired")).toBe(false);
+    expect(store.events(run.id).find((e) => e.kind === "checks_rejected")?.data).toMatchObject({
+      after: ["./test_command.sh"],
+      reason: "the corrected checks could not run",
+    });
   });
 
   it("an ordinary failed check goes back to the worker without asking anyone", async () => {

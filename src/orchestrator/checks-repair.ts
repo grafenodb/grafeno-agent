@@ -59,6 +59,23 @@ export function trivialCheck(run: string): boolean {
   return TRIVIAL.test(run);
 }
 
+/** A placeholder where a command should be (seen from a real local model: "..."). */
+const PLACEHOLDER = /^\s*(?:\.{2,}|…|<[^>]*>|todo|tbd|command|your command here)\s*$/i;
+
+/** Whether a check command is only a placeholder. */
+export function placeholderCheck(run: string): boolean {
+  return PLACEHOLDER.test(run);
+}
+
+/**
+ * Whether checks failed because they could not run at all (their own
+ * command broke, or a program or script they name does not exist): such
+ * corrected checks are worse than the ones they replace.
+ */
+export function unrunnable(diagnostic: string): boolean {
+  return brokenCheck(diagnostic) || /exited 127\b/.test(diagnostic);
+}
+
 /** Why a failed verification should be judged, if it should. */
 export function checkDoubt(
   diagnostic: string,
@@ -87,6 +104,10 @@ export function readJudgement(text: string, task: Pick<TaskSpec, "id">): CheckJu
   const checked = acceptance.filter((a) => a.check !== "review");
   if (checked.length === 0) {
     return { verdict: "none", reason: "the corrected checks check nothing by code" };
+  }
+  const placeholder = checked.find((a) => a.check === "command" && placeholderCheck(a.run));
+  if (placeholder && placeholder.check === "command") {
+    return { verdict: "none", reason: `"${placeholder.run}" is a placeholder, not a command` };
   }
   const trivial = checked.find((a) => a.check === "command" && trivialCheck(a.run));
   if (trivial && trivial.check === "command") {

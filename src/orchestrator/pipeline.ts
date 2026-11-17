@@ -8,6 +8,7 @@ import {
   checkDoubt,
   checkLine,
   MAX_CHECK_REPAIRS,
+  unrunnable,
   type CheckDoubt,
   type CheckJudgement,
 } from "./checks-repair.js";
@@ -165,15 +166,30 @@ export class TaskPipeline implements TaskRunner {
       task.id,
     );
     if (judgement.verdict !== "check") return verdict;
+    // Run on the same work before they are kept: checks that cannot even run are worse.
+    const corrected: TaskRecord = {
+      ...task,
+      spec: { ...task.spec, acceptance: [...judgement.acceptance] },
+    };
+    const again = await verify(corrected, workspace);
+    const after = judgement.acceptance.map(checkLine);
+    if (!again.ok && unrunnable(again.diagnostic)) {
+      store.event(
+        runId,
+        "checks_rejected",
+        { judge: asked.judge, after, reason: "the corrected checks could not run" },
+        task.id,
+      );
+      return verdict;
+    }
     store.setAcceptance(runId, task.id, judgement.acceptance, {
       doubt,
       judge: asked.judge,
       why: judgement.why,
       before: task.spec.acceptance.map(checkLine),
-      after: judgement.acceptance.map(checkLine),
+      after,
     });
-    const corrected = store.task(runId, task.id) ?? task;
-    return verify(corrected, workspace);
+    return again;
   }
 
   async run(task: TaskRecord, context: AttemptContext): Promise<AttemptOutcome> {

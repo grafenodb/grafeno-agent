@@ -1108,9 +1108,11 @@ error, an operator read as a file; or the same check failed the same way
 again after the worker had its diagnostic), whoever wrote the plan (the
 leader, else the planner's model) is shown the checks, what they said and
 the change, and says which is wrong. Corrected checks are read with the
-plan's rules (forbidden commands refused, a check that passes whatever
-the work is refused), replace the old ones and run on the same work at
-once: a worker that did the work is not sent back. At most 2 judgements
+plan's rules (forbidden commands refused, a placeholder or a check that
+passes whatever the work is refused) and run on the same work at once;
+they replace the old ones unless they cannot even run (a broken command,
+a script that does not exist). A worker that did the work is not sent
+back. At most 2 judgements
 per task; the old and new checks are recorded with the run and shown in
 its result. `AGENT_CHECK_REPAIR=false` turns it off.
 
