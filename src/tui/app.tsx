@@ -49,7 +49,9 @@ import {
 } from "./agents.js";
 import { AgentsPanel, AgentView, agentKey } from "./agents-panel.js";
 import { ClickArea, Clickable } from "./clicks.js";
-import { InputArea, useFocusLayer, useGlobalKeys, useKeys } from "./core/input.js";
+import { InputArea, useFocusLayer, useGlobalKeys, useKeys, useMenuKey } from "./core/input.js";
+import { ContextMenu, type MenuItem } from "./ui/context-menu.js";
+import { Inspector, type Field, type InspectorAction } from "./ui/inspector.js";
 import {
   computeLayout,
   DEFAULT_PREFS,
@@ -109,7 +111,7 @@ import {
 } from "../app/connections.js";
 import { apiKeySpec } from "../providers/api-key.js";
 import { PROVIDER_PROFILES, providerEnabled, type ConnectionType } from "../providers/profiles.js";
-import { Sidebar, type AutoUsage } from "./sidebar.js";
+import { Sidebar, SIDEBAR_SECTIONS, type SidebarSection, type AutoUsage } from "./sidebar.js";
 import { Spinner } from "./spinner.js";
 import { theme } from "./theme.js";
 
@@ -117,6 +119,31 @@ export type { AppServices } from "../app/services.js";
 
 /** Days between upkeeps before the interface suggests one. */
 const UPKEEP_EVERY_DAYS = 7;
+/** What each section of the side panel offers: the first is what Enter (or a click) does. */
+const SECTION_ACTIONS: Readonly<Record<SidebarSection, readonly MenuItem[]>> = {
+  model: [
+    { id: "command.models", label: "Choose the model" },
+    { id: "command.effort", label: "How hard it thinks" },
+    { id: "command.mode", label: "Auto or specific" },
+    { id: "command.connect", label: "Connections" },
+  ],
+  usage: [
+    { id: "command.usage refresh", label: "Usage, asked again" },
+    { id: "command.usage", label: "Usage" },
+  ],
+  memory: [
+    { id: "command.palace", label: "Memory (Grafeno)" },
+    { id: "command.memory", label: "What memory brought back" },
+    { id: "command.upkeep", label: "Upkeep report" },
+    { id: "command.checkpoint", label: "Save a checkpoint" },
+  ],
+};
+const SECTION_TITLES: Readonly<Record<SidebarSection, string>> = {
+  model: "Model",
+  usage: "Usage",
+  memory: "Memory",
+};
+
 /** Items kept on screen: older ones stay in the kept conversation. */
 const KEEP = 300;
 
@@ -167,6 +194,7 @@ type Mode =
   | "mode"
   | "palette"
   | "panels"
+  | "overlay"
   | "resume"
   | "connect"
   | "palace"
@@ -284,6 +312,28 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     parseLayoutPrefs(process.env.AGENT_TUI_LAYOUT),
   );
   const [maximized, setMaximized] = useState(false);
+  // Which region has the keys: the conversation, or a panel beside it (Tab moves between them),
+  // and where the keyboard is in each panel.
+  const [region, setRegion] = useState<"main" | "left" | "right">("main");
+  const [sideAt, setSideAt] = useState<SidebarSection>("model");
+  const [agentAt, setAgentAt] = useState<string | null>(null);
+  /** A context menu or an inspector open over what is on screen. */
+  const [overlay, setOverlay] = useState<
+    | {
+        readonly kind: "menu";
+        readonly title: string;
+        readonly items: readonly MenuItem[];
+        readonly run: (id: string) => void;
+      }
+    | {
+        readonly kind: "inspect";
+        readonly title: string;
+        readonly fields: readonly Field[];
+        readonly actions: readonly InspectorAction[];
+        readonly run: (id: string) => void;
+      }
+    | undefined
+  >(undefined);
   /** Changes the panels' preferences, and keeps them. */
   const changePrefs = (next: LayoutPrefs) => {
     setPrefs(next);
@@ -1516,6 +1566,24 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     // A menu or dialog has the keys: only what works everywhere reaches here.
     const inMenu = top === "overlay" || (mode !== "chat" && mode !== "exiting");
     if (inMenu && !(key.ctrl && (input === "c" || input === "b"))) return;
+    if (key.tab && top === "base") {
+      // The prompt completes a command with Tab; elsewhere Tab moves between regions.
+      const completing = region === "main" && /^\/\S*$/.test(draft.current);
+      if (!completing) {
+        const regions: ("left" | "main" | "right")[] = [
+          ...(layout.left > 0 ? (["left"] as const) : []),
+          "main",
+          ...(layout.right > 0 ? (["right"] as const) : []),
+        ];
+        const at = Math.max(0, regions.indexOf(region));
+        setRegion(regions[(at + (key.shift ? regions.length - 1 : 1)) % regions.length] ?? "main");
+        return;
+      }
+    }
+    if (key.escape && region !== "main") {
+      setRegion("main");
+      return;
+    }
     // Esc in a menu is the menu's own: each goes back one step (a section of
     // /connect to its menu, a step to the one before) and closes at its first.
     // Here it goes back to the main agent from a sub-agent, or stops work,
@@ -1557,6 +1625,142 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
 
   // Where each region goes, from what each needs and what fits (core/layout).
   const layout = computeLayout({ columns, rows, prefs, agents: agents.length > 0, maximized });
+
+  // A panel that left the screen gives the keys back to the conversation.
+  const regionShown = region === "main" || (region === "left" ? layout.left > 0 : layout.right > 0);
+  useEffect(() => {
+    if (!regionShown) setRegion("main");
+  }, [regionShown]);
+
+  const closeOverlay = () => {
+    setOverlay(undefined);
+    setMode("chat");
+  };
+  /** A section's actions, as a context menu. */
+  const sectionMenu = (section: SidebarSection) => {
+    setOverlay({
+      kind: "menu",
+      title: `${SECTION_TITLES[section]} · actions`,
+      items: SECTION_ACTIONS[section],
+      run: runAction,
+    });
+    setMode("overlay");
+  };
+  /** What is known of an agent (undefined: the main one): what the run recorded, "unknown" otherwise. */
+  const agentInspect = (key: string | undefined) => {
+    const agent = key === undefined ? undefined : agents.find((a) => agentKey(a) === key);
+    const known = (value: string | undefined) => value ?? "unknown";
+    const fields: Field[] = agent
+      ? [
+          { label: "Task", value: agent.title || agent.id },
+          { label: "Id", value: agent.id },
+          {
+            label: "State",
+            value: agent.state,
+            tone:
+              agent.state === "completed"
+                ? "success"
+                : agent.state === "failed"
+                  ? "error"
+                  : agent.state === "running"
+                    ? "agent"
+                    : "muted",
+          },
+          { label: "Doing", value: known(agent.doing ?? agent.reason) },
+          {
+            label: "Model",
+            value: known([agent.model, agent.effort].filter(Boolean).join(" · ") || undefined),
+          },
+          { label: "Answering", value: known(agent.exactModel) },
+          { label: "Tier", value: known(agent.tier) },
+          {
+            label: "Started",
+            value: agent.started ? agent.started.toLocaleTimeString() : "unknown",
+          },
+          {
+            label: "Tokens",
+            value: agent.tokens
+              ? `${String(agent.tokens.input)} in / ${String(agent.tokens.output)} out`
+              : "unknown",
+          },
+          { label: "Folder", value: known(agent.folder) },
+          { label: "Branch", value: known(agent.branch) },
+          { label: "Last report", value: known(agent.lastReport) },
+        ]
+      : [
+          { label: "Agent", value: "the main agent (orchestrator)" },
+          { label: "Model", value: session ? modelLine(session, models) : "not connected" },
+          { label: "Doing", value: busy ?? "waiting for you" },
+          { label: "Sub-agents", value: String(agents.length) },
+        ];
+    setOverlay({
+      kind: "inspect",
+      title: agent ? `Agent · ${agent.id}` : "Agent · main",
+      fields,
+      actions: [{ id: "view", label: "View its work" }],
+      run: () => {
+        setViewing(key);
+        setScroll(0);
+      },
+    });
+    setMode("overlay");
+  };
+  /** An agent's actions, as a context menu. */
+  const agentMenu = (key: string | undefined) => {
+    setOverlay({
+      kind: "menu",
+      title: key === undefined ? "Main agent" : `Agent · ${key.split(":").at(-1) ?? key}`,
+      items: [
+        { id: "view", label: "View its work" },
+        { id: "inspect", label: "Inspect", hint: "what is known of it" },
+      ],
+      run: (id) => {
+        if (id === "view") {
+          setViewing(key);
+          setScroll(0);
+        } else agentInspect(key);
+      },
+    });
+    setMode("overlay");
+  };
+
+  // The side panel with the keys: ↑↓ its sections, Enter opens one, Shift+F10 its actions.
+  useKeys(
+    (_input, key) => {
+      const at = SIDEBAR_SECTIONS.indexOf(sideAt);
+      if (key.upArrow) setSideAt(SIDEBAR_SECTIONS[Math.max(0, at - 1)] ?? sideAt);
+      else if (key.downArrow)
+        setSideAt(SIDEBAR_SECTIONS[Math.min(SIDEBAR_SECTIONS.length - 1, at + 1)] ?? sideAt);
+      else if (key.return) runAction(SECTION_ACTIONS[sideAt][0]?.id ?? "");
+    },
+    { layer: "base", isActive: region === "right" && layout.right > 0 },
+  );
+  useMenuKey(
+    () => {
+      sectionMenu(sideAt);
+    },
+    { layer: "base", isActive: region === "right" && layout.right > 0 },
+  );
+  // The agents panel with the keys: ↑↓ the agents, Enter views one, Shift+F10 its actions.
+  useKeys(
+    (_input, key) => {
+      const keys: (string | null)[] = [null, ...agents.map(agentKey)];
+      const at = Math.max(0, keys.indexOf(agentAt));
+      if (key.upArrow) setAgentAt(keys[Math.max(0, at - 1)] ?? null);
+      else if (key.downArrow) setAgentAt(keys[Math.min(keys.length - 1, at + 1)] ?? null);
+      else if (key.return) {
+        setViewing(agentAt ?? undefined);
+        setScroll(0);
+      }
+    },
+    { layer: "base", isActive: region === "left" && layout.left > 0 },
+  );
+  useMenuKey(
+    () => {
+      agentMenu(agentAt ?? undefined);
+    },
+    { layer: "base", isActive: region === "left" && layout.left > 0 },
+  );
   const viewed = viewing ? agents.find((a) => agentKey(a) === viewing) : undefined;
   const grafeno = services.grafeno();
 
@@ -1694,6 +1898,9 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   // The panels, at the width the layout gives them (beside the conversation, or over it).
   const agentsFor = (width: number) => (
     <AgentsPanel
+      cursor={region === "left" ? agentAt : undefined}
+      onInspect={agentInspect}
+      onMenu={agentMenu}
       width={width}
       main={{
         model: session ? modelLine(session, models) : "not connected",
@@ -1710,6 +1917,8 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   );
   const sidebarFor = (width: number) => (
     <Sidebar
+      cursor={region === "right" ? sideAt : undefined}
+      onMenu={sectionMenu}
       width={width}
       session={session}
       grafeno={grafeno}
@@ -1996,6 +2205,29 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                     chosen === "skip" ? "warning" : "success",
                   );
                 }}
+              />
+            )}
+            {mode === "overlay" && overlay?.kind === "menu" && (
+              <ContextMenu
+                title={overlay.title}
+                items={overlay.items}
+                onSelect={(id) => {
+                  closeOverlay();
+                  overlay.run(id);
+                }}
+                onClose={closeOverlay}
+              />
+            )}
+            {mode === "overlay" && overlay?.kind === "inspect" && (
+              <Inspector
+                title={overlay.title}
+                fields={overlay.fields}
+                actions={overlay.actions}
+                onAction={(id) => {
+                  closeOverlay();
+                  overlay.run(id);
+                }}
+                onClose={closeOverlay}
               />
             )}
             {mode === "panels" && (
@@ -2609,7 +2841,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
             {mode === "chat" && !approval && !viewed && (
               <Prompt
                 layer="base"
-                active={phase !== "starting"}
+                active={phase !== "starting" && region === "main"}
                 canSubmit={busy === undefined}
                 onHeld={() => {
                   notice(
@@ -2646,6 +2878,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           auto={auto}
           viewing={viewed?.id}
           maximized={maximized}
+          region={region}
           hidden={layout.hidden.map((side) => (side === "left" ? "agents" : "side"))}
         />
       }
@@ -2787,6 +3020,7 @@ function Footer({
   auto,
   viewing,
   maximized,
+  region,
   hidden,
 }: {
   readonly narrow: boolean;
@@ -2796,6 +3030,7 @@ function Footer({
   readonly auto: boolean;
   readonly viewing: string | undefined;
   readonly maximized: boolean;
+  readonly region: "main" | "left" | "right";
   readonly hidden: readonly string[];
 }): ReactNode {
   const focus = useFocusLayer();
@@ -2815,6 +3050,7 @@ function Footer({
           : undefined
       }
       maximized={maximized}
+      region={region}
       hidden={hidden}
       narrow={narrow}
       right={

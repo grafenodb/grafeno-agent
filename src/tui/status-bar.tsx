@@ -14,6 +14,8 @@ export interface StatusBarProps {
   readonly unattended?: boolean;
   /** The permission mode, when it is not "ask" (its label). */
   readonly permissions?: { readonly label: string; readonly skip: boolean } | undefined;
+  /** The region with the keys, when the conversation's layer has them. */
+  readonly region?: "main" | "left" | "right";
   /** The conversation is maximized for now: the panels stepped aside. */
   readonly maximized?: boolean;
   /** Panels wanted that the window has no room for: they open over the conversation. */
@@ -36,10 +38,16 @@ const FOCUS: Readonly<Record<Layer, string>> = {
  * word, never a color alone.
  */
 export function StatusBar(props: StatusBarProps): ReactNode {
-  const focus = props.viewing ? "AGENT" : props.focus ? FOCUS[props.focus] : "…";
+  const panel =
+    props.focus === "base" && props.region === "left"
+      ? "AGENTS"
+      : props.focus === "base" && props.region === "right"
+        ? "PANEL"
+        : undefined;
+  const focus = props.viewing ? "AGENT" : (panel ?? (props.focus ? FOCUS[props.focus] : "…"));
   const keys = props.narrow
     ? "ctrl+p commands · esc back"
-    : `ctrl+p commands · ctrl+b panels · ctrl+f ${props.maximized ? "panels back" : "focus"} · pgup/pgdn scroll · esc back or stop`;
+    : `ctrl+p commands · tab region · ctrl+b panels · ctrl+f ${props.maximized ? "panels back" : "focus"} · shift+f10 actions · esc back or stop`;
   return (
     <Box paddingX={1} justifyContent="space-between" flexShrink={0} gap={2}>
       <Box flexShrink={1} minWidth={10}>

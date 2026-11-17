@@ -39,7 +39,12 @@ export function clicksIn(chunk: string): Click[] {
 interface Region {
   readonly ref: RefObject<DOMElement | null>;
   readonly onClick: RefObject<() => void>;
+  readonly onDoubleClick?: RefObject<(() => void) | undefined>;
+  readonly onRightClick?: RefObject<(() => void) | undefined>;
 }
+
+/** What a click was: the left button once or twice, or the right one. */
+export type ClickKind = "left" | "double" | "right";
 
 /** The clickable regions on screen now. */
 class ClickRegistry {
@@ -52,8 +57,14 @@ class ClickRegistry {
     };
   }
 
-  /** Clicks the smallest region under a point (the innermost one); false when none is there. */
-  click(point: Click): boolean {
+  /**
+   * Clicks the smallest region under a point (the innermost one) that
+   * answers this kind of click: a double click is a click to a region
+   * without its own; false when none is there.
+   */
+  click(point: Click, kind: ClickKind = "left"): boolean {
+    const answers = (region: Region) =>
+      kind === "right" ? region.onRightClick?.current !== undefined : true;
     let best: { region: Region; area: number } | undefined;
     for (const region of this.#regions) {
       const box = region.ref.current ? rectOf(region.ref.current) : undefined;
@@ -64,10 +75,13 @@ class ClickRegistry {
         point.y >= box.y &&
         point.y < box.y + box.height;
       const area = box.width * box.height;
-      if (inside && (!best || area < best.area)) best = { region, area };
+      if (inside && answers(region) && (!best || area < best.area)) best = { region, area };
     }
     if (!best) return false;
-    best.region.onClick.current();
+    const { region } = best;
+    if (kind === "right") region.onRightClick?.current?.();
+    else if (kind === "double" && region.onDoubleClick?.current) region.onDoubleClick.current();
+    else region.onClick.current();
     return true;
   }
 }
@@ -158,7 +172,9 @@ export function ClickArea({
   // In the interface's input area, clicks come from its one reader of the terminal.
   useMouse(
     (event) => {
-      if (event.kind === "press" && event.button === "left") registry.click(event);
+      if (event.kind !== "press") return;
+      if (event.button === "left") registry.click(event, event.double ? "double" : "left");
+      else if (event.button === "right") registry.click(event, "right");
     },
     { layer: "global", isActive: active && hub !== undefined },
   );
@@ -181,20 +197,31 @@ export function ClickArea({
  */
 export function Clickable({
   onClick,
+  onDoubleClick,
+  onRightClick,
   children,
   ...box
 }: BoxProps & {
   readonly onClick?: (() => void) | undefined;
+  /** Two clicks on the same place (an inspector); without it, a double click is a click. */
+  readonly onDoubleClick?: (() => void) | undefined;
+  /** The right button (a context menu; Shift+F10 does the same from the keyboard). */
+  readonly onRightClick?: (() => void) | undefined;
   readonly children?: ReactNode;
 }): ReactNode {
   const registry = use(ClickContext);
   const ref = useRef<DOMElement | null>(null);
   const handler = useRef<() => void>(() => undefined);
   handler.current = onClick ?? (() => undefined);
-  const enabled = onClick !== undefined;
+  const double = useRef(onDoubleClick);
+  double.current = onDoubleClick;
+  const right = useRef(onRightClick);
+  right.current = onRightClick;
+  const enabled =
+    onClick !== undefined || onDoubleClick !== undefined || onRightClick !== undefined;
   useEffect(() => {
     if (!registry || !enabled) return;
-    return registry.add({ ref, onClick: handler });
+    return registry.add({ ref, onClick: handler, onDoubleClick: double, onRightClick: right });
   }, [registry, enabled]);
   return (
     <Box ref={ref} {...box}>

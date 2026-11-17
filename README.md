@@ -249,6 +249,17 @@ interrupts the answer; Ctrl+C interrupts, or leaves.
 type stays, and Enter sends it once the answer is done. What is typed and
 not sent stays, too, while a menu is open over it.
 
+**Panels take the keys too.** **Tab** moves the keys from the conversation
+to the side panel and the agents panel, and back (Shift+Tab the other way;
+in the prompt, Tab still completes a command being typed). In a panel, ↑↓
+choose a section or an agent, Enter opens it (a section runs its command,
+an agent shows its work), and **Shift+F10** (or the Menu key, or a right
+click) shows what can be done with it; **Inspect** on an agent shows what
+the run recorded of it (its state, model, tokens, folder, branch, last
+report), "unknown" where nothing was recorded. A double click opens the
+same inspector. Esc closes what opened and gives the keys back to where
+they were; in a panel, Esc goes back to the conversation.
+
 **Keys go where the focus is.** A menu or a dialog takes the keys while it
 is open, and an approval takes them over everything: a key typed there
 never reaches the prompt behind it, and PgUp/PgDn or the wheel scroll the

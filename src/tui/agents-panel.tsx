@@ -34,6 +34,9 @@ export function AgentsPanel({
   agents,
   viewing,
   onSelect,
+  cursor,
+  onInspect,
+  onMenu,
 }: {
   readonly width: number;
   readonly main: { readonly model: string; readonly doing: string; readonly busy: boolean };
@@ -42,6 +45,12 @@ export function AgentsPanel({
   readonly viewing: string | undefined;
   /** Called with the agent clicked (undefined: the main one). */
   readonly onSelect?: (key: string | undefined) => void;
+  /** Where the keyboard is in the panel, when it has the focus (null: the main agent). */
+  readonly cursor?: string | null | undefined;
+  /** A double click: the agent's inspector (undefined: the main one). */
+  readonly onInspect?: (key: string | undefined) => void;
+  /** A right click: the agent's actions (undefined: the main one). */
+  readonly onMenu?: (key: string | undefined) => void;
 }): ReactNode {
   const running = agents.filter((a) => a.state === "running").length;
   return (
@@ -65,6 +74,21 @@ export function AgentsPanel({
       <Box marginTop={1} flexDirection="column">
         <Entry
           selected={viewing === undefined}
+          cursor={cursor === null}
+          {...(onInspect
+            ? {
+                onDoubleClick: () => {
+                  onInspect(undefined);
+                },
+              }
+            : {})}
+          {...(onMenu
+            ? {
+                onRightClick: () => {
+                  onMenu(undefined);
+                },
+              }
+            : {})}
           mark={main.busy ? <Spinner /> : <Text color={theme.success}>◆</Text>}
           title="Orchestrator"
           subtitle={main.model}
@@ -86,6 +110,21 @@ export function AgentsPanel({
             <Entry
               key={agentKey(agent)}
               selected={viewing === agentKey(agent)}
+              cursor={cursor === agentKey(agent)}
+              {...(onInspect
+                ? {
+                    onDoubleClick: () => {
+                      onInspect(agentKey(agent));
+                    },
+                  }
+                : {})}
+              {...(onMenu
+                ? {
+                    onRightClick: () => {
+                      onMenu(agentKey(agent));
+                    },
+                  }
+                : {})}
               mark={
                 agent.state === "running" ? (
                   <Spinner />
@@ -112,7 +151,8 @@ export function AgentsPanel({
       </Box>
       <Box marginTop={1}>
         <Text dimColor wrap="wrap">
-          click one, or ctrl+n next (▌ the one on screen) · /agents
+          click one, or ctrl+n next (▌ the one on screen) · tab here: ↑↓, enter view, shift+f10
+          actions · /agents
         </Text>
       </Box>
     </Box>
@@ -121,6 +161,9 @@ export function AgentsPanel({
 
 function Entry({
   selected,
+  cursor = false,
+  onDoubleClick,
+  onRightClick,
   mark,
   title,
   subtitle,
@@ -131,7 +174,11 @@ function Entry({
   onClick,
 }: {
   readonly onClick?: () => void;
+  readonly onDoubleClick?: () => void;
+  readonly onRightClick?: () => void;
   readonly selected: boolean;
+  /** The keyboard is on it (the panel has the focus). */
+  readonly cursor?: boolean;
   readonly mark: ReactNode;
   /** The orchestrator, or a sub-agent's task. */
   readonly title: string;
@@ -151,9 +198,17 @@ function Entry({
   const bar = selected ? "▌" : " ";
   const room = Math.max(4, width - 4 - branch.length);
   return (
-    <Clickable flexDirection="column" marginBottom={depth === 0 ? 1 : 0} onClick={onClick}>
+    <Clickable
+      flexDirection="column"
+      marginBottom={depth === 0 ? 1 : 0}
+      onClick={onClick}
+      onDoubleClick={onDoubleClick}
+      onRightClick={onRightClick}
+    >
       <Text wrap="truncate-end">
-        <Text color={selected ? theme.brand : theme.muted}>{bar}</Text>
+        <Text color={cursor ? theme.focus : selected ? theme.brand : theme.muted}>
+          {cursor ? "▸" : bar}
+        </Text>
         <Text color={theme.muted}>{branch}</Text>
         {mark}
         {selected ? (

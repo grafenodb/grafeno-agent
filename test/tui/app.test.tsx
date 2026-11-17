@@ -475,6 +475,47 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.unmount();
   });
 
+  it("tab moves to the side panel: ↓ a section, shift+f10 its actions, esc back to it, esc to the chat", async () => {
+    const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
+    await ready(app);
+    // Tab completes a command being typed: it does not move.
+    await type(app, "/upk");
+    app.stdin.write("\t");
+    await until(() => now(app).includes("/upkeep"), "the command completed");
+    expect(now(app)).toContain(" CHAT ");
+    for (let i = 0; i < 8; i++) {
+      app.stdin.write("\u007F");
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+    await until(() => now(app).includes("Ask anything"), "the prompt empty");
+    app.stdin.write("\t");
+    await until(() => now(app).includes(" PANEL "), "the panel has the keys");
+    expect(now(app)).toContain("▸ MODEL");
+    app.stdin.write(DOWN);
+    await until(() => now(app).includes("▸ PLAN USAGE") || now(app).includes("▸ USAGE"), "usage");
+    // A key for the prompt goes to the panel now: nothing is typed.
+    await type(app, "x");
+    expect(now(app)).toContain("Ask anything");
+    app.stdin.write("\u001B[21;2~");
+    await until(() => now(app).includes("Usage · actions"), "its actions");
+    expect(now(app)).toContain(" MENU ");
+    await press(app, "\u001B", () => now(app).includes(" PANEL "), "back to the panel");
+    expect(now(app)).toMatch(/▸ (PLAN )?USAGE/);
+    await press(app, "\u001B", () => now(app).includes(" CHAT "), "back to the chat");
+    // A right click on a section: its actions too.
+    const lines = now(app)
+      // eslint-disable-next-line no-control-regex
+      .replace(/\u001B\[[0-9;?]*[A-Za-z]/g, "")
+      .split("\n");
+    const row = lines.findIndex((line) => line.includes("MEMORY"));
+    const column = (lines[row] ?? "").indexOf("MEMORY") + 2;
+    app.stdin.write(`\u001B[<2;${String(column)};${String(row + 1)}M`);
+    await until(() => now(app).includes("Memory · actions"), "the memory actions");
+    expect(now(app)).toContain("Upkeep report");
+    await press(app, "\u001B", () => now(app).includes(" CHAT "), "closed");
+    app.unmount();
+  });
+
   it("in a narrow window the conversation is alone; ctrl+b opens the panel over it", async () => {
     const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
     await ready(app);
@@ -1209,6 +1250,23 @@ describe("sub-agents in the interface", { timeout: 90_000 }, () => {
       () => `the main agent's report; the screen was:\n${now(app)}`,
       45_000,
     );
+    // Tab to the agents panel: ↓ a sub-agent, shift+f10 its actions, Inspect: what the run recorded.
+    await ready(app);
+    app.stdin.write("\t");
+    await until(() => now(app).includes(" AGENTS "), "the agents panel has the keys");
+    app.stdin.write("\u001B[B");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    app.stdin.write("\u001B[21;2~");
+    await until(() => now(app).includes("Inspect"), "the agent's actions");
+    app.stdin.write("2");
+    await until(
+      () => now(app).includes("Last report"),
+      () => `the inspector:\n${now(app)}`,
+    );
+    expect(now(app)).toMatch(/Agent · \S+/);
+    expect(now(app)).toMatch(/State\s+completed/);
+    await press(app, "\u001B", () => now(app).includes(" AGENTS "), "back to the agents panel");
+    await press(app, "\u001B", () => now(app).includes(" CHAT "), "back to the chat");
     // ctrl+n: the first sub-agent, read only, with what it did.
     app.stdin.write("\u000e");
     await until(

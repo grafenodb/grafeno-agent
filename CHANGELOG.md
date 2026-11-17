@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Panels take the keys**: Tab and Shift+Tab move between the
+  conversation, the side panel and the agents panel; in a panel ↑↓ choose,
+  Enter opens, Shift+F10 (or the Menu key, or a right click) shows the
+  actions, and Inspect shows what the run recorded of an agent. Esc closes
+  what opened and gives the keys back where they were.
+- **Shared components** for what comes next: an inspector, a context menu
+  (the same list as the others), a dialog (with a name typed in full for
+  what cannot be undone), a table (sorted by column) and a tree (opened and
+  closed with ←→), each with the same keys and mouse: a click selects, a
+  double click opens, a right click shows the actions.
 - **The layout follows the window**: the conversation, the side panel and
   the agents panel show by what each needs at its narrowest (wide, standard
   or compact), not by fixed widths; in a narrow window Ctrl+B opens the

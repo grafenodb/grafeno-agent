@@ -35,7 +35,15 @@ export interface SidebarProps {
   readonly local?: boolean;
   /** Runs a command when a section is clicked (models, usage, palace). */
   readonly onCommand?: (name: string) => void;
+  /** Where the keyboard is in the panel, when it has the focus. */
+  readonly cursor?: SidebarSection | undefined;
+  /** A right click on a section: its actions. */
+  readonly onMenu?: (section: SidebarSection) => void;
 }
+
+/** The sections the keyboard moves through (each opens a command, and has actions). */
+export const SIDEBAR_SECTIONS = ["model", "usage", "memory"] as const;
+export type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
 
 /** One of Auto's providers in the panel. */
 export interface AutoUsage {
@@ -82,7 +90,7 @@ export function Sidebar(props: SidebarProps): ReactNode {
         <AgentDetails agent={props.agent} width={inner} />
       ) : (
         <>
-          <Section title="Model" {...click(props, "models")}>
+          <Section title="Model" {...click(props, "models")} {...pick(props, "model")}>
             {session ? (
               <>
                 <Text bold>{modelLine(session, props.models)}</Text>
@@ -114,7 +122,11 @@ export function Sidebar(props: SidebarProps): ReactNode {
           </Section>
 
           {props.autoUsage && props.autoUsage.length > 0 ? (
-            <Section title="Usage · Auto" {...click(props, "usage refresh")}>
+            <Section
+              title="Usage · Auto"
+              {...click(props, "usage refresh")}
+              {...pick(props, "usage")}
+            >
               {props.autoUsage.map((member) => (
                 <Box key={member.id} flexDirection="column">
                   <Text wrap="truncate-end">
@@ -175,6 +187,7 @@ export function Sidebar(props: SidebarProps): ReactNode {
               title="Plan usage"
               note={props.usage ? ago(props.usage.at) : undefined}
               {...click(props, "usage refresh")}
+              {...pick(props, "usage")}
             >
               {props.usage ? (
                 props.usage.limits
@@ -242,7 +255,12 @@ export function Sidebar(props: SidebarProps): ReactNode {
         )}
       </Section>
 
-      <Section title="Memory" color={theme.memory} {...click(props, "palace")}>
+      <Section
+        title="Memory"
+        color={theme.memory}
+        {...click(props, "palace")}
+        {...pick(props, "memory")}
+      >
         <Text>
           {props.grafeno.mode === "included" ? "Grafeno included" : "Grafeno server"}
           <Text dimColor> · {props.grafeno.url.replace(/^https?:\/\//, "")}</Text>
@@ -287,24 +305,54 @@ function click(props: SidebarProps, command: string): { onClick?: () => void } {
     : {};
 }
 
+/** A section's place under the keyboard, and its actions on a right click. */
+function pick(
+  props: SidebarProps,
+  section: SidebarSection,
+): { cursor: boolean; onRightClick?: () => void } {
+  const menu = props.onMenu;
+  return {
+    cursor: props.cursor === section,
+    ...(menu
+      ? {
+          onRightClick: () => {
+            menu(section);
+          },
+        }
+      : {}),
+  };
+}
+
 function Section({
   title,
   note,
   children,
   onClick,
+  onRightClick,
+  cursor = false,
   color = theme.accent,
 }: {
   readonly title: string;
   readonly note?: string | undefined;
   readonly children: ReactNode;
   readonly onClick?: () => void;
+  readonly onRightClick?: (() => void) | undefined;
+  /** The keyboard is on it (the panel has the focus). */
+  readonly cursor?: boolean;
   /** Its title's color: what the section is about (violet for memory). */
   readonly color?: string;
 }): ReactNode {
   return (
-    <Clickable flexDirection="column" marginTop={1} flexShrink={0} onClick={onClick}>
+    <Clickable
+      flexDirection="column"
+      marginTop={1}
+      flexShrink={0}
+      onClick={onClick}
+      onRightClick={onRightClick}
+    >
       <Text>
-        <Text bold color={color}>
+        {cursor && <Text color={theme.focus}>▸ </Text>}
+        <Text bold color={cursor ? theme.focus : color}>
           {title.toUpperCase()}
         </Text>
         {note !== undefined && <Text dimColor> · {note}</Text>}

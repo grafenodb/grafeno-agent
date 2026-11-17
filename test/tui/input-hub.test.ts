@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DOUBLE_CLICK_MS,
   InputHub,
+  menuKeys,
   mouseReports,
   type Layer,
   type MouseEvent,
@@ -132,5 +133,28 @@ describe("the mouse", () => {
     hub.add({ layer: "global", active: { current: true }, mouse: on("clicks") });
     hub.data(sgr(64, 0, 0) + sgr(2, 1, 1));
     expect(got).toEqual(["menu:wheel", "clicks:wheel", "menu:press", "clicks:press"]);
+  });
+});
+
+describe("the keyboard's right click", () => {
+  it("Shift+F10 and the Menu key, read from the terminal, reach the layer with the focus", () => {
+    expect(menuKeys(`${ESC}[21;2~`)).toBe(1);
+    expect(menuKeys(`${ESC}[29~x${ESC}[21;2~`)).toBe(2);
+    // Plain F10 is not a context menu.
+    expect(menuKeys(`${ESC}[21~`)).toBe(0);
+    const hub = new InputHub();
+    const got: string[] = [];
+    hub.add({
+      layer: "base",
+      active: { current: true },
+      menu: { current: () => got.push("panel") },
+    });
+    const menu = { current: true };
+    hub.add({ layer: "overlay", active: menu, menu: { current: () => got.push("menu") } });
+    hub.data(`${ESC}[21;2~`);
+    menu.current = false;
+    hub.changed();
+    hub.data(`${ESC}[29~`);
+    expect(got).toEqual(["menu", "panel"]);
   });
 });

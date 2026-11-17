@@ -53,6 +53,14 @@ const ESC = String.fromCharCode(27);
 const REPORT = new RegExp(`${ESC}\\[<(\\d+);(\\d+);(\\d+)([Mm])`, "g");
 const BUTTONS: readonly MouseButton[] = ["left", "middle", "right"];
 
+/** Shift+F10 (ESC [ 21 ; 2 ~) and the Menu key (ESC [ 29 ~): the keyboard's right click. */
+const MENU_KEY = new RegExp(`${ESC}\\[(?:21;2|29)~`, "g");
+
+/** How many times a chunk of input asks for a context menu. */
+export function menuKeys(chunk: string): number {
+  return [...chunk.matchAll(MENU_KEY)].length;
+}
+
 /** Two left presses on the same cell within this many ms are a double click. */
 export const DOUBLE_CLICK_MS = 400;
 
@@ -90,6 +98,7 @@ interface Entry {
   readonly global?: { current: GlobalHandler };
   readonly wheel?: { current: (direction: number) => void };
   readonly mouse?: { current: (event: MouseEvent) => void };
+  readonly menu?: { current: () => void };
 }
 
 /** Who takes input now: the handlers on screen, by layer. */
@@ -157,6 +166,16 @@ export class InputHub {
   /** A chunk of the terminal's input: its mouse reports go where the focus is. */
   data(chunk: string): void {
     for (const report of mouseReports(chunk)) this.mouse(report);
+    // Ink hands Shift+F10 over as an empty key and drops the Menu key: read here.
+    for (let i = 0; i < menuKeys(chunk); i++) this.menuKey();
+  }
+
+  /** Shift+F10 or the Menu key: the actions of what is selected, in the layer with the focus. */
+  menuKey(): void {
+    const top = this.top();
+    for (const entry of [...this.#entries]) {
+      if (entry.layer === top && entry.active.current) entry.menu?.current();
+    }
   }
 
   mouse(report: MouseEvent): void {
@@ -325,3 +344,17 @@ export function useMouse(
 
 const noSubscribe = () => () => undefined;
 const noTop = () => undefined;
+
+/**
+ * Shift+F10 or the Menu key for a component in a layer: what a right click
+ * does, from the keyboard. Only in an `InputArea` (it reads the terminal).
+ */
+export function useMenuKey(
+  handler: () => void,
+  options: { readonly layer?: Layer; readonly isActive?: boolean } = {},
+): void {
+  const hub = useInputHub();
+  const ref = useRef(handler);
+  ref.current = handler;
+  useEntry(hub, options.layer ?? "overlay", options.isActive ?? true, { menu: ref });
+}
