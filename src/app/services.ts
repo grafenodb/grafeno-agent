@@ -130,6 +130,8 @@ export interface AppServices {
     leader?: string;
     /** /mode: General Auto, or the provider chosen in /connect (AGENT_MODE). */
     mode?: "auto" | "specific";
+    /** The interface's panels: which show and how wide (AGENT_TUI_LAYOUT). */
+    layout?: string;
   }): void;
   /** The memory upkeep report for the session's project. */
   upkeep(session: AgentSession): Promise<string>;
@@ -383,8 +385,13 @@ export function realServices(version: string): AppServices {
         autoModels?: Readonly<Record<string, readonly string[]>>;
         leader?: string;
         mode?: "auto" | "specific";
+        layout?: string;
       },
     ) {
+      if (choice.layout !== undefined) {
+        save({ AGENT_TUI_LAYOUT: choice.layout });
+        return;
+      }
       if (choice.leader !== undefined) {
         save({ AGENT_LEADER: choice.leader });
         return;

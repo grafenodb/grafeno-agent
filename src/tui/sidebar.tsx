@@ -242,7 +242,7 @@ export function Sidebar(props: SidebarProps): ReactNode {
         )}
       </Section>
 
-      <Section title="Memory" {...click(props, "palace")}>
+      <Section title="Memory" color={theme.memory} {...click(props, "palace")}>
         <Text>
           {props.grafeno.mode === "included" ? "Grafeno included" : "Grafeno server"}
           <Text dimColor> · {props.grafeno.url.replace(/^https?:\/\//, "")}</Text>
@@ -292,16 +292,19 @@ function Section({
   note,
   children,
   onClick,
+  color = theme.accent,
 }: {
   readonly title: string;
   readonly note?: string | undefined;
   readonly children: ReactNode;
   readonly onClick?: () => void;
+  /** Its title's color: what the section is about (violet for memory). */
+  readonly color?: string;
 }): ReactNode {
   return (
     <Clickable flexDirection="column" marginTop={1} flexShrink={0} onClick={onClick}>
       <Text>
-        <Text bold color={theme.accent}>
+        <Text bold color={color}>
           {title.toUpperCase()}
         </Text>
         {note !== undefined && <Text dimColor> · {note}</Text>}

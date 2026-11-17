@@ -149,7 +149,7 @@ export function Picker(props: PickerProps): ReactNode {
             }}
           >
             <Box flexShrink={0}>
-              <Text {...(on ? { color: theme.accent } : {})} bold={on}>
+              <Text {...(on ? { color: theme.selected } : {})} bold={on}>
                 {on ? "▸ " : "  "}
                 {item.label}
               </Text>

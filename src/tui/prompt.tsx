@@ -151,7 +151,7 @@ export function Prompt(props: PromptProps): ReactNode {
       )}
       <Box
         borderStyle="round"
-        borderColor={props.active ? theme.accent : theme.border}
+        borderColor={focused ? theme.focus : theme.border}
         paddingX={1}
         flexDirection="row"
       >
@@ -192,7 +192,7 @@ function Menu({
             }}
           >
             <Box width={14}>
-              <Text color={on ? theme.accent : theme.brand} bold={on}>
+              <Text color={on ? theme.selected : theme.brand} bold={on}>
                 {on ? "▸ " : "  "}/{command.name}
               </Text>
             </Box>

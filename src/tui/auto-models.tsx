@@ -127,7 +127,7 @@ export function AutoModelsPanel(props: AutoModelsPanelProps): ReactNode {
               setMarked(new Set());
             }}
           >
-            <Text {...(at === 0 ? { color: theme.accent } : {})} bold={at === 0}>
+            <Text {...(at === 0 ? { color: theme.selected } : {})} bold={at === 0}>
               {at === 0 ? "▸ " : "  "}
               {auto ? "[✓]" : "[ ]"} Auto
               <Text dimColor> every model, chosen by the task and by what each spends</Text>
@@ -145,7 +145,7 @@ export function AutoModelsPanel(props: AutoModelsPanelProps): ReactNode {
                   toggle(model.id);
                 }}
               >
-                <Text {...(on ? { color: theme.accent } : {})} bold={on}>
+                <Text {...(on ? { color: theme.selected } : {})} bold={on}>
                   {on ? "▸ " : "  "}
                   {marked.has(model.id) ? "[✓]" : "[ ]"} {model.name}
                   {model.hint ? <Text dimColor> {model.hint}</Text> : null}

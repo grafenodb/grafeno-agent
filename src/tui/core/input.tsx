@@ -275,6 +275,16 @@ export function useGlobalKeys(handler: GlobalHandler, isActive = true): void {
   );
 }
 
+/** The layer that has the focus now (none outside an `InputArea`, or when nothing takes keys). */
+export function useFocusLayer(): Layer | undefined {
+  const hub = useInputHub();
+  return useSyncExternalStore(
+    hub?.subscribe ?? noSubscribe,
+    hub?.snapshot ?? noTop,
+    hub?.snapshot ?? noTop,
+  );
+}
+
 /** Whether a layer is the one that has the focus now (true outside an `InputArea`). */
 export function useHasFocus(layer: Layer, isActive = true): boolean {
   const hub = useInputHub();

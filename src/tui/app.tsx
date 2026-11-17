@@ -49,7 +49,17 @@ import {
 } from "./agents.js";
 import { AgentsPanel, AgentView, agentKey } from "./agents-panel.js";
 import { ClickArea, Clickable } from "./clicks.js";
-import { InputArea, useGlobalKeys, useKeys } from "./core/input.js";
+import { InputArea, useFocusLayer, useGlobalKeys, useKeys } from "./core/input.js";
+import {
+  computeLayout,
+  DEFAULT_PREFS,
+  layoutSetting,
+  parseLayoutPrefs,
+  resized,
+  type LayoutPrefs,
+} from "./core/layout.js";
+import { PanelOverlay, Shell } from "./shell.js";
+import { StatusBar } from "./status-bar.js";
 import { commandAction, commandActions, paletteItems, VIEW_ACTIONS } from "./core/actions.js";
 import { ProjectsPanel } from "./projects.js";
 import { deleteProjectEverywhere, describeDeletion } from "../app/project-delete.js";
@@ -107,12 +117,6 @@ export type { AppServices } from "../app/services.js";
 
 /** Days between upkeeps before the interface suggests one. */
 const UPKEEP_EVERY_DAYS = 7;
-/** The side panel's width, and the narrowest window that still shows it. */
-const SIDEBAR = 38;
-const SIDEBAR_FROM = 100;
-/** The agents panel's width (left), and the narrowest window that shows it with the side panel. */
-const AGENTS = 30;
-const AGENTS_FROM = 140;
 /** Items kept on screen: older ones stay in the kept conversation. */
 const KEEP = 300;
 
@@ -162,6 +166,7 @@ type Mode =
   | "effort"
   | "mode"
   | "palette"
+  | "panels"
   | "resume"
   | "connect"
   | "palace"
@@ -274,7 +279,16 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   const [models, setModels] = useState<readonly ModelOption[]>([]);
   const [environment, setEnvironment] = useState<Environment>({});
   const [recall, setRecall] = useState<Recall | undefined>(undefined);
-  const [sidebarOn, setSidebarOn] = useState(true);
+  // Which panels show and how wide (kept in the settings), and the conversation maximized for now.
+  const [prefs, setPrefs] = useState<LayoutPrefs>(() =>
+    parseLayoutPrefs(process.env.AGENT_TUI_LAYOUT),
+  );
+  const [maximized, setMaximized] = useState(false);
+  /** Changes the panels' preferences, and keeps them. */
+  const changePrefs = (next: LayoutPrefs) => {
+    setPrefs(next);
+    services.saveChoice({ layout: layoutSetting(next) });
+  };
   const [scroll, setScroll] = useState(0);
   // Folded actions: all unfolded with ctrl+o; a click flips one group.
   const [allOpen, setAllOpen] = useState(false);
@@ -1361,7 +1375,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           break;
         }
         case "sidebar":
-          setSidebarOn((on) => !on);
+          runAction("view.sidebar");
           break;
         case "clear":
           setItems([]);
@@ -1439,7 +1453,33 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
         break;
       case "view.sidebar":
         setMode((m) => (m === "palette" ? "chat" : m));
-        setSidebarOn((on) => !on);
+        if (prefs.right && !maximized && layout.hidden.includes("right")) {
+          // Wanted, but no room beside the conversation: it opens over it.
+          setMode("panels");
+          break;
+        }
+        changePrefs({ ...prefs, right: !prefs.right });
+        break;
+      case "view.left":
+        setMode((m) => (m === "palette" ? "chat" : m));
+        changePrefs({ ...prefs, left: !prefs.left });
+        break;
+      case "view.maximize":
+        setMode((m) => (m === "palette" ? "chat" : m));
+        setMaximized((on) => !on);
+        break;
+      case "view.right.wider":
+      case "view.right.narrower":
+      case "view.left.wider":
+      case "view.left.narrower": {
+        const side = id.startsWith("view.right") ? "right" : "left";
+        changePrefs(resized(prefs, side, id.endsWith("wider") ? 4 : -4));
+        break;
+      }
+      case "view.reset":
+        setMaximized(false);
+        changePrefs(DEFAULT_PREFS);
+        notice("The layout is back as it was: both panels, at their usual widths.", "success");
         break;
       case "view.fold":
         setMode((m) => (m === "palette" ? "chat" : m));
@@ -1505,6 +1545,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     else if (key.ctrl && input === "b") runAction("view.sidebar");
     else if (key.ctrl && input === "o") runAction("view.fold");
     else if (key.ctrl && input === "p") runAction("palette");
+    else if (key.ctrl && input === "f") runAction("view.maximize");
     else if (key.ctrl && input === "n") runAction("agents.next");
     else if (key.ctrl && input === "c") {
       if (busy !== undefined && abort.current) abort.current.abort();
@@ -1514,9 +1555,8 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     }
   });
 
-  const showSidebar = sidebarOn && columns >= SIDEBAR_FROM;
-  // The agents panel: once a run started sub-agents, when the window has room for it.
-  const showAgents = agents.length > 0 && columns >= (showSidebar ? AGENTS_FROM : 100);
+  // Where each region goes, from what each needs and what fits (core/layout).
+  const layout = computeLayout({ columns, rows, prefs, agents: agents.length > 0, maximized });
   const viewed = viewing ? agents.find((a) => agentKey(a) === viewing) : undefined;
   const grafeno = services.grafeno();
 
@@ -1651,46 +1691,80 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     });
   };
 
-  return (
-    <Box flexDirection="column" height={rows} width={columns}>
-      <Header
-        session={session}
-        models={models}
-        grafeno={grafeno.mode}
-        busy={busy !== undefined}
-        narrow={!showSidebar}
-      />
-      <MenuBar
-        open={mode}
-        busy={busy !== undefined || phase === "starting"}
-        blocked={approval !== undefined}
-        onCommand={(command, close) => {
-          // The same menu again closes it; another one takes its place.
-          if (close) {
-            setMode("chat");
-            return;
+  // The panels, at the width the layout gives them (beside the conversation, or over it).
+  const agentsFor = (width: number) => (
+    <AgentsPanel
+      width={width}
+      main={{
+        model: session ? modelLine(session, models) : "not connected",
+        doing: busy ?? "waiting for you",
+        busy: busy !== undefined,
+      }}
+      agents={agents}
+      viewing={viewed ? viewing : undefined}
+      onSelect={(key) => {
+        setViewing(key);
+        setScroll(0);
+      }}
+    />
+  );
+  const sidebarFor = (width: number) => (
+    <Sidebar
+      width={width}
+      session={session}
+      grafeno={grafeno}
+      status={status}
+      usage={usage}
+      usageStale={usageStale}
+      models={models}
+      environment={environment}
+      recall={recall}
+      {...(auto ? { autoUsage } : {})}
+      local={provider ? isLocalProvider(provider.id) : false}
+      {...(viewed ? { agent: viewed } : {})}
+      {...(mode === "chat" && !approval && busy === undefined
+        ? {
+            onCommand: (command: string) => {
+              void submit(`/${command}`);
+            },
           }
-          runAction(commandAction(command));
-        }}
-      />
-      <Box flexDirection="row" flexGrow={1}>
-        {showAgents && (
-          <AgentsPanel
-            width={AGENTS}
-            main={{
-              model: session ? modelLine(session, models) : "not connected",
-              doing: busy ?? "waiting for you",
-              busy: busy !== undefined,
-            }}
-            agents={agents}
-            viewing={viewed ? viewing : undefined}
-            onSelect={(key) => {
-              setViewing(key);
-              setScroll(0);
-            }}
-          />
-        )}
-        <Box flexDirection="column" flexGrow={1} paddingX={1}>
+        : {})}
+    />
+  );
+
+  return (
+    <Shell
+      columns={columns}
+      rows={rows}
+      layout={layout}
+      header={
+        <Header
+          session={session}
+          models={models}
+          grafeno={grafeno.mode}
+          busy={busy !== undefined}
+          narrow={layout.right === 0}
+        />
+      }
+      menu={
+        <MenuBar
+          open={mode}
+          busy={busy !== undefined || phase === "starting"}
+          blocked={approval !== undefined}
+          onCommand={(command, close) => {
+            // The same menu again closes it; another one takes its place.
+            if (close) {
+              setMode("chat");
+              return;
+            }
+            runAction(commandAction(command));
+          }}
+        />
+      }
+      left={agentsFor}
+      right={sidebarFor}
+      main={
+        <>
           {viewed ? (
             <Viewport scroll={scroll} onClamp={setScroll}>
               <AgentView agent={viewed} allOpen={allOpen} />
@@ -1923,6 +1997,17 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                   );
                 }}
               />
+            )}
+            {mode === "panels" && (
+              <PanelOverlay
+                title="Panels"
+                onClose={() => {
+                  setMode("chat");
+                }}
+              >
+                {sidebarFor(Math.max(30, layout.main - 4))}
+                {agents.length > 0 && agentsFor(Math.max(24, layout.main - 4))}
+              </PanelOverlay>
             )}
             {mode === "palette" && (
               <Picker
@@ -2550,33 +2635,21 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
               />
             )}
           </Box>
-        </Box>
-        {showSidebar && (
-          <Sidebar
-            width={SIDEBAR}
-            session={session}
-            grafeno={grafeno}
-            status={status}
-            usage={usage}
-            usageStale={usageStale}
-            models={models}
-            environment={environment}
-            recall={recall}
-            {...(auto ? { autoUsage } : {})}
-            local={provider ? isLocalProvider(provider.id) : false}
-            {...(viewed ? { agent: viewed } : {})}
-            {...(mode === "chat" && !approval && busy === undefined
-              ? {
-                  onCommand: (command: string) => {
-                    void submit(`/${command}`);
-                  },
-                }
-              : {})}
-          />
-        )}
-      </Box>
-      <Footer narrow={!showSidebar} session={session} models={models} usage={usage} />
-    </Box>
+        </>
+      }
+      status={
+        <Footer
+          narrow={layout.right === 0}
+          session={session}
+          models={models}
+          usage={usage}
+          auto={auto}
+          viewing={viewed?.id}
+          maximized={maximized}
+          hidden={layout.hidden.map((side) => (side === "left" ? "agents" : "side"))}
+        />
+      }
+    />
   );
 }
 
@@ -2711,46 +2784,53 @@ function Footer({
   session,
   models,
   usage,
+  auto,
+  viewing,
+  maximized,
+  hidden,
 }: {
   readonly narrow: boolean;
   readonly session: AgentSession | undefined;
   readonly models: readonly ModelOption[];
   readonly usage: ProviderUsage | undefined;
+  readonly auto: boolean;
+  readonly viewing: string | undefined;
+  readonly maximized: boolean;
+  readonly hidden: readonly string[];
 }): ReactNode {
+  const focus = useFocusLayer();
   const limit = usage?.limits[0];
   return (
-    <Box paddingX={1} justifyContent="space-between" flexShrink={0} gap={2}>
-      <Box flexShrink={1} minWidth={10}>
-        <Text wrap="truncate-end">
-          {session?.unattended ? (
-            <Text inverse bold color={theme.warning}>
-              {" UNATTENDED "}
-            </Text>
-          ) : session && session.permissionMode !== "ask" ? (
-            <Text color={session.permissionMode === "skip" ? theme.warning : theme.accent}>
-              {`permissions: ${PERMISSION_LABELS[session.permissionMode].toLowerCase()}`}
-            </Text>
-          ) : null}
-          {session && (session.unattended || session.permissionMode !== "ask") ? " · " : ""}
-          <Text dimColor>
-            {narrow
-              ? "/ commands · pgup/pgdn · esc stop"
-              : "enter send · / commands · pgup/pgdn scroll · ctrl+o actions · ctrl+b panel · esc interrupt"}
+    <StatusBar
+      focus={focus}
+      viewing={viewing}
+      auto={auto}
+      unattended={session?.unattended === true}
+      permissions={
+        session && session.permissionMode !== "ask"
+          ? {
+              label: PERMISSION_LABELS[session.permissionMode].toLowerCase(),
+              skip: session.permissionMode === "skip",
+            }
+          : undefined
+      }
+      maximized={maximized}
+      hidden={hidden}
+      narrow={narrow}
+      right={
+        narrow && session ? (
+          <Text wrap="truncate-start">
+            <Text color={theme.brand}>{modelLine(session, models)}</Text>
+            {limit && (
+              <Text color={theme[usageTone(limit.used)]}>
+                {" "}
+                · {limit.label.toLowerCase()} {String(Math.round(limit.used * 100))}%
+              </Text>
+            )}
           </Text>
-        </Text>
-      </Box>
-      {narrow && session && (
-        <Text wrap="truncate-start">
-          <Text color={theme.brand}>{modelLine(session, models)}</Text>
-          {limit && (
-            <Text color={theme[usageTone(limit.used)]}>
-              {" "}
-              · {limit.label.toLowerCase()} {String(Math.round(limit.used * 100))}%
-            </Text>
-          )}
-        </Text>
-      )}
-    </Box>
+        ) : undefined
+      }
+    />
   );
 }
 

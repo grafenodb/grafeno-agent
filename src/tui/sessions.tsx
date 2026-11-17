@@ -73,7 +73,7 @@ export function SessionsPanel(props: SessionsPanelProps): ReactNode {
                 props.onResume(row.id);
               }}
             >
-              <Text {...(on ? { color: theme.accent } : {})} bold={on} wrap="truncate-end">
+              <Text {...(on ? { color: theme.selected } : {})} bold={on} wrap="truncate-end">
                 {on ? "▸ " : "  "}
                 {row.title}
                 <Text dimColor bold={false}>

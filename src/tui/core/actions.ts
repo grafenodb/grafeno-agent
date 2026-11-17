@@ -26,6 +26,18 @@ export const VIEW_ACTIONS: readonly ActionSpec[] = [
     keys: "ctrl+o",
   },
   {
+    id: "view.maximize",
+    title: "Maximize the conversation",
+    hint: "the panels step aside until pressed again",
+    keys: "ctrl+f",
+  },
+  { id: "view.left", title: "Agents panel", hint: "show or hide it (when a run has sub-agents)" },
+  { id: "view.right.wider", title: "Side panel wider", hint: "4 columns more, within its limits" },
+  { id: "view.right.narrower", title: "Side panel narrower", hint: "4 columns less" },
+  { id: "view.left.wider", title: "Agents panel wider", hint: "4 columns more" },
+  { id: "view.left.narrower", title: "Agents panel narrower", hint: "4 columns less" },
+  { id: "view.reset", title: "Restore the layout", hint: "both panels on, at their usual widths" },
+  {
     id: "agents.next",
     title: "Next agent",
     hint: "the main agent, then each sub-agent",

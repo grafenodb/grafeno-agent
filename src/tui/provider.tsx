@@ -196,7 +196,7 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
       </Text>
       {offerAuto && (
         <Clickable flexDirection="column" marginTop={1} onClick={props.onAuto}>
-          <Text {...(onAuto ? { color: theme.accent } : {})} bold={onAuto}>
+          <Text {...(onAuto ? { color: theme.selected } : {})} bold={onAuto}>
             {onAuto ? "▸ " : "  "}
             Auto{props.auto ? " · in use" : ""}
           </Text>
@@ -217,7 +217,7 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
       )}
       {offerNone && (
         <Clickable flexDirection="column" marginTop={1} onClick={props.onNone}>
-          <Text {...(onNone ? { color: theme.accent } : {})} bold={onNone}>
+          <Text {...(onNone ? { color: theme.selected } : {})} bold={onNone}>
             {onNone ? "▸ " : "  "}
             No model{props.none ? " · in use" : ""}
           </Text>
@@ -245,7 +245,7 @@ export function ProviderPanel(props: ProviderPanelProps): ReactNode {
                   props.onDone(statuses.get(provider.id), provider);
                 }}
               >
-                <Text {...(on ? { color: theme.accent } : {})} bold={on}>
+                <Text {...(on ? { color: theme.selected } : {})} bold={on}>
                   {on ? "▸ " : "  "}
                   {provider.name}
                   {provider.id === props.current ? " · in use" : ""}

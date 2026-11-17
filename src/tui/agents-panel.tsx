@@ -56,7 +56,7 @@ export function AgentsPanel({
       borderColor={theme.muted}
       paddingRight={1}
     >
-      <Text bold color={theme.brand}>
+      <Text bold color={theme.agent}>
         AGENTS
       </Text>
       <Text dimColor>
@@ -197,7 +197,7 @@ export function AgentView({
   return (
     <Box flexDirection="column">
       <Box marginTop={1} flexDirection="column">
-        <Text bold color={theme.brand}>
+        <Text bold color={theme.agent}>
           {agent.title || agent.id}
         </Text>
         <Text dimColor>

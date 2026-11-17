@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **The layout follows the window**: the conversation, the side panel and
+  the agents panel show by what each needs at its narrowest (wide, standard
+  or compact), not by fixed widths; in a narrow window Ctrl+B opens the
+  panel over the conversation. Ctrl+F maximizes the conversation for now;
+  the palette makes a panel wider or narrower, or restores the layout; the
+  choices are kept (`AGENT_TUI_LAYOUT`). The interface's frame is one
+  component (`Shell`) with its regions.
+- **A status bar**: who has the keys (CHAT, MENU, APPROVAL, AGENT), the
+  mode, what runs without asking, a panel with no room, the keys that work
+  from anywhere.
+- **Colors that say what something is**: cyan for focus and the row
+  chosen, violet for memory and agents, beside Grafeno's green; a mark or
+  a word always says it too.
 - **The interface's input, read in one place**: keys and the mouse go to
   whoever has the focus, by layer (an approval over a menu or dialog over
   the conversation), never to everyone: a key typed in a menu no longer

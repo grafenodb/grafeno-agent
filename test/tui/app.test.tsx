@@ -439,6 +439,64 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.unmount();
   });
 
+  it("the status bar says who has the keys and the mode; ctrl+f maximizes, ctrl+b keeps its choice", async () => {
+    const saves: Record<string, unknown>[] = [];
+    const base = services({ turns: [[{ say: "hi" }]] });
+    const app = render(
+      <App
+        services={{
+          ...base,
+          saveChoice: (choice) => {
+            saves.push(choice);
+          },
+        }}
+      />,
+    );
+    await ready(app);
+    expect(now(app)).toContain(" CHAT ");
+    expect(now(app)).toContain("AUTO");
+    expect(now(app)).toContain("MEMORY");
+    app.stdin.write("\u0010");
+    await until(() => now(app).includes(" MENU "), "a menu has the keys");
+    await press(app, "\u001B", () => now(app).includes(" CHAT "), "the chat again");
+    // Maximized: the side panel steps aside, and comes back; nothing is kept.
+    app.stdin.write("\u0006");
+    await until(() => !now(app).includes("MEMORY") && now(app).includes("maximized"), "maximized");
+    app.stdin.write("\u0006");
+    await until(() => now(app).includes("MEMORY"), "the panel back");
+    expect(saves).toEqual([]);
+    // Hidden by choice: kept in the settings.
+    app.stdin.write("\u0002");
+    await until(() => !now(app).includes("MEMORY"), "the panel hidden");
+    expect(saves).toEqual([{ layout: "right=off" }]);
+    app.stdin.write("\u0002");
+    await until(() => now(app).includes("MEMORY"), "the panel shown");
+    expect(saves).toEqual([{ layout: "right=off" }, { layout: "" }]);
+    app.unmount();
+  });
+
+  it("in a narrow window the conversation is alone; ctrl+b opens the panel over it", async () => {
+    const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
+    await ready(app);
+    expect(now(app)).toContain("MEMORY");
+    Object.defineProperty(app.stdout, "columns", { value: 80, configurable: true });
+    app.stdout.emit("resize");
+    await until(() => !now(app).includes("MEMORY"), "the panel gone for lack of room");
+    expect(now(app)).toContain("no room for the side panel");
+    app.stdin.write("\u0002");
+    await until(
+      () => now(app).includes("Panels") && now(app).includes("MEMORY"),
+      "the panel over it",
+    );
+    expect(now(app)).toContain(" MENU ");
+    await press(app, "\u001B", () => !now(app).includes("Panels"), "closed");
+    // Wide again: back beside the conversation, as it was.
+    Object.defineProperty(app.stdout, "columns", { value: 120, configurable: true });
+    app.stdout.emit("resize");
+    await until(() => now(app).includes("MEMORY"), "the panel back beside it");
+    app.unmount();
+  });
+
   it("ctrl+p opens the command palette; its action is the menu button's, and the keys reach only it", async () => {
     const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
     await ready(app);
