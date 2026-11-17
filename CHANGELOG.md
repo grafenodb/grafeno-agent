@@ -22,6 +22,14 @@
   check whose own command was broken (a syntax error, an operator read as
   a file) and a timeout in which no answer came back are held against no
   model.
+- **Wrong checks are judged, not retried**: when a check's own command
+  breaks, or the same check fails the same way after the worker had its
+  diagnostic, the plan's author (the leader, else the planner's model)
+  says whether the check or the work is wrong; corrected checks (read with
+  the plan's rules, never one that passes anything) run on the same work
+  at once, recorded with the run (`checks_judged`, `checks_repaired`) and
+  shown in its result. At most 2 per task; `AGENT_CHECK_REPAIR=false`
+  turns it off. A failed task's result now names the check that failed.
 - **Models a local server gives no class** are not ranked by where they
   come in its list: they start with the same prior, the leader's
   recommendation breaks the tie, and after one fails the task moves

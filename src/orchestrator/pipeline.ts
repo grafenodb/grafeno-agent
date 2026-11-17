@@ -4,6 +4,13 @@ import type { OperationalStore, TaskRecord } from "./store.js";
 import type { Policy, Question } from "./policy.js";
 import type { WorktreeManager } from "./worktrees.js";
 import { reviewFeedback, type ReviewVerdict } from "./review.js";
+import {
+  checkDoubt,
+  checkLine,
+  MAX_CHECK_REPAIRS,
+  type CheckDoubt,
+  type CheckJudgement,
+} from "./checks-repair.js";
 
 /** Where a task's worker works. */
 export type WorkspaceFor = (task: TaskRecord, context: AttemptContext) => Promise<Workspace>;
@@ -27,6 +34,19 @@ export interface PipelineOptions {
   /** The workers, given where each task works (usually a `WorkerPool`). */
   readonly inner: (workspaceFor: WorkspaceFor) => TaskRunner;
   readonly verify?: Verify;
+  /**
+   * Judges a check that failed in a telling way (its own command broken, or
+   * the same failure again after the worker had its diagnostic): the plan's
+   * author says whether the check or the work is wrong, and corrects the
+   * check. Without it, a failed check always goes back to the worker.
+   */
+  readonly judgeChecks?: (
+    task: TaskRecord,
+    doubt: CheckDoubt,
+    diagnostic: string,
+    diff: string,
+    context: AttemptContext,
+  ) => Promise<{ judgement: CheckJudgement; judge: string }>;
   /** The run's policy: whether merging into the integration branch needs a person. */
   readonly policy?: Policy;
   /** Told when a task's work was merged into the integration branch. */
@@ -103,13 +123,71 @@ export class TaskPipeline implements TaskRunner {
     return new Workspace(worktree.path);
   }
 
+  /**
+   * The task's checks, and, when they failed in a telling way, the plan's
+   * author asked whether they are wrong: corrected checks replace them and
+   * run on the same work at once, so a worker that did the work is not sent
+   * back for a check that could not pass.
+   */
+  async #checked(
+    task: TaskRecord,
+    workspace: Workspace,
+    context: AttemptContext,
+    diff: () => Promise<string>,
+  ): Promise<{ ok: true } | { ok: false; diagnostic: string }> {
+    const verify = this.options.verify;
+    if (!verify) return { ok: true };
+    const verdict = await verify(task, workspace);
+    const judge = this.options.judgeChecks;
+    if (verdict.ok || !judge) return verdict;
+    const { store } = this.options;
+    const runId = context.runId;
+    const mine = store.events(runId).filter((e) => e.taskId === task.id);
+    const judged = mine.filter((e) => e.kind === "checks_judged").length;
+    if (judged >= MAX_CHECK_REPAIRS) return verdict;
+    const previous = mine.filter((e) => e.kind === "attempt_ended").at(-1)?.data.reason;
+    const doubt = checkDoubt(
+      verdict.diagnostic,
+      typeof previous === "string" ? previous : undefined,
+    );
+    if (!doubt) return verdict;
+    const asked = await judge(task, doubt, verdict.diagnostic, await diff(), context);
+    const { judgement } = asked;
+    store.event(
+      runId,
+      "checks_judged",
+      {
+        doubt,
+        judge: asked.judge,
+        verdict: judgement.verdict,
+        ...(judgement.verdict === "none" ? { reason: judgement.reason } : { why: judgement.why }),
+      },
+      task.id,
+    );
+    if (judgement.verdict !== "check") return verdict;
+    store.setAcceptance(runId, task.id, judgement.acceptance, {
+      doubt,
+      judge: asked.judge,
+      why: judgement.why,
+      before: task.spec.acceptance.map(checkLine),
+      after: judgement.acceptance.map(checkLine),
+    });
+    const corrected = store.task(runId, task.id) ?? task;
+    return verify(corrected, workspace);
+  }
+
   async run(task: TaskRecord, context: AttemptContext): Promise<AttemptOutcome> {
     const outcome = await this.#inner.run(task, context);
     if (outcome.status !== "completed") return outcome;
     if (!(await this.isolated())) {
       // No worktrees: the checks run in the project's folder, and nothing is merged.
       if (!this.options.verify) return outcome;
-      const verdict = await this.options.verify(task, new Workspace(this.options.projectRoot));
+      const verdict = await this.#checked(
+        task,
+        new Workspace(this.options.projectRoot),
+        context,
+        () => Promise.resolve(""),
+      );
       // Recorded here too: what the checks said is what the router learns from.
       this.options.store.event(context.runId, "verified", { ok: verdict.ok }, task.id);
       return verdict.ok ? outcome : { status: "retry", reason: verdict.diagnostic };
@@ -129,7 +207,9 @@ export class TaskPipeline implements TaskRunner {
     if (commit) store.event(runId, "committed", { commit }, task.id);
 
     if (this.options.verify) {
-      const verdict = await this.options.verify(task, new Workspace(worktree.path));
+      const verdict = await this.#checked(task, new Workspace(worktree.path), context, () =>
+        worktrees.diff(runId, task.id, base),
+      );
       store.event(runId, "verified", { ok: verdict.ok }, task.id);
       if (!verdict.ok) return { status: "retry", reason: verdict.diagnostic };
     }

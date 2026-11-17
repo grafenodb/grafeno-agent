@@ -148,6 +148,7 @@ agent asks again when it starts.
 | `AGENT_LOCAL_ROUTING`       | `light`                 | `light`, `first` or `last`: what goes to your local models (see below)           |
 | `AGENT_LEADER`              | none                    | `provider/model` that leads orchestrated runs (set by `/leader`)                 |
 | `AGENT_LEADER_AUDIT`        | `risk`                  | `risk` (low-risk tasks are decided by their checks) or `all`                     |
+| `AGENT_CHECK_REPAIR`        | on                      | `false`: a wrong check is never judged or corrected by the plan's author         |
 | `AGENT_SANDBOX`             | `auto`                  | `auto`, `required` or `off`: Grafeno Sandbox for the agent's commands            |
 | `AGENT_SANDBOX_NETWORK`     | `auto`                  | `auto` (only to install or fetch), `always` or `never`                           |
 | `AGENT_SANDBOX_KEEP`        | `never`                 | `never`, `failed` or `always`: whether a sandbox is kept when its work ends      |
@@ -1100,6 +1101,18 @@ and context count against a model. Failed checks are retried once on the
 same arm with their diagnostic; then the task climbs one rung (more effort
 before a stronger model), at most twice; quota moves it to another
 provider or waits, never to a stronger model.
+
+**Checks can be wrong too.** The plan's checks are written by a model.
+When a check fails in a telling way (its own command broke: a syntax
+error, an operator read as a file; or the same check failed the same way
+again after the worker had its diagnostic), whoever wrote the plan (the
+leader, else the planner's model) is shown the checks, what they said and
+the change, and says which is wrong. Corrected checks are read with the
+plan's rules (forbidden commands refused, a check that passes whatever
+the work is refused), replace the old ones and run on the same work at
+once: a worker that did the work is not sent back. At most 2 judgements
+per task; the old and new checks are recorded with the run and shown in
+its result. `AGENT_CHECK_REPAIR=false` turns it off.
 
 **Exploration** keeps evidence from coming only from what was already
 chosen: on a low-risk task, now and then (10%, at most 2 per run), a

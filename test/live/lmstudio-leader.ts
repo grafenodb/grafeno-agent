@@ -33,7 +33,27 @@ writeFileSync(join(repo, "README.md"), "# Greeter\n\nA tiny project to try the o
 git("add", "-A");
 git("commit", "-q", "-m", "start");
 
-const provider = new LocalProvider({ id: "lmstudio", kind: "lmstudio", name: "LM Studio", url });
+// Every request to the server, counted by endpoint and model.
+const requests = new Map<string, number>();
+const counted: typeof fetch = async (input, init) => {
+  const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+  let model = "";
+  if (typeof init?.body === "string") {
+    try {
+      const named = (JSON.parse(init.body) as { model?: unknown }).model;
+      model = typeof named === "string" ? named : "";
+    } catch {
+      // Not JSON: counted by its path alone.
+    }
+  }
+  const key = `${init?.method ?? "GET"} ${path}${model ? ` · ${model}` : ""}`;
+  requests.set(key, (requests.get(key) ?? 0) + 1);
+  return fetch(input, init);
+};
+const provider = new LocalProvider(
+  { id: "lmstudio", kind: "lmstudio", name: "LM Studio", url },
+  { fetch: counted },
+);
 console.log(`Status: ${(await provider.status()).detail}`);
 console.log(`Models: ${(await provider.models()).map((m) => m.id).join(", ")}\n`);
 
@@ -88,6 +108,9 @@ console.log(`\nLeader audits: ${String(audits.length)}`);
 for (const a of audits) {
   console.log(`  ${a.taskId ?? "?"}: ${String(a.data.verdict)} by ${String(a.data.reviewer)}`);
 }
+const judged = events.filter((e) => e.kind === "checks_judged" || e.kind === "checks_repaired");
+console.log(`\nChecks judged: ${String(judged.filter((e) => e.kind === "checks_judged").length)}`);
+for (const e of judged) console.log(`  ${e.taskId ?? "?"} ${e.kind}: ${JSON.stringify(e.data)}`);
 const routed = events.filter((e) => e.kind === "attempt_metrics");
 console.log("\nAttempts:");
 for (const a of routed) {
@@ -108,4 +131,6 @@ try {
   );
 }
 orchestrator.close();
+console.log("\nRequests to the server:");
+for (const [key, n] of [...requests].sort()) console.log(`  ${String(n).padStart(3)}  ${key}`);
 console.log(`\nFolder: ${repo}`);

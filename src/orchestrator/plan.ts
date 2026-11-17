@@ -175,6 +175,16 @@ export function readAssignee(raw: unknown): TaskSpec["assignee"] | undefined {
   return { provider, ...(model ? { model } : {}) };
 }
 
+/** Checks read with the plan's rules (forbidden commands refused), with what was wrong in them. */
+export function readChecks(
+  raw: unknown,
+  name: string,
+): { acceptance: Acceptance[]; problems: string[] } {
+  const problems: string[] = [];
+  const acceptance = readAcceptance(raw, name, problems);
+  return { acceptance, problems };
+}
+
 function readAcceptance(raw: unknown, name: string, problems: string[]): Acceptance[] {
   if (!Array.isArray(raw)) return [];
   const out: Acceptance[] = [];

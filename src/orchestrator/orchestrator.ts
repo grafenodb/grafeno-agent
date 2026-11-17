@@ -36,6 +36,7 @@ import type { RouterMode } from "./learned.js";
 import { limitReached, type RunLimits } from "./limits.js";
 import { applyReplan, proposeReplan, type ReplanProposal } from "./replan.js";
 import { crossReview } from "./review.js";
+import { judgeChecks } from "./checks-repair.js";
 import type { AttemptContext } from "./scheduler.js";
 import type { TaskRecord } from "./store.js";
 import { MetricsStore } from "./metrics.js";
@@ -152,6 +153,12 @@ export interface OrchestratorOptions {
    * low-risk ones, which their checks decide; `all` every task.
    */
   readonly leaderAudit?: "risk" | "all";
+  /**
+   * Whether a check that failed in a telling way (its own command broken, or
+   * the same failure again after the worker had its diagnostic) is judged by
+   * the plan's author, who may correct it. Default: on.
+   */
+  readonly checkRepair?: boolean;
   readonly context?: ContextPolicy;
   /** Asks a person (the interface); without it, what needs a person is refused or waits in review. */
   readonly ask?: (question: Question) => Promise<boolean>;
@@ -364,6 +371,31 @@ export class Orchestrator {
         runner: options.commandRunner ?? checksRunner((cwd) => this.#sandboxFor(cwd)),
       }),
       policy: this.policy,
+      ...(options.checkRepair === false
+        ? {}
+        : {
+            judgeChecks: async (task, doubt, diagnostic, diff, context) => {
+              // Who wrote the checks judges them: the leader, else the planner's model.
+              const author =
+                this.#leaderChoice() ??
+                (this.options.planner
+                  ? { choice: this.options.planner, provider: this.options.provider }
+                  : await this.#plannerChoice());
+              const model =
+                this.options.makeModel?.(author.choice) ?? author.provider.create(author.choice);
+              return {
+                judgement: await judgeChecks(
+                  model,
+                  task.spec,
+                  doubt,
+                  diagnostic,
+                  diff,
+                  context.signal,
+                ),
+                judge: plannerLabel(author),
+              };
+            },
+          }),
       ...(options.ask ? { ask: options.ask } : {}),
       // A leader audits every task; without one, the cross review when it is on.
       ...(options.review || options.leader

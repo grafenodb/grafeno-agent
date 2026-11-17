@@ -73,14 +73,22 @@ export function describeResult(
       suggestions > 0 ? `, ${String(suggestions)} suggestion${suggestions === 1 ? "" : "s"}` : ""
     }`;
   };
+  // Checks the plan's author corrected (they were wrong, not the work).
+  const repaired = events.filter((e) => e.kind === "checks_repaired");
+  const checksNote = (id: string) => {
+    const mine = repaired.filter((e) => e.taskId === id);
+    if (mine.length === 0) return "";
+    const by = mine.at(-1)?.data.judge;
+    return ` · checks corrected${typeof by === "string" ? ` by ${by}` : ""}${mine.length > 1 ? ` (${String(mine.length)}×)` : ""}`;
+  };
   const lines = tasks.map((t) => {
     const what =
       t.state === "completed"
         ? firstLine(said.get(t.id) ?? "")
         : t.reason
-          ? firstLine(t.reason)
+          ? firstLine(failedCheckLine(t.reason))
           : t.state;
-    return `${mark[t.state] ?? "·"} ${t.spec.title}${what ? ` — ${what}` : ""}${leaderNote(t.id)}`;
+    return `${mark[t.state] ?? "·"} ${t.spec.title}${what ? ` — ${what}` : ""}${leaderNote(t.id)}${checksNote(t.id)}`;
   });
   const reviewer = audits.find((e) => typeof e.data.reviewer === "string")?.data.reviewer;
   const approved = new Set(audits.filter((e) => e.data.verdict === "ok").map((e) => e.taskId)).size;
@@ -96,4 +104,11 @@ export function describeResult(
         ]
       : [];
   return { ok, headline, tasks: [...leaderLine, ...lines] };
+}
+
+/** A failed-checks reason told by its first failing check, not by its heading. */
+function failedCheckLine(reason: string): string {
+  if (!reason.startsWith("These checks failed")) return reason;
+  const check = reason.split("\n").find((line) => line.startsWith("- "));
+  return check ? `check failed: ${check.slice(2)}` : reason;
 }

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { Plan, TaskSpec } from "./plan.js";
+import type { Acceptance, Plan, TaskSpec } from "./plan.js";
 import { canTransition, TransitionError, type RunState, type TaskState } from "./states.js";
 
 export interface Run {
@@ -75,6 +75,13 @@ export interface OperationalStore {
   event(runId: string, kind: string, data?: Record<string, unknown>, taskId?: string): void;
   /** Records who works on a task now (worker, model, effort), without changing its state. */
   annotate(runId: string, taskId: string, patch: Omit<TaskPatch, "attempts" | "reason">): void;
+  /** Replaces a task's acceptance checks (corrected by the plan's author), recorded as an event. */
+  setAcceptance(
+    runId: string,
+    taskId: string,
+    acceptance: readonly Acceptance[],
+    data?: Record<string, unknown>,
+  ): void;
   events(runId: string, after?: number): RunEvent[];
   /** Records an effect as started; says if it was new, already started (crashed) or done. */
   beginEffect(
@@ -450,6 +457,23 @@ export class SqliteStore implements OperationalStore {
           taskId,
         );
       this.#event(runId, "task_assigned", { ...patch }, taskId);
+    });
+  }
+
+  setAcceptance(
+    runId: string,
+    taskId: string,
+    acceptance: readonly Acceptance[],
+    data: Record<string, unknown> = {},
+  ): void {
+    this.#atomic(() => {
+      const current = this.task(runId, taskId);
+      if (!current) throw new Error(`No task "${taskId}" in run ${runId}`);
+      const spec: TaskSpec = { ...current.spec, acceptance: [...acceptance] };
+      this.#db
+        .prepare("UPDATE tasks SET spec = ?, updated = ? WHERE run_id = ? AND id = ?")
+        .run(JSON.stringify(spec), new Date().toISOString(), runId, taskId);
+      this.#event(runId, "checks_repaired", { ...data }, taskId);
     });
   }
 

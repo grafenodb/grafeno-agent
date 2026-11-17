@@ -65,6 +65,9 @@ export async function createOrchestrator(
     ...(process.env.AGENT_LEADER_AUDIT?.trim().toLowerCase() === "all"
       ? { leaderAudit: "all" as const }
       : {}),
+    ...(process.env.AGENT_CHECK_REPAIR?.trim().toLowerCase() === "false"
+      ? { checkRepair: false }
+      : {}),
     ...(exploreOn(process.env.AGENT_ROUTER_EXPLORE)
       ? { explore: { share: exploreShare(process.env.AGENT_ROUTER_EXPLORE) } }
       : { explore: false }),
