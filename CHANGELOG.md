@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 (2026-11-17)
 
 - **The leader advises, the router decides**: a leader's recommended
   provider is a preference (with room, under your own choices), and its
