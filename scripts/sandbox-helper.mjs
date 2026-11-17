@@ -74,9 +74,24 @@ if (command === "build") {
     const out = join(vendor, `windows-${arch}`, "grafeno-sandbox.exe");
     mkdirSync(dirname(out), { recursive: true });
     const toolsRoot = join(installation, "VC", "Tools", "MSVC");
-    const toolsVersion = readdirSync(toolsRoot).sort().at(-1);
+    // The newest installed versions that are complete for this architecture
+    // (a runner may have a newer, partial SDK beside a whole one).
+    const byVersion = (a, b) => a.localeCompare(b, undefined, { numeric: true });
+    const toolsVersion = readdirSync(toolsRoot)
+      .sort(byVersion)
+      .reverse()
+      .find((v) => existsSync(join(toolsRoot, v, "lib", arch)));
     const kitsRoot = join(programFiles, "Windows Kits", "10");
-    const kitsVersion = readdirSync(join(kitsRoot, "Include")).sort().at(-1);
+    const kitsVersion = readdirSync(join(kitsRoot, "Include"))
+      .sort(byVersion)
+      .reverse()
+      .find(
+        (v) =>
+          existsSync(join(kitsRoot, "Include", v, "um", "windows.h")) &&
+          existsSync(join(kitsRoot, "Include", v, "ucrt", "stdio.h")) &&
+          existsSync(join(kitsRoot, "Lib", v, "um", arch, "kernel32.lib")) &&
+          existsSync(join(kitsRoot, "Lib", v, "ucrt", arch)),
+      );
     if (!toolsVersion || !kitsVersion)
       throw new Error("Visual C++ or the Windows SDK is incomplete");
     const tools = join(toolsRoot, toolsVersion);
