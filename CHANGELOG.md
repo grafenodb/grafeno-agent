@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.2 (2026-11-17)
 
 - **No model at all**: `/connect` offers **No model** under Auto
   (`AGENT_PROVIDERS=none`): nothing connected is used, whatever is signed
