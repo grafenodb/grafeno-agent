@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-11-16)
 
 - **Connections**: a registry tells vendor, connection and model apart.
   Each connection has its vendor, type (CLI, API key, coding plan), sign-in,
