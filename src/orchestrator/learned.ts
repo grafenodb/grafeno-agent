@@ -158,10 +158,26 @@ export const EXPLORE_KINDS: readonly string[] = ["docs", "tests"];
 /** The share of eligible tasks that explore, when exploration is on. */
 export const EXPLORE_SHARE = 0.1;
 
-/** Whether `AGENT_ROUTER_EXPLORE` turns exploration on; off unless it says `true`. */
-export function exploreOn(setting: string | undefined): boolean {
-  return (setting ?? "").trim().toLowerCase() === "true";
+/**
+ * The share of low-risk tasks that explore (`AGENT_ROUTER_EXPLORE`): on by
+ * default at `EXPLORE_SHARE`, since evidence must not come only from what
+ * was already chosen; `false` turns it off; a number (0.05, 0.2) sets it.
+ */
+export function exploreShare(setting: string | undefined): number {
+  const value = (setting ?? "").trim().toLowerCase();
+  if (value === "" || value === "true" || value === "on") return EXPLORE_SHARE;
+  if (value === "false" || value === "off" || value === "0") return 0;
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 && n <= 0.5 ? n : EXPLORE_SHARE;
 }
+
+/** Whether exploration is on (`AGENT_ROUTER_EXPLORE`). */
+export function exploreOn(setting: string | undefined): boolean {
+  return exploreShare(setting) > 0;
+}
+
+/** Explorations a run may make in all: learning, never at the cost of the run. */
+export const EXPLORE_PER_RUN = 2;
 
 export interface Exploration {
   readonly model: string;

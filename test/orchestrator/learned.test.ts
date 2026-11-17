@@ -3,6 +3,7 @@ import { FakeModel } from "../../src/model/index.js";
 import {
   explore,
   exploreOn,
+  exploreShare,
   routerMode,
   suggest,
   type RuleChoice,
@@ -298,10 +299,15 @@ describe("exploration (C4): built, off by default", () => {
   const standard: RuleChoice = { provider: "p", model: "mid", effort: "low", tier: "standard" };
   const always = () => 0;
 
-  it("is off unless AGENT_ROUTER_EXPLORE says true", () => {
-    expect(exploreOn(undefined)).toBe(false);
+  it("is on by default (a small share), off when AGENT_ROUTER_EXPLORE says false, or set by a number", () => {
+    expect(exploreOn(undefined)).toBe(true);
+    expect(exploreShare(undefined)).toBe(0.1);
     expect(exploreOn("false")).toBe(false);
+    expect(exploreShare("0")).toBe(0);
     expect(exploreOn(" TRUE ")).toBe(true);
+    expect(exploreShare("0.2")).toBe(0.2);
+    // Not a share it may take: the default.
+    expect(exploreShare("0.9")).toBe(0.1);
   });
 
   it("only touches low-risk tasks: docs and tests of complexity 1–2, with no tier recommended", () => {

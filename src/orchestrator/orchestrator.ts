@@ -1,3 +1,5 @@
+import { riskOf } from "./capability.js";
+import { EXPLORE_SHARE } from "./learned.js";
 import {
   sandboxManager,
   withSpawner,
@@ -145,6 +147,11 @@ export interface OrchestratorOptions {
     readonly model?: string;
     readonly effort?: string;
   };
+  /**
+   * Which tasks the leader audits: `risk` (the default) every task but the
+   * low-risk ones, which their checks decide; `all` every task.
+   */
+  readonly leaderAudit?: "risk" | "all";
   readonly context?: ContextPolicy;
   /** Asks a person (the interface); without it, what needs a person is refused or waits in review. */
   readonly ask?: (question: Question) => Promise<boolean>;
@@ -274,6 +281,20 @@ export class Orchestrator {
             sufficient: {
               mode: options.router === "shadow" ? ("shadow" as const) : ("learned" as const),
               attempts: () => this.#attempts(),
+              ...(options.explore
+                ? {
+                    explore: {
+                      share:
+                        options.explore === true
+                          ? EXPLORE_SHARE
+                          : (options.explore.share ?? EXPLORE_SHARE),
+                      random:
+                        options.explore === true
+                          ? Math.random
+                          : (options.explore.random ?? Math.random),
+                    },
+                  }
+                : {}),
             },
           }
         : {}),
@@ -372,8 +393,14 @@ export class Orchestrator {
     const leading = this.options.leader !== undefined;
     return {
       // The leader audits every task; a cross review, every kind but docs.
+      // The leader audits in proportion to risk (AGENT_LEADER_AUDIT): a low-risk task
+      // whose checks passed (code, not a model) needs no extra model call; `all` audits each.
       for: (task: TaskRecord) =>
-        leading || (kinds ? kinds.has(task.spec.kind) : task.spec.kind !== "docs"),
+        leading
+          ? this.options.leaderAudit === "all" || riskOf(task.spec) !== "low"
+          : kinds
+            ? kinds.has(task.spec.kind)
+            : task.spec.kind !== "docs",
       ...(leading ? { leader: true } : {}),
       ask: async (task: TaskRecord, diff: string, context: AttemptContext, summary?: string) => {
         const leader = this.#leaderChoice();

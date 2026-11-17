@@ -435,19 +435,22 @@ export function routeAcross(
   }
   // Cost first: a capable local server for simple tasks, what bills per token only when nothing else can.
   providers = byCost(capable, task, options);
-  // The run's leader gave the task to a provider (and maybe a model): followed when it can take it.
-  const assigned = task.assignee ? assignedRoute(task, providers, options) : undefined;
-  if (assigned) return assigned;
   const lighter = lighterOf(options);
   const hold = options.holdAbove ?? 0.95;
   const used = (p: ProviderEntry) => mostUsed(p.usage)?.used ?? 0;
   if (options.auto === true) return routePool(task, providers, options, used, lighter, hold);
-  const wanted = options.providerFor?.[task.kind];
+  // The person's explicit choice first; else the leader's provider, as a preference.
+  const explicitFor = options.providerFor?.[task.kind];
+  const wanted = explicitFor ?? task.assignee?.provider;
   const ordered = wanted
     ? [...providers.filter((p) => p.id === wanted), ...providers.filter((p) => p.id !== wanted)]
     : [...providers];
   const why = (p: ProviderEntry, first: string) =>
-    p.id === wanted ? `${task.kind} tasks go to ${p.id}` : first;
+    p.id === wanted
+      ? explicitFor
+        ? `${task.kind} tasks go to ${p.id}`
+        : `the leader recommended ${p.id}, and it has room`
+      : first;
 
   // A provider with room, in order.
   for (const [index, entry] of ordered.entries()) {
@@ -492,50 +495,6 @@ export function routeAcross(
 }
 
 /**
- * The route the run's leader asked for: its provider, with room, and its
- * model when the provider offers it (else the provider's own choice for
- * the task). Nothing when the provider is not ready, near its limit, or
- * cannot take the task: the usual rules decide then.
- */
-function assignedRoute(
-  task: TaskSpec,
-  providers: readonly ProviderEntry[],
-  options: AcrossOptions,
-): ProviderRoute | undefined {
-  const wanted = task.assignee;
-  if (!wanted) return undefined;
-  const entry = providers.find((p) => p.id === wanted.provider);
-  if (!entry) return undefined;
-  const near = mostUsed(entry.usage)?.used ?? 0;
-  if (near >= lighterOf(options)) return undefined;
-  const offered =
-    wanted.model !== undefined &&
-    entry.catalog.models.some((m) => m.id === wanted.model || m.name === wanted.model);
-  const catalog = offered
-    ? {
-        ...entry.catalog,
-        // The leader's model for whatever tier the task needs.
-        tiers: {
-          deep: [wanted.model ?? ""],
-          standard: [wanted.model ?? ""],
-          light: [wanted.model ?? ""],
-        },
-        pinned: true,
-      }
-    : entry.catalog;
-  const chosen = route(task, catalog, { ...options, ...withUsage(entry) });
-  if (chosen.kind === "hold") return undefined;
-  return {
-    ...chosen,
-    provider: entry.id,
-    reasons: [
-      `the leader gave it to ${entry.id}${offered ? `/${wanted.model ?? ""}` : wanted.model ? ` (it has no model ${wanted.model}: its own choice)` : ""}`,
-      ...chosen.reasons,
-    ],
-  };
-}
-
-/**
  * The providers by cost for a task (`costRank`), in their order on a tie:
  * those billed per token last. Without a task, local servers go after
  * subscriptions and free quotas.
@@ -576,7 +535,10 @@ function routePool(
 ): ProviderRoute {
   const explicit = options.providerFor?.[task.kind];
   const affinity = options.affinity?.[task.kind];
-  const wanted = explicit ?? affinity?.provider;
+  // Preferences under the person's explicit choice: the leader's recommendation
+  // for this task, then the kind's affinity; each only with room, never forced.
+  const advised = task.assignee?.provider;
+  const wanted = explicit ?? advised ?? affinity?.provider;
   // The role's tier, for whichever provider takes the task.
   const base = options.profiles?.[task.kind] ?? DEFAULT_PROFILES[task.kind];
   const profiles =
@@ -633,7 +595,9 @@ function routePool(
       tryEntries([preferred], (p) =>
         explicit
           ? `${task.kind} tasks go to ${p.id}`
-          : `${task.kind} tasks go to ${p.id} (affinity${affinity?.tier ? `, ${affinity.tier}` : ""})`,
+          : advised === p.id
+            ? `the leader recommended ${p.id}, and it has room`
+            : `${task.kind} tasks go to ${p.id} (affinity${affinity?.tier ? `, ${affinity.tier}` : ""})`,
       )) ??
     tryEntries(
       rest,
@@ -664,5 +628,53 @@ function withUsage(entry: ProviderEntry): Pick<RouterOptions, "usage" | "costOf"
   return {
     ...(entry.usage ? { usage: entry.usage } : {}),
     ...(entry.costOf ? { costOf: entry.costOf } : {}),
+  };
+}
+
+/**
+ * The leader's model for a route, as a recommendation: taken when the
+ * provider chosen has it in the tier the task needs (the rules' tier, or
+ * what the minimum sufficient routing decides after); otherwise the route
+ * keeps its model, and says why. Never a pin: a model the person chose is
+ * the only one never swapped.
+ */
+export function withAdvice(task: TaskSpec, chosen: ProviderRoute, catalog: Catalog): ProviderRoute {
+  const advice = task.assignee;
+  if (chosen.kind !== "run" || !advice?.model) return chosen;
+  if (advice.provider !== chosen.provider) {
+    return {
+      ...chosen,
+      reasons: [
+        ...chosen.reasons,
+        `the leader recommended ${advice.provider}/${advice.model}; ${chosen.provider} was chosen (${advice.provider} not ready, without room, or not preferred)`,
+      ],
+    };
+  }
+  if (catalog.pinned === true) {
+    return {
+      ...chosen,
+      reasons: [
+        ...chosen.reasons,
+        `the leader recommended ${advice.model}; you chose this provider's models`,
+      ],
+    };
+  }
+  const inTier = catalog.tiers[chosen.tier].includes(advice.model);
+  if (inTier && catalog.models.some((m) => m.id === advice.model)) {
+    return {
+      ...chosen,
+      model: advice.model,
+      reasons: [
+        ...chosen.reasons,
+        `the leader's model ${advice.model}, within the ${chosen.tier} tier this task needs`,
+      ],
+    };
+  }
+  return {
+    ...chosen,
+    reasons: [
+      ...chosen.reasons,
+      `the leader recommended ${advice.model}, not in the ${chosen.tier} tier this task needs: kept ${chosen.model}`,
+    ],
   };
 }

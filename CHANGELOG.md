@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+- **The leader advises, the router decides**: a leader's recommended
+  provider is a preference (with room, under your own choices), and its
+  model is taken only within the tier the task needs, or, with minimum
+  sufficient routing, when it is sufficient and within 10% of the
+  cheapest's expected cost. It never pins a model any more (only the
+  models you chose for Auto are kept whatever happens); each decision
+  records the recommendation, whether it was followed, and why.
+- **Cold start and uncertainty**: each arm's evidence is `unknown`,
+  `exploring`, `provisional`, `established` or `degraded`; no attempts is
+  never read as incapacity, and priors are said to be assumptions.
+- **Exploration that works**: directed, on low-risk tasks, within a budget
+  (10%, at most 2 per run), reproducible with a seed; it was off and, when
+  on, never reached under minimum sufficient routing. On by default now:
+  `AGENT_ROUTER_EXPLORE=false` restores the old behaviour.
+- **Failures told apart**: capability, verification, context, tools,
+  infrastructure, sign-in, quota, ambiguous, recorded with each attempt
+  (`failure_class`, a new column); at most 2 escalations per task. A
+  check whose own command was broken (a syntax error, an operator read as
+  a file) and a timeout in which no answer came back are held against no
+  model.
+- **Models a local server gives no class** are not ranked by where they
+  come in its list: they start with the same prior, the leader's
+  recommendation breaks the tie, and after one fails the task moves
+  sideways to another of the same standing.
+- **The leader audits by risk** (`AGENT_LEADER_AUDIT`): low-risk tasks
+  whose checks passed need no extra model call; `all` restores auditing
+  every task.
+- `grafeno-agent router`: spending by kind of task (unknown where not
+  measured), exploration, failures by kind, arms still too little tried,
+  and how often the leader was followed. `npm run eval:routing` compares
+  the leader's pin with its advice, exploration, a warm start and a biased
+  history.
+
 ## 0.2.0 (2026-11-16)
 
 - **Connections**: a registry tells vendor, connection and model apart.

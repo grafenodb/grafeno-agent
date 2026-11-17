@@ -6,7 +6,7 @@ import { loadConfig } from "../config.js";
 import { detectProject } from "../memory/project.js";
 import { grafenoVault } from "../memory/vault.js";
 import { Orchestrator, type OrchestratorOptions } from "../orchestrator/orchestrator.js";
-import { exploreOn, routerMode } from "../orchestrator/learned.js";
+import { exploreOn, exploreShare, routerMode } from "../orchestrator/learned.js";
 import type { RunLimits } from "../orchestrator/limits.js";
 import { TASK_KINDS, type TaskKind } from "../orchestrator/plan.js";
 import type { Planned } from "../orchestrator/planner.js";
@@ -62,7 +62,12 @@ export async function createOrchestrator(
     ...(settings.limits ? { limits: settings.limits } : {}),
     ...(settings.review ? { review: true } : {}),
     ...leaderOption(settings.leader ?? process.env.AGENT_LEADER),
-    explore: exploreOn(process.env.AGENT_ROUTER_EXPLORE),
+    ...(process.env.AGENT_LEADER_AUDIT?.trim().toLowerCase() === "all"
+      ? { leaderAudit: "all" as const }
+      : {}),
+    ...(exploreOn(process.env.AGENT_ROUTER_EXPLORE)
+      ? { explore: { share: exploreShare(process.env.AGENT_ROUTER_EXPLORE) } }
+      : { explore: false }),
     ...((settings.auto ?? isAuto(process.env.AGENT_PROVIDERS))
       ? { auto: true, affinity: affinityFor(process.env.AGENT_AFFINITY, TASK_KINDS) }
       : {}),

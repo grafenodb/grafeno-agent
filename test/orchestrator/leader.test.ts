@@ -9,7 +9,7 @@ import { Orchestrator } from "../../src/orchestrator/orchestrator.js";
 import { checkPlan, readAssignee, type TaskSpec } from "../../src/orchestrator/plan.js";
 import { describeResult } from "../../src/orchestrator/result.js";
 import { readReview, reviewFeedback } from "../../src/orchestrator/review.js";
-import { routeAcross, type ProviderEntry } from "../../src/orchestrator/router.js";
+import { routeAcross, withAdvice, type ProviderEntry } from "../../src/orchestrator/router.js";
 import type { ModelChoice, Provider } from "../../src/providers/types.js";
 
 const json = (value: unknown) => `\`\`\`json\n${JSON.stringify(value)}\n\`\`\``;
@@ -96,17 +96,50 @@ describe("routing what the leader assigned", () => {
     billing: "subscription",
   };
 
-  it("goes to the provider and model the leader chose", () => {
-    const route = routeAcross(
-      spec("a", {
-        kind: "architecture",
-        complexity: 5,
-        assignee: { provider: "codex", model: "gpt-6-mini" },
-      }),
-      [claude, codex],
+  it("prefers the leader's provider, and takes its model only within the tier the task needs", () => {
+    // A hard design task: the leader recommends a light model; the task needs deep.
+    const hard = spec("a", {
+      kind: "architecture",
+      complexity: 5,
+      assignee: { provider: "codex", model: "gpt-6-mini" },
+    });
+    const ruled = routeAcross(hard, [claude, codex]);
+    expect(ruled.kind === "run" && ruled.provider).toBe("codex");
+    expect(ruled.kind === "run" && ruled.reasons[0]).toBe(
+      "the leader recommended codex, and it has room",
     );
-    expect(route.kind === "run" && [route.provider, route.model]).toEqual(["codex", "gpt-6-mini"]);
-    expect(route.kind === "run" && route.reasons[0]).toBe("the leader gave it to codex/gpt-6-mini");
+    const advised = withAdvice(hard, ruled, codex.catalog);
+    // Not forced: the deep model stays, and why is said.
+    expect(advised.kind === "run" && advised.model).toBe("gpt-6");
+    expect(advised.kind === "run" && advised.reasons.at(-1)).toBe(
+      "the leader recommended gpt-6-mini, not in the deep tier this task needs: kept gpt-6",
+    );
+    // Within the tier: taken, as a recommendation.
+    const easy = spec("b", {
+      kind: "docs",
+      complexity: 1,
+      assignee: { provider: "codex", model: "gpt-6-mini" },
+    });
+    const light = withAdvice(easy, routeAcross(easy, [claude, codex]), codex.catalog);
+    expect(light.kind === "run" && light.model).toBe("gpt-6-mini");
+    // A strong model recommended for an easy task is not forced either.
+    const strong = spec("c", {
+      kind: "docs",
+      complexity: 1,
+      assignee: { provider: "codex", model: "gpt-6" },
+    });
+    const kept = withAdvice(strong, routeAcross(strong, [claude, codex]), codex.catalog);
+    expect(kept.kind === "run" && kept.model).toBe("gpt-6-mini");
+  });
+
+  it("never pins: only the person's own choice of models is kept whatever the leader says", () => {
+    const pinned = { ...codex.catalog, pinned: true };
+    const task = spec("a", { assignee: { provider: "codex", model: "gpt-6-mini" } });
+    const route = routeAcross(task, [claude, { ...codex, catalog: pinned }]);
+    const advised = withAdvice(task, route, pinned);
+    expect(advised.kind === "run" && advised.reasons.at(-1)).toBe(
+      "the leader recommended gpt-6-mini; you chose this provider's models",
+    );
   });
 
   it("follows the usual rules when the leader's provider is not ready or is near its limit", () => {
@@ -223,15 +256,18 @@ describe("a run with a leader", { timeout: 60_000 }, () => {
     expect(planning?.system).toContain("You are also the leader of this run (fake/deep)");
     expect(planning?.system).toContain("- fake: deep (deep), mid (standard), small (light)");
     const api = planned.routes.get("api");
-    expect(api?.kind === "run" && api.model).toBe("small");
-    expect(api?.kind === "run" && api.reasons[0]).toBe("the leader gave it to fake/small");
+    // A recommendation, not a pin: a backend task takes the deep tier under the rules (quality).
+    expect(api?.kind === "run" && api.model).toBe("deep");
+    expect(api?.kind === "run" && api.reasons.at(-1)).toBe(
+      "the leader recommended small, not in the deep tier this task needs: kept deep",
+    );
     expect(describePlan(planned)[1]).toBe(
       "Leader: fake/deep · planned it, gave out the tasks, and audits each one",
     );
     orchestrator.close();
   });
 
-  it("audits every task: sends one back, approves it, and its suggestions reach the task after it", async () => {
+  it("audits every task when told to: sends one back, approves it, and its suggestions reach the task after it", async () => {
     const seen: { system: string; message: string; model?: string }[] = [];
     const orchestrator = new Orchestrator({
       provider: provider(
@@ -247,6 +283,7 @@ describe("a run with a leader", { timeout: 60_000 }, () => {
       dataDir: join(dir, "data"),
       metrics: false,
       leader: { provider: "fake", model: "deep" },
+      leaderAudit: "all",
     });
     const tasks = [spec("api"), spec("docs", { kind: "docs", dependsOn: ["api"] })];
     const run = orchestrator.store.createRun("two", { goal: "g", risks: [], tasks }, [
@@ -287,6 +324,37 @@ describe("a run with a leader", { timeout: 60_000 }, () => {
       "The leader (fake/deep) approved 2 tasks and sent work back 1 time.",
     );
     expect(result.tasks[1]).toContain("approved by the leader, sent back 1×, 1 suggestion");
+    orchestrator.close();
+  });
+  it("by default audits in proportion to risk: a low-risk task's checks decide, a normal one is audited", async () => {
+    const seen: { system: string; message: string; model?: string }[] = [];
+    const orchestrator = new Orchestrator({
+      provider: provider([json({ verdict: "ok" })], seen),
+      project: { name: "shop", path: repo },
+      projectRoot: repo,
+      dataDir: join(dir, "data"),
+      metrics: false,
+      leader: { provider: "fake", model: "deep" },
+    });
+    const tasks = [
+      spec("notes", { kind: "docs" }),
+      spec("api", {
+        touches: ["src/api.ts"],
+        acceptance: [{ check: "files", exist: ["api.txt"] }],
+      }),
+    ];
+    const run = orchestrator.store.createRun("two", { goal: "g", risks: [], tasks }, [
+      "notes",
+      "api",
+    ]);
+    expect(await orchestrator.run(run.id)).toBe("completed");
+    const audited = orchestrator.store
+      .events(run.id)
+      .filter((e) => e.kind === "reviewed")
+      .map((e) => e.taskId);
+    expect(audited).toEqual(["api"]);
+    // One leader call for the run's audits: none for the low-risk task.
+    expect(seen.filter((s) => s.system.includes("You lead a run")).length).toBe(1);
     orchestrator.close();
   });
 });

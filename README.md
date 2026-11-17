@@ -147,6 +147,7 @@ agent asks again when it starts.
 | `AGENT_ROUTING`             | `balanced`              | `economy`, `balanced` or `quality`: how eagerly runs spend the plans             |
 | `AGENT_LOCAL_ROUTING`       | `light`                 | `light`, `first` or `last`: what goes to your local models (see below)           |
 | `AGENT_LEADER`              | none                    | `provider/model` that leads orchestrated runs (set by `/leader`)                 |
+| `AGENT_LEADER_AUDIT`        | `risk`                  | `risk` (low-risk tasks are decided by their checks) or `all`                     |
 | `AGENT_SANDBOX`             | `auto`                  | `auto`, `required` or `off`: Grafeno Sandbox for the agent's commands            |
 | `AGENT_SANDBOX_NETWORK`     | `auto`                  | `auto` (only to install or fetch), `always` or `never`                           |
 | `AGENT_SANDBOX_KEEP`        | `never`                 | `never`, `failed` or `always`: whether a sandbox is kept when its work ends      |
@@ -1062,13 +1063,58 @@ only when the evidence is there:
 
 The run's report says when that happened.
 
-| Setting                | Default   | What                                                                                                                                                         |
-| ---------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `AGENT_ROUTER`         | `learned` | `learned`, `shadow` (records what it would choose, never uses it) or `rules` (no learning)                                                                   |
-| `AGENT_ROUTER_EXPLORE` | `false`   | `true`: 1 in 10 docs and tests tasks of low complexity try a less-sampled model of the same or a cheaper tier, on the same provider, recorded as exploration |
+| Setting                | Default   | What                                                                                                                  |
+| ---------------------- | --------- | --------------------------------------------------------------------------------------------------------------------- |
+| `AGENT_ROUTER`         | `learned` | `learned`, `shadow` (records what it would choose, never uses it) or `rules` (no learning)                            |
+| `AGENT_ROUTER_EXPLORE` | `0.1`     | The share of low-risk tasks that may try a cheaper arm with little evidence (at most 2 per run); `false` turns it off |
+| `AGENT_LEADER_AUDIT`   | `risk`    | `risk`: the leader audits every task but the low-risk ones, which their checks decide; `all`: every task              |
 
-Exploration is off by default: the router learns only from what runs
-anyway and spends nothing extra to learn.
+### How a model is chosen
+
+Each task gets the **minimum sufficient** model: the arm (provider, model
+and effort) with the lowest expected cost of the whole execution (its
+first attempt, and the retries and escalations a failure would bring)
+among those likely enough to pass the task's checks for its risk. The
+order of authority is fixed:
+
+1. what the task must have (tools, safety) and what is ready (signed in,
+   with room, allowed to bill);
+2. your own choices (a provider for a kind of task, the models you chose
+   for Auto): kept as you chose them;
+3. limits and budgets (a window filling up, a task's share of a plan);
+4. the router's choice, from evidence;
+5. the leader's recommendation and the affinities: **preferences**, never
+   pins. A leader's model is followed when it is sufficient and costs about
+   the same (within 10%) as the cheapest sufficient one; otherwise the
+   decision records what it recommended, what was chosen, and why.
+
+**What is known of each arm** is said with its decision: `unknown` (no
+attempt: the prior, an assumption, stands in), `exploring` (fewer than 4
+attempts), `provisional`, `established` (10 or more) or `degraded` (even
+its best plausible rate is under the floor). No attempts is never read as
+incapacity, and a stronger model never wins by its higher prior alone.
+
+**Failures are told apart** (capability, verification, context, tools,
+infrastructure, sign-in, quota, ambiguous): only capability, verification
+and context count against a model. Failed checks are retried once on the
+same arm with their diagnostic; then the task climbs one rung (more effort
+before a stronger model), at most twice; quota moves it to another
+provider or waits, never to a stronger model.
+
+**Exploration** keeps evidence from coming only from what was already
+chosen: on a low-risk task, now and then (10%, at most 2 per run), a
+cheaper arm with little evidence that a few early failures set aside is
+tried, recorded as such, with an escalation behind it if it fails.
+
+`grafeno-agent router` explains it: what each kind of task spent
+(measured where the provider measured, `unknown` otherwise, never zero),
+what was explored, the failures by kind, which arms are still too little
+tried; `--decisions <run>` shows each decision, its candidates, the
+leader's recommendation and whether it was followed.
+
+`npm run eval:routing` compares the policies on a simulation (an assumed
+truth, not real models): it shows how they behave, not how much a real
+run saves.
 
 ### Several agents
 

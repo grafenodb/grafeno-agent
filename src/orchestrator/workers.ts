@@ -17,12 +17,14 @@ import {
   type ProviderRoute,
   type RoutingMode,
   localRouting,
+  withAdvice,
 } from "./router.js";
 import { explore, suggest } from "./learned.js";
 import { attemptShare, weightedTokens, type CostBook } from "./costs.js";
 import { computeEvidence, type CellEvidence } from "./capability.js";
 import type { AttemptRecord } from "./metrics.js";
 import { chooseSufficient, ladder, overBudget, type PriorAttempt } from "./sufficient.js";
+import { EXPLORE_PER_RUN } from "./learned.js";
 
 /** An attempt that took this share of a window and is not done moves to a lighter model. */
 export const HOT_DOWNGRADE_SHARE = 0.08;
@@ -167,6 +169,8 @@ export interface WorkerPoolOptions {
     readonly mode: "shadow" | "learned";
     /** Every recorded attempt, this run's included. */
     readonly attempts: () => readonly AttemptRecord[];
+    /** Directed exploration of arms little is known of, on low-risk tasks, within a budget per run. */
+    readonly explore?: { readonly share: number; readonly random: () => number };
   };
   /** A task's earlier attempts in its run, for retries and escalation. */
   readonly historyFor?: (runId: string, taskId: string) => readonly PriorAttempt[];
@@ -296,7 +300,10 @@ export class WorkerPool implements TaskRunner {
     assigned?: ReadonlyMap<string, number>,
     history: readonly PriorAttempt[] = [],
   ): Promise<ProviderRoute> {
-    const route = await this.#routeByRules(task, assigned);
+    const ruled = await this.#routeByRules(task, assigned);
+    if (ruled.kind !== "run") return ruled;
+    // The leader's model, as advice within the tier the task needs (never a pin).
+    const route = withAdvice(task, ruled, await this.catalog(ruled.provider));
     if (route.kind !== "run") return route;
     const sufficient = await this.#sufficient(task, route, history);
     if (sufficient) return sufficient;
@@ -368,16 +375,33 @@ export class WorkerPool implements TaskRunner {
     const catalog = await this.catalog(route.provider);
     if (catalog.pinned === true) return undefined;
     const usage = await this.usage(route.provider);
+    const advice =
+      task.assignee?.provider === route.provider && task.assignee.model
+        ? { model: task.assignee.model }
+        : undefined;
+    const runId = this.#runOf(task);
+    const exploring = settings.explore
+      ? {
+          share: settings.explore.share,
+          random: settings.explore.random,
+          budgetLeft: (this.#explorations.get(runId) ?? 0) < EXPLORE_PER_RUN,
+        }
+      : undefined;
     const decision = chooseSufficient(task, catalog, {
       provider: route.provider,
       mode,
       evidence: this.#evidence(settings.attempts),
       history,
+      ...(advice ? { advice } : {}),
+      ...(exploring ? { explore: exploring } : {}),
       ...(usage ? { usage } : {}),
       ...(this.options.maxAttempts ? { maxAttempts: this.options.maxAttempts } : {}),
       rule: `${route.provider}/${route.model}${route.effort ? ` · ${route.effort}` : ""}`,
     });
     if (!decision) return undefined;
+    if (decision.explored && settings.mode === "learned") {
+      this.#explorations.set(runId, (this.#explorations.get(runId) ?? 0) + 1);
+    }
     if (settings.mode !== "learned") return { ...route, decision };
     const rest: Omit<typeof route, "effort"> & { effort?: string } = { ...route };
     delete rest.effort;
@@ -388,13 +412,21 @@ export class WorkerPool implements TaskRunner {
       ...(decision.effort ? { effort: decision.effort } : {}),
       reasons: [
         ...route.reasons.filter((r) =>
-          /provider|affinity|room|limit|spreading|first choice/.test(r),
+          /provider|affinity|room|limit|spreading|first choice|leader/.test(r),
         ),
         decision.reason,
       ],
       decision,
     };
   }
+
+  /** Explorations made in each run, against its budget. */
+  readonly #explorations = new Map<string, number>();
+  /** The run a task belongs to, for its exploration budget: the one routing it now. */
+  #runOf(task: TaskSpec): string {
+    return this.#routing.get(task.id) ?? "";
+  }
+  readonly #routing = new Map<string, string>();
 
   /** The evidence in the recorded attempts: read anew, since this run's own attempts add to it. */
   #evidence(attempts: () => readonly AttemptRecord[]): readonly CellEvidence[] {
@@ -423,13 +455,6 @@ export class WorkerPool implements TaskRunner {
       const catalog = await this.catalog(provider.id);
       const costOf = this.options.costs ? { costOf: this.options.costs.costOf(provider.id) } : {};
       // The run's leader may have chosen this provider's model for the task.
-      if (task.assignee?.provider === provider.id) {
-        return routeAcross(
-          task,
-          [{ id: provider.id, catalog, ...(usage ? { usage } : {}), ...costOf }],
-          profiles,
-        );
-      }
       const chosen = route(task, catalog, {
         ...profiles,
         ...(usage ? { usage } : {}),
@@ -571,6 +596,7 @@ export class WorkerPool implements TaskRunner {
       context.note("task_budget", { reason: overspent });
       return { status: "failed", reason: overspent };
     }
+    this.#routing.set(task.spec.id, context.runId);
     const chosen = await this.routeFor(task.spec, undefined, history);
     if (chosen.kind === "hold") {
       return {
@@ -857,7 +883,7 @@ export class WorkerPool implements TaskRunner {
       ...(exactModel === undefined ? {} : { modelVersion: exactModel }),
       ...(escalatedFrom === undefined ? {} : { escalatedFrom }),
       ...(failure === undefined ? {} : { failure }),
-      explored: chosen.explored === true,
+      explored: chosen.explored === true || chosen.decision?.explored !== undefined,
     };
     context.note("attempt_metrics", { ...metrics });
     return outcome;

@@ -41,6 +41,20 @@ const AMBIGUOUS_TEXT: readonly RegExp[] = [
 ];
 
 /**
+ * A check whose own command was broken (a shell or awk syntax error, an
+ * operator read as a file name): it says nothing of the work, so the
+ * failure is nobody's that code can settle. A missing file is not this:
+ * that may well be the work's doing.
+ */
+const BROKEN_CHECK_TEXT =
+  /exited (?:2|126|127):\s*[^\n]*?(?:syntax error|unexpected (?:EOF|end of file|token)|bad substitution|unterminated|awk: (?:cmd\. line|syntax)|cannot open file .(?:==|!=|<=|>=|-eq|-ne|-lt|-gt|-le|-ge).)/i;
+
+/** Whether a failure's text shows one of the task's checks was itself broken. */
+export function brokenCheck(reason: string | undefined): boolean {
+  return BROKEN_CHECK_TEXT.test(reason ?? "");
+}
+
+/**
  * Whose fault a failed attempt was, by code: from its failure category (the
  * kind of error) and the reason given when it ended (the checks'
  * diagnostic, the error's message). A model is blamed only for what it
@@ -50,9 +64,68 @@ export function classifyFailure(category: string | undefined, reason: string | u
   if (category !== undefined && ENVIRONMENT_CATEGORIES.has(category)) return "environment";
   const text = reason ?? "";
   if (AMBIGUOUS_TEXT.some((pattern) => pattern.test(text))) return "ambiguous";
+  if (brokenCheck(text)) return "ambiguous";
   if (ENVIRONMENT_TEXT.some((pattern) => pattern.test(text))) return "environment";
   if (category === "error" && text === "") return "ambiguous";
   return "model";
+}
+
+/**
+ * What kind of failure it was, finer than whose fault: what decides whether
+ * to retry the same arm, move to another provider, escalate, or ask a
+ * person. Only `capability`, `verification` and `context` are the model's;
+ * none of the others says anything about what it can do.
+ */
+export type FailureClass =
+  /** The model could not do the work. */
+  | "capability"
+  /** Its work failed the task's checks: a diagnostic it can act on. */
+  | "verification"
+  /** It ran out of steps or context: more effort, or a renewed session, before a stronger model. */
+  | "context"
+  /** A tool or program it needed was missing or refused. */
+  | "tools"
+  /** The provider or the network failed. */
+  | "infrastructure"
+  /** The sign-in or key was refused. */
+  | "auth"
+  /** A usage limit or quota: another provider, or waiting, never a stronger model. */
+  | "quota"
+  /** The requirement was unclear: a person decides. */
+  | "ambiguous";
+
+const QUOTA_TEXT = /rate limit|usage limit|quota|429|too many requests/i;
+const AUTH_TEXT =
+  /refused the key|not signed in|sign in|unauthori[sz]ed|401|forbidden|invalid api key/i;
+const TOOLS_TEXT =
+  /did not allow|not allowed|needs? (a person's )?permission|command not found|is not recognized as|ENOENT|Cannot find module|No module named|ModuleNotFoundError/i;
+const INFRA_TEXT =
+  /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|network|socket hang up|overloaded|503|502|could not be reached|stopped answering|interrupted|the process ended/i;
+const CONTEXT_TEXT =
+  /step limit|ran out of (steps|context)|context (window|length)|max_tokens|too long/i;
+
+/** The finer kind of a failure, by code, from its category and reason (never the model's word). */
+export function failureClass(
+  category: string | undefined,
+  reason: string | undefined,
+): FailureClass {
+  const text = reason ?? "";
+  if (category === "usage_limit" || category === "quota" || category === "moved") return "quota";
+  if (category === "setup") return "auth";
+  if (category === "unavailable" || category === "lost" || category === "cancelled")
+    return "infrastructure";
+  if (AMBIGUOUS_TEXT.some((pattern) => pattern.test(text))) return "ambiguous";
+  if (brokenCheck(text)) return "ambiguous";
+  if (QUOTA_TEXT.test(text)) return "quota";
+  if (AUTH_TEXT.test(text)) return "auth";
+  if (TOOLS_TEXT.test(text)) return "tools";
+  if (INFRA_TEXT.test(text)) return "infrastructure";
+  if (category === "checks") return "verification";
+  if (category === "timeout" || category === "max_steps" || CONTEXT_TEXT.test(text))
+    return "context";
+  if (ENVIRONMENT_TEXT.some((pattern) => pattern.test(text))) return "infrastructure";
+  if (category === "error" && text === "") return "ambiguous";
+  return "capability";
 }
 
 /** How much a wrong result would cost: decided by code from what the task touches. */

@@ -28,6 +28,12 @@ export interface Rung {
   readonly tier: Tier;
   /** Its place within its class: 0 for the strongest model of the class. */
   readonly rank: number;
+  /**
+   * The provider lists the model in one of its tiers. When it does not (a
+   * local server, say), the model is taken as standard, and no model is
+   * assumed stronger than another for where it comes in the list.
+   */
+  readonly classed: boolean;
 }
 
 const CLASSES: readonly Tier[] = ["light", "standard", "deep"];
@@ -58,8 +64,11 @@ export function ladder(catalog: Catalog): Rung[] {
     // Weakest first within the class too.
     for (const [index, model] of [...models].reverse().entries()) {
       const rank = models.length - 1 - index;
-      if (efforts.length === 0) rungs.push({ model, tier, rank });
-      else for (const effort of efforts) rungs.push({ model, effort, tier, rank });
+      const classed = classOf(model, catalog) !== undefined;
+      // Unclassed models: no rank from their place in the list.
+      const at = classed ? rank : 0;
+      if (efforts.length === 0) rungs.push({ model, tier, rank: at, classed });
+      else for (const effort of efforts) rungs.push({ model, effort, tier, rank: at, classed });
     }
   }
   return rungs;
@@ -117,6 +126,25 @@ export interface PriorAttempt {
   readonly share?: number;
 }
 
+/**
+ * How much is known of an arm on a kind of task. No attempts is not
+ * incapacity: it is `unknown`, and the prior (a starting assumption, never
+ * an observation) stands in for it until there is evidence.
+ * - `unknown`: no attempt;
+ * - `exploring`: fewer attempts than the prior is worth (a few never settle anything);
+ * - `provisional`: some evidence, not enough to rest on;
+ * - `established`: enough attempts for the evidence to decide;
+ * - `degraded`: enough attempts, and even their best plausible rate is under the floor.
+ */
+export type EvidenceState = "unknown" | "exploring" | "provisional" | "established" | "degraded";
+
+export function evidenceState(n: number, high: number, floor: number): EvidenceState {
+  if (n === 0) return "unknown";
+  if (n >= PRIOR_WEIGHT && high < floor) return "degraded";
+  if (n < PRIOR_WEIGHT) return "exploring";
+  return n >= ENOUGH ? "established" : "provisional";
+}
+
 export interface Candidate {
   readonly arm: string;
   readonly model: string;
@@ -129,6 +157,8 @@ export interface Candidate {
   readonly n: number;
   readonly low: number;
   readonly high: number;
+  /** What is known of it on this kind of task. */
+  readonly state: EvidenceState;
   /** Cost of one attempt, and where the figure comes from. */
   readonly cost: number;
   readonly costSource: "observed" | "estimated" | "unknown";
@@ -160,6 +190,19 @@ export interface Decision {
   readonly rule?: string;
   /** Why this attempt is on a stronger arm than the one before, when it is. */
   readonly escalation?: string;
+  /** What is known of the arm chosen: `unknown` means it rests on the prior alone. */
+  readonly state: EvidenceState;
+  /**
+   * The run's leader's recommendation, and what became of it: followed, or
+   * not and why (the router decides; the leader advises).
+   */
+  readonly advice?: { readonly arm: string; readonly followed: boolean; readonly why: string };
+  /**
+   * Tried on purpose to learn of an arm with little evidence (a low-risk
+   * task, within the exploration's budget), instead of `instead`; with the
+   * chance it had of being chosen this way.
+   */
+  readonly explored?: { readonly instead: string; readonly probability: number };
 }
 
 export interface SufficientOptions {
@@ -174,7 +217,28 @@ export interface SufficientOptions {
   /** Above this share of a window, deep models are kept for what needs them. Default: 0.7. */
   readonly lighterAbove?: number;
   readonly rule?: string;
+  /** The run's leader's recommendation for this task: a model (and effort) of this provider. */
+  readonly advice?: { readonly model: string; readonly effort?: string };
+  /**
+   * Directed exploration: on a low-risk task, with this chance, a cheaper arm
+   * with little evidence (`unknown` or `exploring`, not `degraded`) is tried
+   * instead of the cheapest sufficient one, so evidence does not come only
+   * from what was already chosen. `random` makes it reproducible; without
+   * `budgetLeft`, none (the run's exploration budget is spent).
+   */
+  readonly explore?: {
+    readonly share: number;
+    readonly random: () => number;
+    readonly budgetLeft: boolean;
+  };
+  /** Times a task may move to a stronger arm. Default: 2. */
+  readonly maxEscalations?: number;
 }
+
+/** How much more a recommended arm may cost than the cheapest sufficient one and still be followed. */
+export const ADVICE_TOLERANCE = 0.1;
+/** The most an explored arm's first-attempt success may be under the floor (it is learning, not gambling). */
+const EXPLORE_MARGIN = 0.15;
 
 const armKey = (provider: string, rung: Pick<Rung, "model" | "effort">) =>
   `${provider}/${rung.model}${rung.effort ? ` · ${rung.effort}` : ""}`;
@@ -251,6 +315,10 @@ export function chooseSufficient(
   // Where the choice may start: at or above the rung an escalation asks for.
   let from = 0;
   let escalation: string | undefined;
+  // A model the provider does not rank apart from the one that failed (both
+  // unclassed, the same standing): moving to it is sideways, not down.
+  let sideways: Rung | undefined;
+  let failedAt = -1;
   if (last) {
     const at = view.findIndex(
       (v) => v.rung.model === last.model && (v.rung.effort ?? "") === (last.effort ?? ""),
@@ -259,23 +327,49 @@ export function chooseSufficient(
       (h) => h.model === last.model && (h.effort ?? "") === (last.effort ?? ""),
     ).length;
     const lastArm = `${last.model}${last.effort ? ` · ${last.effort}` : ""}`;
+    failedAt = at;
     if (at >= 0 && last.failure === "checks" && sameArm === 1) {
       // Failed checks come with a diagnostic the same model can act on, once.
       from = at;
       escalation = `retrying ${lastArm} once with the checks' diagnostic`;
+    } else if (at >= 0 && escalations(history, view) >= (options.maxEscalations ?? 2)) {
+      // As many escalations as a task may have: it stays where it is.
+      from = at;
+      escalation = `${lastArm} failed (${last.failure ?? "its checks"}), and the task already escalated ${String(options.maxEscalations ?? 2)} times, the most it may: tried again there`;
     } else if (at >= 0) {
       from = Math.min(view.length - 1, at + 1);
+      const failedRung = view[at]?.rung;
+      sideways = failedRung && !failedRung.classed ? failedRung : undefined;
+      const peer = view.some((v) => isSideways(v.rung));
       escalation =
-        from === at
-          ? `${lastArm} failed (${last.failure ?? "its checks"}) and is the strongest arm: tried again`
-          : `${lastArm} failed (${last.failure ?? "its checks"}${sameArm > 1 ? `, ${String(sameArm)} times` : ""}): escalating`;
+        peer && (from === at || isSideways(view[from]?.rung))
+          ? `${lastArm} failed (${last.failure ?? "its checks"}): moving to a model of the same standing`
+          : from === at
+            ? `${lastArm} failed (${last.failure ?? "its checks"}) and is the strongest arm: tried again`
+            : `${lastArm} failed (${last.failure ?? "its checks"}${sameArm > 1 ? `, ${String(sameArm)} times` : ""}): escalating`;
     }
   }
+  function isSideways(rung: Rung | undefined): boolean {
+    return (
+      rung !== undefined &&
+      sideways !== undefined &&
+      !rung.classed &&
+      rung.rank === sideways.rank &&
+      rung.model !== sideways.model
+    );
+  }
+  /** Below where the choice may start, and not a move sideways. */
+  const below = (v: { index: number; rung: Rung }) => v.index < from && !isSideways(v.rung);
 
-  const scored = view.map((v, index) => ({ ...v, index, ...expected(index, left) }));
+  const scored = view.map((v, index) => ({
+    ...v,
+    index,
+    state: evidenceState(v.n, v.interval.high, floor),
+    ...expected(index, left),
+  }));
   const eligible = scored.filter(
     (v) =>
-      v.index >= from &&
+      !below(v) &&
       v.p >= floor &&
       !(pressed && v.rung.tier === "deep" && risk !== "high" && band !== "high"),
   );
@@ -283,8 +377,7 @@ export function chooseSufficient(
   const retryingSame = escalation?.startsWith("retrying") === true;
   // Above the arm that failed, whatever its floor: an escalation must be able to go on.
   const above = scored.filter(
-    (v) =>
-      v.index >= from && !(pressed && v.rung.tier === "deep" && risk !== "high" && band !== "high"),
+    (v) => !below(v) && !(pressed && v.rung.tier === "deep" && risk !== "high" && band !== "high"),
   );
   // The cheapest whole execution that reaches the target; when none does, the
   // one most likely to end well (a last attempt goes to what can pass it).
@@ -293,7 +386,7 @@ export function chooseSufficient(
   const likeliest = (list: typeof scored) =>
     [...list].sort((a, b) => b.success - a.success || a.cost - b.cost || a.index - b.index)[0];
   const pool = reaching.length > 0 ? reaching : eligible;
-  const best =
+  const sufficient =
     // A retry with the checks' diagnostic stays on the arm, while attempts are left after it.
     (retryingSame && left > 1 ? scored.find((v) => v.index === from) : undefined) ??
     cheapest(reaching) ??
@@ -301,20 +394,104 @@ export function chooseSufficient(
     // Nothing is likely enough: the strongest there is, said as such.
     above.at(-1) ??
     scored.at(-1);
-  if (!best) return undefined;
+  if (!sufficient) return undefined;
+
+  // The leader's recommendation: followed when it is sufficient and costs about the same.
+  let best = sufficient;
+  let advice: Decision["advice"];
+  if (options.advice) {
+    const wanted = options.advice;
+    const matching = scored.filter(
+      (v) =>
+        v.rung.model === wanted.model &&
+        (wanted.effort === undefined || (v.rung.effort ?? "") === wanted.effort),
+    );
+    const usable = matching
+      .filter((v) => reaching.includes(v) || (reaching.length === 0 && eligible.includes(v)))
+      .sort((a, b) => a.cost - b.cost)[0];
+    const armName = `${options.provider}/${wanted.model}${wanted.effort ? ` · ${wanted.effort}` : ""}`;
+    if (matching.length === 0) {
+      advice = { arm: armName, followed: false, why: "this provider has no such model" };
+    } else if (!usable) {
+      const one = matching[0];
+      advice = {
+        arm: armName,
+        followed: false,
+        why:
+          one && below(one)
+            ? "below the arm that already failed on this task"
+            : `not sufficient for this task (${pct(one?.p ?? 0)} expected at the first attempt, under ${pct(floor)}, or the whole execution under ${pct(target)})`,
+      };
+    } else if (usable.index === sufficient.index || retryingSame) {
+      advice = {
+        arm: armName,
+        followed: usable.index === sufficient.index,
+        why:
+          usable.index === sufficient.index
+            ? "it is the cheapest sufficient arm too"
+            : "the task is retrying the arm that failed",
+      };
+    } else if (usable.cost <= sufficient.cost * (1 + ADVICE_TOLERANCE)) {
+      best = usable;
+      advice = {
+        arm: armName,
+        followed: true,
+        why: `sufficient, and within ${pct(ADVICE_TOLERANCE)} of the cheapest's expected cost`,
+      };
+    } else {
+      advice = {
+        arm: armName,
+        followed: false,
+        why: `expected cost ${fmt(usable.cost)} against ${fmt(sufficient.cost)} for ${sufficient.key}, which is sufficient too`,
+      };
+    }
+  }
+
+  // Directed exploration: a cheaper arm little is known of, on a low-risk task, now and then.
+  let explored: Decision["explored"];
+  const exploring = options.explore;
+  if (
+    exploring?.budgetLeft === true &&
+    risk === "low" &&
+    !last &&
+    !pressed &&
+    exploring.share > 0
+  ) {
+    const options_ = scored
+      .filter(
+        (v) =>
+          // Cheaper per attempt (its chain cost already counts the few failures it had).
+          v.attemptCost < best.attemptCost &&
+          (v.state === "unknown" || v.state === "exploring") &&
+          v.p >= floor - EXPLORE_MARGIN,
+      )
+      // Least known first, then the cheapest.
+      .sort((a, b) => a.n - b.n || a.cost - b.cost);
+    const pick = options_[0];
+    if (pick && exploring.random() < exploring.share) {
+      explored = { instead: best.key, probability: exploring.share };
+      best = pick;
+    }
+  }
 
   const candidates: Candidate[] = scored.map((v) => {
     const selected = v.index === best.index;
     let why: string;
     if (selected) why = "selected";
-    else if (v.index < from) why = "below the arm that already failed on this task";
+    else if (v.index === failedAt) why = "it failed on this task";
+    else if (below(v)) why = "below the arm that already failed on this task";
     else if (v.p < floor)
-      why = `first-attempt success ${pct(v.p)} is under the floor ${pct(floor)}`;
+      why =
+        v.state === "unknown"
+          ? `no evidence yet; its prior ${pct(v.p)} is under the floor ${pct(floor)} (an assumption, not a failure)`
+          : `first-attempt success ${pct(v.p)} is under the floor ${pct(floor)}`;
     else if (pressed && v.rung.tier === "deep" && risk !== "high" && band !== "high")
       why = `the plan is ${pct(fullest)} used: deep models are kept for what needs them`;
     else if (v.success < target && reaching.length > 0)
       why = `the whole execution would reach ${pct(v.success)}, under ${pct(target)}`;
     else if (v.cost > best.cost) why = `expected cost ${fmt(v.cost)} against ${fmt(best.cost)}`;
+    else if (v.p === best.p && v.cost === best.cost)
+      why = "as likely and as cheap: nothing tells them apart yet (the first listed was taken)";
     else why = "as cheap, but a stronger arm than needed";
     return {
       arm: v.key,
@@ -326,6 +503,7 @@ export function chooseSufficient(
       n: v.n,
       low: round(v.interval.low),
       high: round(v.interval.high),
+      state: v.state,
       cost: v.attemptCost,
       costSource: v.costSource,
       expected: v.cost,
@@ -338,13 +516,19 @@ export function chooseSufficient(
   const confidence = best.n >= ENOUGH ? "evidence" : best.n > 0 ? "some" : "prior";
   const basis =
     confidence === "prior"
-      ? `no ${cellKey} attempt on it yet: the prior for a ${best.rung.tier} model`
+      ? best.rung.classed
+        ? `no ${cellKey} attempt on it yet: the prior for a ${best.rung.tier} model`
+        : `no ${cellKey} attempt on it yet: the provider gives no class, so the prior for a standard model, the same for each of its models`
       : `${String(best.n)} ${cellKey} attempt${best.n === 1 ? "" : "s"} (${pct(best.interval.low)}–${pct(best.interval.high)} passed)`;
-  const reason = escalation
-    ? `${escalation}: ${best.key}, ${pct(best.p)} expected to pass (${basis})`
-    : pool.length === 0
-      ? `no arm reaches ${pct(floor)} for ${cellKey} (risk ${risk}): the strongest, ${best.key}, at ${pct(best.p)} (${basis})`
-      : `${best.key} is the cheapest sufficient arm for ${cellKey} (risk ${risk}): ${pct(best.p)} expected to pass at the first attempt (${basis}), ${pct(best.success)} within ${String(left)} attempt${left === 1 ? "" : "s"}, expected cost ${fmt(best.cost)} (${best.costSource})`;
+  const reason = explored
+    ? `explored ${best.key} (${best.state}: ${basis}) instead of ${explored.instead}: a low-risk task, to learn what a cheaper arm can do; an escalation follows if it fails`
+    : advice?.followed === true && best.index !== sufficient.index
+      ? `the leader's ${best.key}: ${advice.why} (${pct(best.p)} expected, ${basis})`
+      : escalation
+        ? `${escalation}: ${best.key}, ${pct(best.p)} expected to pass (${basis})`
+        : pool.length === 0
+          ? `no arm reaches ${pct(floor)} for ${cellKey} (risk ${risk}): the strongest, ${best.key}, at ${pct(best.p)} (${basis})`
+          : `${best.key} is the cheapest sufficient arm for ${cellKey} (risk ${risk}): ${pct(best.p)} expected to pass at the first attempt (${basis}), ${pct(best.success)} within ${String(left)} attempt${left === 1 ? "" : "s"}, expected cost ${fmt(best.cost)} (${best.costSource})`;
 
   return {
     provider: options.provider,
@@ -363,7 +547,23 @@ export function chooseSufficient(
     candidates,
     ...(options.rule ? { rule: options.rule } : {}),
     ...(escalation ? { escalation } : {}),
+    state: best.state,
+    ...(advice ? { advice } : {}),
+    ...(explored ? { explored } : {}),
   };
+}
+
+/** How many times a task moved to a stronger arm, from its attempts in order. */
+function escalations(history: readonly PriorAttempt[], view: readonly { rung: Rung }[]): number {
+  const at = (h: PriorAttempt) =>
+    view.findIndex((v) => v.rung.model === h.model && (v.rung.effort ?? "") === (h.effort ?? ""));
+  let count = 0;
+  for (let i = 1; i < history.length; i++) {
+    const before = history[i - 1];
+    const now = history[i];
+    if (before && now && at(now) > at(before)) count++;
+  }
+  return count;
 }
 
 /**
@@ -445,10 +645,22 @@ export function describeDecision(decision: Decision): string[] {
   const lines = [
     `${decision.cell} · risk ${decision.risk} · ${decision.mode}: ${decision.reason}`,
     ...(decision.rule ? [`  the fixed rules would have chosen ${decision.rule}`] : []),
+    ...(decision.advice
+      ? [
+          `  the leader recommended ${decision.advice.arm}: ${decision.advice.followed ? "followed" : "not followed"} (${decision.advice.why})`,
+        ]
+      : []),
+    ...(decision.explored
+      ? [
+          `  exploration (chance ${pct(decision.explored.probability)}), instead of ${decision.explored.instead}`,
+        ]
+      : []),
   ];
   for (const c of decision.candidates) {
     const evidence =
-      c.n > 0 ? `${String(c.n)} attempts ${pct(c.low)}–${pct(c.high)}` : "no attempts";
+      c.n > 0
+        ? `${c.state}, ${String(c.n)} attempts ${pct(c.low)}–${pct(c.high)}`
+        : "unknown: no attempts, the prior alone";
     lines.push(
       `  ${c.verdict === "selected" ? "▸" : " "} ${c.arm.padEnd(34)} ${pct(c.p).padStart(4)} (prior ${pct(c.prior)}, ${evidence})  cost ${fmt(c.expected)} ${c.costSource}  ${c.verdict === "selected" ? "" : c.why}`,
     );

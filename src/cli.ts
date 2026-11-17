@@ -699,6 +699,10 @@ async function routerCommand(argv: readonly string[]): Promise<number> {
     for (const line of describeEvidence(computeEvidence(attempts))) console.log(line);
     console.log("");
     for (const line of describeQuality(learningQuality(attempts))) console.log(line);
+    const { describeRouting, describeDecisionsSummary } =
+      await import("./orchestrator/routing-report.js");
+    console.log("");
+    for (const line of describeRouting(attempts)) console.log(line);
     const decisionsOf = flag(argv, "--decisions");
     if (decisionsOf !== undefined) {
       // Each choice of a run, with its candidates and why the others were left out.
@@ -720,6 +724,12 @@ async function routerCommand(argv: readonly string[]): Promise<number> {
             `\n${event.taskId ?? "?"} · attempt ${String(attempt)}${event.data.applied === true ? "" : " (shadow: recorded, not used)"}`,
           );
           for (const line of describeDecision(event.data as never)) console.log(`  ${line}`);
+        }
+        if (events.length > 0) {
+          console.log("");
+          for (const line of describeDecisionsSummary(events.map((e) => e.data as never))) {
+            console.log(line);
+          }
         }
       } finally {
         store.close();

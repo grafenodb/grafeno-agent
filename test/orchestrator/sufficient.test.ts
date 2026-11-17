@@ -30,7 +30,7 @@ import {
 import { WorkerPool } from "../../src/orchestrator/workers.js";
 import type { Provider } from "../../src/providers/types.js";
 import { Workspace } from "../../src/tools/workspace.js";
-import { compareRouters } from "../eval/routing-sim.js";
+import { compareRouters, POLICIES } from "../eval/routing-sim.js";
 
 const catalog: Catalog = {
   models: [
@@ -374,6 +374,62 @@ describe("what a run records of each attempt", () => {
     });
   });
 
+  it("holds neither a broken check nor a timeout with no answer against the model", () => {
+    const store = new SqliteStore();
+    const plan: Plan = { goal: "g", risks: [], tasks: [spec({ id: "api" })] };
+    const run = store.createRun("g", plan, ["api"]);
+    const metrics = (attempt: number, outcome: string, extra: Record<string, unknown> = {}) => {
+      store.event(run.id, "attempt_started", { attempt }, "api");
+      store.event(
+        run.id,
+        "attempt_metrics",
+        {
+          attempt,
+          model: "lmstudio/gemma",
+          provider: "lmstudio",
+          modelId: "gemma",
+          outcome,
+          ...extra,
+        },
+        "api",
+      );
+    };
+    // 1: the check's own command was broken. 2: no answer came back at all. 3: a slow, real one.
+    metrics(1, "completed", { inputTokens: 900, outputTokens: 80 });
+    store.event(run.id, "verified", { ok: false }, "api");
+    store.event(
+      run.id,
+      "attempt_ended",
+      {
+        attempt: 1,
+        status: "retry",
+        reason:
+          "These checks failed; fix the work so that they pass:\n- `wc -c < greeting.txt | awk '{print $1}' == 5` exited 2:\nawk: fatal: cannot open file `==' for reading: No such file or directory",
+      },
+      "api",
+    );
+    metrics(2, "retry", { failure: "timeout", inputTokens: 0, outputTokens: 0 });
+    store.event(
+      run.id,
+      "attempt_ended",
+      { attempt: 2, status: "retry", reason: "timeout: The turn took longer than 600000 ms" },
+      "api",
+    );
+    metrics(3, "retry", { failure: "timeout", inputTokens: 5000, outputTokens: 900 });
+    store.event(
+      run.id,
+      "attempt_ended",
+      { attempt: 3, status: "retry", reason: "timeout: The turn took longer than 600000 ms" },
+      "api",
+    );
+    const { attempts: recorded } = deriveRun(store, run.id, "p");
+    expect(recorded.map((a) => [a.attempt, judge(a), a.failureClass])).toEqual([
+      [1, "ambiguous", "ambiguous"],
+      [2, "ambiguous", "infrastructure"],
+      [3, "failed", "context"],
+    ]);
+  });
+
   it("opens a metrics file made before these columns, keeping its rows", () => {
     const dir = mkdtempSync(join(tmpdir(), "ga-metrics-"));
     try {
@@ -481,7 +537,11 @@ describe("how well the router knows its models", () => {
 
 describe("the old router and the new, on the same fixed tasks (simulated)", () => {
   it("spends less, keeps deep models for hard tasks, and does not lose success", () => {
-    const [quality, balanced, sufficient, economy] = compareRouters(300);
+    const [quality, balanced, sufficient, economy] = compareRouters(
+      300,
+      [11, 23, 37],
+      POLICIES.slice(0, 4),
+    );
     if (!quality || !balanced || !sufficient || !economy) throw new Error("no results");
     // Simple work no longer goes to deep models; hard work still does.
     expect(quality.deepEasy).toBeGreaterThan(0.3);

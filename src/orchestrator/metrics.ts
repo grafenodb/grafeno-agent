@@ -1,7 +1,14 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { classifyFailure, riskOf, techOf, type Fault } from "./capability.js";
+import {
+  classifyFailure,
+  failureClass,
+  riskOf,
+  techOf,
+  type FailureClass,
+  type Fault,
+} from "./capability.js";
 import { SqliteStore, type OperationalStore } from "./store.js";
 
 /**
@@ -48,6 +55,8 @@ export interface AttemptRecord {
   readonly verified?: boolean;
   /** Whose doing a failure was, decided by code (see `classifyFailure`). */
   readonly fault?: Fault;
+  /** What kind of failure it was (see `failureClass`): quota, tools, verification… */
+  readonly failureClass?: FailureClass;
   /** Times a person answered a question during the attempt. */
   readonly human?: number;
   /** The task's risk and main technology, decided by code from what it touches. */
@@ -116,6 +125,7 @@ const MIGRATIONS: readonly (readonly [table: string, column: string, type: strin
   ["attempts", "tech", "TEXT"],
   ["attempts", "model_version", "TEXT"],
   ["attempts", "escalated_from", "TEXT"],
+  ["attempts", "failure_class", "TEXT"],
   ["outcomes", "regression", "INTEGER"],
 ];
 
@@ -207,7 +217,14 @@ export function deriveRun(
           ...(modelVersion ? { modelVersion } : {}),
           ...(escalatedFrom ? { escalatedFrom } : {}),
           // A failure inside the attempt itself: classified now; its end may say more.
-          ...(outcome !== "completed" ? { fault: classifyFailure(failure, undefined) } : {}),
+          ...(outcome !== "completed"
+            ? silentTimeout(failure, num(d.inputTokens), num(d.outputTokens))
+              ? SILENT
+              : {
+                  fault: classifyFailure(failure, undefined),
+                  failureClass: failureClass(failure, undefined),
+                }
+            : {}),
         });
         break;
       }
@@ -220,8 +237,14 @@ export function deriveRun(
         if (!known || d.status === "completed") break;
         // Not completed: the checks' diagnostic or the error says whose doing it was.
         const category = known.verified === false ? "checks" : known.failure;
+        const silent = silentTimeout(category, known.inputTokens, known.outputTokens);
         patch(taskId, {
-          fault: classifyFailure(category, str(d.reason)),
+          ...(silent
+            ? SILENT
+            : {
+                fault: classifyFailure(category, str(d.reason)),
+                failureClass: failureClass(category, str(d.reason)),
+              }),
           ...(known.failure === undefined && known.verified === false ? { failure: "checks" } : {}),
         });
         break;
@@ -289,8 +312,9 @@ export class MetricsStore {
       `INSERT OR REPLACE INTO attempts (run, task, attempt, project, at, kind, complexity,
         provider, model, effort, tier, ms, rounds, renewals, input_tokens, output_tokens,
         cache_tokens, context_peak, window, window_estimated, quota_used, outcome, failure,
-        explored, quota_share, verified, fault, human, risk, tech, model_version, escalated_from)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        explored, quota_share, verified, fault, human, risk, tech, model_version, escalated_from,
+        failure_class)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     );
     const insertOutcome = this.#db.prepare(
       `INSERT OR REPLACE INTO outcomes (run, task, project, at, kind, complexity, state, attempts,
@@ -332,6 +356,7 @@ export class MetricsStore {
           a.tech ?? null,
           a.modelVersion ?? null,
           a.escalatedFrom ?? null,
+          a.failureClass ?? null,
         );
       }
       for (const o of outcomes) {
@@ -405,6 +430,9 @@ export class MetricsStore {
           ...(tech ? { tech } : {}),
           ...(modelVersion ? { modelVersion } : {}),
           ...(escalatedFrom ? { escalatedFrom } : {}),
+          ...(present(row.failure_class)
+            ? { failureClass: row.failure_class as FailureClass }
+            : {}),
         };
       });
   }
@@ -470,3 +498,19 @@ export function importRuns(dataDir: string, metrics: MetricsStore): number {
   }
   return count;
 }
+
+/**
+ * A timeout in which no answer at all came back (not a token in or out):
+ * the server stalled, or the model never finished its first reply. Code
+ * cannot tell which, so it is held against nobody, said as the provider's
+ * side.
+ */
+function silentTimeout(
+  category: string | undefined,
+  input: number | undefined,
+  output: number | undefined,
+): boolean {
+  return category === "timeout" && (input ?? 0) === 0 && (output ?? 0) === 0;
+}
+
+const SILENT = { fault: "ambiguous", failureClass: "infrastructure" } as const;
