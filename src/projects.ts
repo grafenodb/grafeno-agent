@@ -267,6 +267,20 @@ export async function deleteProject(
       runs = true;
     }
   }
+  // The runs' copies of the project (git worktrees): removed, and git told to forget them.
+  const worktrees = join(options.dataDir, "worktrees", folderOf(project.name));
+  if (existsSync(worktrees)) {
+    try {
+      rmSync(worktrees, { recursive: true, force: true });
+      execFileSync("git", ["worktree", "prune"], {
+        cwd: project.path,
+        stdio: "ignore",
+        windowsHide: true,
+      });
+    } catch {
+      // A copy still in use, or the folder is not a repository any more: left as it is.
+    }
+  }
   removeProject(project.name, file);
   return { project, namespace, sessions, runs };
 }

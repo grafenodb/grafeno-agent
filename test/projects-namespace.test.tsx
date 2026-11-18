@@ -158,6 +158,7 @@ describe("deleting a project", () => {
     mkdirSync(join(dataDir, "runs"), { recursive: true });
     writeFileSync(join(dataDir, "runs", "shop.db"), "");
     writeFileSync(join(dataDir, "runs", "shop.db-wal"), "");
+    mkdirSync(join(dataDir, "worktrees", "shop", "run-1"), { recursive: true });
     return { dir, file, sessionsDir, dataDir, project };
   }
 
@@ -183,6 +184,8 @@ describe("deleting a project", () => {
       expect(existsSync(join(sessionsDir, "shop"))).toBe(false);
       expect(existsSync(join(dataDir, "runs", "shop.db"))).toBe(false);
       expect(existsSync(join(dataDir, "runs", "shop.db-wal"))).toBe(false);
+      // The runs' copies of the project go too.
+      expect(existsSync(join(dataDir, "worktrees", "shop"))).toBe(false);
       expect(loadProjects(file)).toEqual([]);
       expect(existsSync(project.path)).toBe(true);
       expect(describeDeletion(result)).toContain('namespace "ga--shop" dropped');
