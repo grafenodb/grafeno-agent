@@ -51,3 +51,45 @@ export function useWheel(onWheel: (direction: number) => void, layer: Layer = "o
     };
   }, [stdin, hub]);
 }
+
+/** F6 as terminals send it (ESC [ 17 ~), alone or with modifiers. */
+const F6 = new RegExp(`${ESC}\\[17(?:;\\d+)?~`, "g");
+
+/** How many times a chunk of input presses F6. */
+export function f6Presses(chunk: string): number {
+  return [...chunk.matchAll(F6)].length;
+}
+
+/**
+ * The interface's hold on the mouse. While it holds it, clicks and the wheel
+ * are the interface's; once released (F6), the terminal selects and copies
+ * text as usual, and F6 again takes the mouse back.
+ */
+const mouse: { available: boolean; on: boolean; write: (data: string) => void } = {
+  available: false,
+  on: false,
+  write: () => undefined,
+};
+
+/** Called once the interface asked for the mouse: from now on F6 can release it. */
+export function holdMouse(write: (data: string) => void): void {
+  mouse.available = true;
+  mouse.on = true;
+  mouse.write = write;
+}
+
+/** Whether the interface holds the mouse now. */
+export function mouseHeld(): boolean {
+  return mouse.on;
+}
+
+/**
+ * Releases the mouse to the terminal, or takes it back. Undefined when the
+ * interface never held it (GRAFENO_AGENT_MOUSE=off, or not a terminal).
+ */
+export function toggleMouse(): boolean | undefined {
+  if (!mouse.available) return undefined;
+  mouse.on = !mouse.on;
+  mouse.write(mouse.on ? MOUSE_ON : MOUSE_OFF);
+  return mouse.on;
+}

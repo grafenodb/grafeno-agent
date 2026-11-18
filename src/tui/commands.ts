@@ -77,6 +77,11 @@ export const COMMANDS: readonly Command[] = [
   { name: "upkeep", description: "Report on the memory: duplicates, contradictions" },
   { name: "sidebar", description: "Show or hide the side panel (ctrl+b)" },
   { name: "log", description: "The interface's last notices (they show in the status bar)" },
+  {
+    name: "copy",
+    description:
+      "Copy the model's last answer (/copy 2: the one before) to the clipboard; F6 frees the mouse to select text",
+  },
   { name: "clear", description: "Clear the conversation from the screen" },
   { name: "exit", description: "Leave, saving where the session stands", aliases: ["quit"] },
 ];

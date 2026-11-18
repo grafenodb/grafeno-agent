@@ -1,4 +1,4 @@
-import { Box, measureElement, Text, useApp, useWindowSize, type DOMElement } from "ink";
+import { Box, measureElement, Text, useApp, useStdin, useWindowSize, type DOMElement } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { readEnvironment, type Environment } from "../app/environment.js";
 import type { AppServices } from "../app/services.js";
@@ -113,7 +113,8 @@ const SCOPE_LABELS: Readonly<Record<PermissionScope, string>> = {
 };
 import { describePlan } from "../app/orchestrate.js";
 import { describeResult } from "../orchestrator/result.js";
-import { useWheel } from "./mouse.js";
+import { f6Presses, toggleMouse, useWheel } from "./mouse.js";
+import { copyToClipboard } from "./clipboard.js";
 import { PalacePanel } from "./palace.js";
 import { Picker, type PickerItem } from "./picker.js";
 import { Prompt } from "./prompt.js";
@@ -313,6 +314,9 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     }
   });
   const [items, setItems] = useState<Item[]>([]);
+  // The conversation as it stands, for commands that read it (/copy).
+  const itemsNow = useRef(items);
+  itemsNow.current = items;
   const [mode, setMode] = useState<Mode>("chat");
   // Where /connect is: its menu, a section, a key being typed, or managing one connection.
   const [connectView, setConnectView] = useState<
@@ -455,6 +459,30 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       tone === "error" ? 15_000 : tone === "warning" ? 10_000 : 6_000,
     );
   }, []);
+
+  // F6 lends the mouse to the terminal (to select and copy text) and takes it back.
+  const { stdin } = useStdin();
+  useEffect(() => {
+    const listener = (chunk: Buffer | string) => {
+      for (let i = 0; i < f6Presses(chunk.toString()); i++) {
+        const held = toggleMouse();
+        if (held === undefined) {
+          notice("The mouse is already the terminal's: select text as usual.", "info");
+        } else if (held) {
+          notice("Mouse back to the interface: clicks and the wheel work again.", "info");
+        } else {
+          notice(
+            "Mouse free: select text with it and copy as usual. F6 again gives clicks back.",
+            "warning",
+          );
+        }
+      }
+    };
+    stdin.on("data", listener);
+    return () => {
+      stdin.off("data", listener);
+    };
+  }, [stdin, notice]);
 
   /**
    * The provider's real usage. Every minute on a timer (through the
@@ -1587,6 +1615,36 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           } catch (error) {
             notice(error instanceof Error ? error.message : String(error), "error");
           }
+          break;
+        }
+        case "copy": {
+          // The model's last answer (or the Nth from the end) to the system clipboard.
+          const answers = itemsNow.current.flatMap((i) => (i.kind === "assistant" ? [i.text] : []));
+          const which = command.args.trim() === "" ? 1 : Number(command.args.trim());
+          if (!Number.isInteger(which) || which < 1) {
+            notice(
+              "/copy copies the last answer; /copy 2 the one before it, and so on.",
+              "warning",
+            );
+            break;
+          }
+          const text = answers[answers.length - which];
+          if (text === undefined) {
+            notice(
+              answers.length === 0
+                ? "No answer to copy yet."
+                : `Only ${String(answers.length)} answers so far.`,
+              "warning",
+            );
+            break;
+          }
+          const way = await copyToClipboard(text);
+          notice(
+            way === "system"
+              ? `Copied ${which === 1 ? "the last answer" : `answer ${String(which)} from the end`} (${String(text.length)} characters).`
+              : "Asked the terminal to copy it (no copy command found): paste to check.",
+            "success",
+          );
           break;
         }
         case "log":
