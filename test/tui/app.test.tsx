@@ -12,6 +12,7 @@ import { FakeModel, type FakeTurn } from "../../src/model/index.js";
 import type { ModelChoice, Provider } from "../../src/providers/types.js";
 import { SessionStore } from "../../src/sessions/store.js";
 import { App } from "../../src/tui/app.js";
+import { Dashboard, dashboardKeys } from "../../src/tui/dashboard.js";
 import { Orchestrator } from "../../src/orchestrator/orchestrator.js";
 import { FakeVault } from "../memory/fake-vault.js";
 
@@ -1604,5 +1605,59 @@ describe("folded actions", { timeout: 20_000 }, () => {
     clickOn(app, "Read 2 files");
     await until(() => now(app).includes("npm test"), "unfolded by a click");
     app.unmount();
+  });
+});
+
+describe("the dashboard", { timeout: 30_000 }, () => {
+  it("reads its keys: F2 home, F3 the tab before, F4 the next, in order", () => {
+    expect(dashboardKeys("\u001BOQ")).toEqual(["home"]);
+    expect(dashboardKeys("\u001B[13~\u001BOS")).toEqual(["prev", "next"]);
+    expect(dashboardKeys("hello \u001B[A")).toEqual([]);
+  });
+
+  it("keeps sessions in tabs: the home page opens a new one, each in its own folder, F3 goes back", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "dashboard-"));
+    const base = services({ turns: [[{ say: "first answer" }], [{ say: "second answer" }]] });
+    const started: (string | undefined)[] = [];
+    const svc: AppServices = {
+      ...base,
+      start: (extra) => {
+        started.push(extra?.cwd);
+        return base.start(extra);
+      },
+    };
+    const app = render(<Dashboard services={svc} folder={folder} />);
+    try {
+      await ready(app);
+      expect(now(app)).toContain("⌂ Home");
+      expect(now(app)).toContain("General");
+      expect(started).toEqual([folder]);
+      // F2: the home page, with the session open and a new one to start.
+      await press(app, "\u001BOQ", () => now(app).includes("Sessions · 1 open"), "the home page");
+      expect(now(app)).toContain("+ New session · General");
+      await press(
+        app,
+        DOWN,
+        () => /▸.*New session · General/.test(now(app)),
+        () => `the new session row; screen: ${now(app)}`,
+      );
+      await press(app, ENTER, () => started.length === 2, "a second session");
+      await ready(app);
+      expect(started).toEqual([folder, folder]);
+      // Two tabs on the bar; F3 goes to the one before.
+      await until(
+        () =>
+          (
+            now(app)
+              .split("\n")[0]
+              ?.match(/General/g) ?? []
+          ).length === 2,
+        "two tabs",
+      );
+      await press(app, "\u001B[13~", () => !now(app).includes("Sessions ·"), "the first tab");
+      app.unmount();
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
   });
 });

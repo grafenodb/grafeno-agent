@@ -219,17 +219,24 @@ export function useInputHub(): InputHub | undefined {
 export function InputArea({
   children,
   hub: given,
+  active = true,
 }: {
   readonly children: ReactNode;
   /** A hub of one's own (tests); default: a new one. */
   readonly hub?: InputHub;
+  /** False: nothing reaches it (a tab that is not on screen). */
+  readonly active?: boolean;
 }): ReactNode {
   const hub = useMemo(() => given ?? new InputHub(), [given]);
   const { stdin } = useStdin();
-  useInput((input, key) => {
-    hub.key(input, key);
-  });
+  useInput(
+    (input, key) => {
+      hub.key(input, key);
+    },
+    { isActive: active },
+  );
   useEffect(() => {
+    if (!active) return;
     const listener = (chunk: Buffer | string) => {
       hub.data(chunk.toString());
     };
@@ -237,7 +244,7 @@ export function InputArea({
     return () => {
       stdin.off("data", listener);
     };
-  }, [stdin, hub]);
+  }, [stdin, hub, active]);
   return <HubContext value={hub}>{children}</HubContext>;
 }
 

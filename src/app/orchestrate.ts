@@ -49,9 +49,10 @@ export async function createOrchestrator(
   settings: OrchestrateSettings,
   extra: Partial<OrchestratorOptions> = {},
 ): Promise<Orchestrator> {
-  const config = await prepareGrafeno(loadConfig());
-  await checkGrafeno(config);
   const cwd = settings.cwd ?? process.cwd();
+  // The project (and its namespace) of the folder it runs in, not the process's.
+  const config = await prepareGrafeno(loadConfig(process.env, cwd));
+  await checkGrafeno(config);
   const project = detectProject(cwd, config.project);
   const embedder = await embedderFor(config.embedder, () => undefined);
   const light = settings.light === true;

@@ -279,20 +279,55 @@ interface LiveTool {
  * The interface, clickable: what a command or a key does, a click on the
  * menu, a list, a panel or a button does too.
  */
-export function App({ services }: { readonly services: AppServices }): ReactNode {
+export function App(props: AppProps): ReactNode {
   // One reader of the terminal's input: keys and mouse go to whoever has the focus.
   return (
-    <InputArea>
+    <InputArea active={props.active ?? true}>
       <ClickArea>
-        <AppBody services={services} />
+        <AppBody {...props} />
       </ClickArea>
     </InputArea>
   );
 }
 
-function AppBody({ services }: { readonly services: AppServices }): ReactNode {
-  const { exit } = useApp();
-  const { columns, rows } = useWindowSize();
+/** What a tab of the dashboard says of itself on the home page. */
+export interface TabStatus {
+  /** What it is doing now ("Thinking", "Running the plan"), or nothing: idle. */
+  readonly busy: string | undefined;
+  /** The mode and model: "auto (Opus 5.5)". */
+  readonly model: string | undefined;
+  /** Still connecting. */
+  readonly starting: boolean;
+}
+
+export interface AppProps {
+  readonly services: AppServices;
+  /** False: a tab that is not on screen: it goes on working, hears no keys. Default true. */
+  readonly active?: boolean;
+  /** Rows of the window someone else uses (the dashboard's tab bar). */
+  readonly reserve?: number;
+  /** Instead of leaving the program: the tab closes (the dashboard). */
+  readonly onExit?: () => void;
+  /** Told what it is doing, as it changes (the dashboard's home page). */
+  readonly onStatus?: (status: TabStatus) => void;
+  /** A project opened from /projects: a tab of its own instead of this one (the dashboard). */
+  readonly onOpenProject?: (project: { readonly name: string; readonly path: string }) => void;
+}
+
+function AppBody({
+  services,
+  active = true,
+  reserve = 0,
+  onExit,
+  onStatus,
+  onOpenProject,
+}: AppProps): ReactNode {
+  const app = useApp();
+  // In a tab, leaving closes the tab; alone, the program.
+  const exit = onExit ?? app.exit;
+  const window = useWindowSize();
+  const columns = window.columns;
+  const rows = Math.max(10, window.rows - reserve);
   const [phase, setPhase] = useState<Phase>(() =>
     services.needsSetup() ? "setup-memory" : "starting",
   );
@@ -465,6 +500,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   // F6 lends the mouse to the terminal (to select and copy text) and takes it back.
   const { stdin } = useStdin();
   useEffect(() => {
+    if (!active) return;
     const listener = (chunk: Buffer | string) => {
       for (let i = 0; i < f6Presses(chunk.toString()); i++) {
         const held = toggleMouse();
@@ -484,7 +520,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     return () => {
       stdin.off("data", listener);
     };
-  }, [stdin, notice]);
+  }, [stdin, notice, active]);
 
   /**
    * The provider's real usage. Every minute on a timer (through the
@@ -1926,6 +1962,14 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     }
   });
 
+  // The dashboard's home page: what this tab is doing, as it changes.
+  const statusModel = session
+    ? `${auto ? "auto" : "specific"} (${modelLine(session, models)})`
+    : undefined;
+  useEffect(() => {
+    onStatus?.({ busy, model: statusModel, starting: phase === "starting" });
+  }, [onStatus, busy, statusModel, phase]);
+
   // Where each region goes, from what each needs and what fits (core/layout).
   const layout = computeLayout({ columns, rows, prefs, agents: true, maximized });
 
@@ -2695,6 +2739,11 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                   if (!project) return;
                   if (session && project.path === session.workspace.root) {
                     notice(`${project.name} is the project already open.`, "info");
+                    return;
+                  }
+                  // In the dashboard: a tab of its own, this one goes on.
+                  if (onOpenProject) {
+                    onOpenProject(project);
                     return;
                   }
                   // A new session in the project's folder: its conversations, runs and memory.

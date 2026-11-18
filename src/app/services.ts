@@ -120,7 +120,11 @@ export interface AppServices {
    * Starts a session with the settings as they are; throws saying why it
    * cannot. `tools`: tools the interface adds (such as `delegate`).
    */
-  start(extra?: { readonly tools?: readonly Tool[] }): Promise<AgentSession>;
+  start(extra?: {
+    readonly tools?: readonly Tool[];
+    /** The folder the session works in (a tab's own); default: the process's. */
+    readonly cwd?: string;
+  }): Promise<AgentSession>;
   grafeno(): GrafenoInfo;
   /** Installs and starts the included Grafeno, makes the agent's key and saves it all. */
   includeGrafeno(onProgress?: (done: number, total: number) => void): Promise<string>;
@@ -162,7 +166,12 @@ export interface AppServices {
    * An orchestrator for the project, on the settings, wired to the
    * interface; `auto`: General Auto, every ready provider as one pool.
    */
-  orchestrator(extra: Partial<OrchestratorOptions>, auto?: boolean): Promise<Orchestrator>;
+  orchestrator(
+    extra: Partial<OrchestratorOptions>,
+    auto?: boolean,
+    /** The folder its project is read from (a tab's own); default: the process's. */
+    cwd?: string,
+  ): Promise<Orchestrator>;
   /** The providers that are ready now (installed, signed in), each with its usage. */
   pool(): Promise<PoolMember[]>;
   /** General Auto's triage of a message: answer directly, or orchestrate. */
@@ -331,7 +340,8 @@ export function realServices(version: string): AppServices {
       return undefined;
     },
     async start(extra) {
-      const config = await prepareGrafeno(loadConfig());
+      const cwd = extra?.cwd ?? process.cwd();
+      const config = await prepareGrafeno(loadConfig(env, cwd));
       const report = await checkGrafeno(config);
       embedder ??= embedderFor(config.embedder, () => undefined);
       const chosen = await embedder;
@@ -339,10 +349,11 @@ export function realServices(version: string): AppServices {
       const chat = chatProvider(providers, env);
       if (!isNoModel(chat)) await assertBillingAllowed(chat, env);
       // External MCP servers and plugins: their tools join the agent's; one not reached is said.
-      const extensions = await connectExtensions(env, version, process.cwd());
+      const extensions = await connectExtensions(env, version, cwd);
       const tools = [...(extra?.tools ?? []), ...extensions.tools];
       return AgentSession.start({
         config,
+        cwd,
         provider: chat,
         ...(tools.length > 0 ? { extraTools: tools } : {}),
         extensions: extensions.session,
@@ -464,10 +475,16 @@ export function realServices(version: string): AppServices {
           : { AGENT_EFFORT: choice.effort === "default" ? "" : choice.effort }),
       });
     },
-    async orchestrator(extra, auto) {
+    async orchestrator(extra, auto, cwd) {
       // Loaded when used: the orchestrator is not needed to chat.
       const { createOrchestrator } = await import("./orchestrate.js");
-      return createOrchestrator(auto === true ? { auto: true, providers: inAuto() } : {}, extra);
+      return createOrchestrator(
+        {
+          ...(auto === true ? { auto: true, providers: inAuto() } : {}),
+          ...(cwd ? { cwd } : {}),
+        },
+        extra,
+      );
     },
     pool: () => readyPool(inAuto()),
     async triage(message, signal) {
