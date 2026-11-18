@@ -21,9 +21,9 @@ export interface Tab {
 const ESC = String.fromCharCode(27);
 /** F2 (home), F3 (the tab before) and F4 (the next), as terminals send them. */
 const KEYS: readonly (readonly [RegExp, "home" | "prev" | "next"])[] = [
-  [new RegExp(`${ESC}(?:OQ|\[Q|\\[12~|\\[\\[B)`, "g"), "home"],
-  [new RegExp(`${ESC}(?:OR|\[R|\\[13~|\\[\\[C)`, "g"), "prev"],
-  [new RegExp(`${ESC}(?:OS|\[S|\\[14~|\\[\\[D)`, "g"), "next"],
+  [new RegExp(`${ESC}(?:OQ|\\[Q|\\[12~|\\[\\[B)`, "g"), "home"],
+  [new RegExp(`${ESC}(?:OR|\\[R|\\[13~|\\[\\[C)`, "g"), "prev"],
+  [new RegExp(`${ESC}(?:OS|\\[S|\\[14~|\\[\\[D)`, "g"), "next"],
 ];
 
 /** The dashboard's keys in a chunk of input, in order. */
