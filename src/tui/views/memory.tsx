@@ -564,13 +564,6 @@ export function MemoryView(props: {
             { id: "drop", label: "Delete it" },
           ]}
           onAction={(id) => {
-            if (id === "drop" && space.name === admin.active) {
-              props.notice(
-                `${space.name} is this session's memory: it is not deleted from here. Empty it instead, or delete it from another session.`,
-                "warning",
-              );
-              return;
-            }
             setAsking(id === "drop" ? "drop" : "empty");
           }}
           onClose={() => {
@@ -589,7 +582,11 @@ export function MemoryView(props: {
           }
           message={
             asking === "drop"
-              ? "Every memory and fact in it goes, and the namespace too. It cannot be undone."
+              ? `Every memory and fact in it goes, and the namespace too. It cannot be undone.${
+                  space.name === admin.active
+                    ? " It is this session's memory: it is made again, empty, with your next message (or the next session here)."
+                    : " It is made again, empty, the next time a session uses it."
+                }`
               : `Every memory and fact in it goes; the namespace stays, empty. It cannot be undone.${
                   space.name === admin.active ? " This session goes on with an empty memory." : ""
                 }`
@@ -608,7 +605,7 @@ export function MemoryView(props: {
               () => {
                 props.notice(
                   doing === "drop"
-                    ? `The namespace ${name} is deleted.`
+                    ? `The namespace ${name} is deleted${name === admin.active ? ": it is made again with your next message" : ""}.`
                     : `The namespace ${name} is empty now.`,
                   "success",
                 );

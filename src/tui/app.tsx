@@ -1186,6 +1186,22 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           notice(NO_MODEL_TEXT, "warning");
           return;
         }
+        // The memory's namespace deleted from the Memory window: made again, empty, first.
+        if (services.memoryAdmin) {
+          try {
+            const admin = await services.memoryAdmin(session.vault.namespace);
+            if (
+              await admin.ensure(
+                session.vault.namespace,
+                namespaceDescription(session.memory.project.name),
+              )
+            ) {
+              notice(`The memory ${session.vault.namespace} was made again, empty.`, "info");
+            }
+          } catch {
+            // Not reachable now: the turn says what the memory could not do.
+          }
+        }
         if (auto && autoIds.length === 0) {
           // Auto with nothing in it: said, and the chat answers with its own provider.
           notice(
@@ -3581,6 +3597,13 @@ function Tip({ keys, text }: { readonly keys: string; readonly text: string }): 
       <Text dimColor>{text}</Text>
     </Text>
   );
+}
+
+/** What a namespace made by the agent says it holds. */
+export function namespaceDescription(project: string | undefined): string {
+  return project
+    ? `Grafeno Agent's memory of the project ${project}`
+    : "Grafeno Agent's general memory (sessions outside a project)";
 }
 
 /** Where a model comes from, in a word or two: "Claude Code", "Codex", "OpenRouter". */

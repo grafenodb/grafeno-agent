@@ -5,6 +5,7 @@ import type {
   NamespaceStats,
   NodeWithText,
 } from "@grafenodb/client";
+import { GrafenoError } from "@grafenodb/client";
 
 /** A memory found, as a row: what it is called, its kinds and how well it matched. */
 export interface MemoryHit {
@@ -62,6 +63,11 @@ export interface MemoryAdmin {
   undoMerge(namespace: string, undo: string): Promise<void>;
   /** Deletes a namespace and everything in it. */
   drop(namespace: string): Promise<void>;
+  /**
+   * Makes the namespace again when it is gone (deleted from the Memory
+   * window): true when it was made, false when it was there.
+   */
+  ensure(namespace: string, description: string): Promise<boolean>;
   /**
    * Empties a namespace: Grafeno has no call for it, so it is deleted and
    * made again with the same description (not in one step: a failure in
@@ -196,6 +202,16 @@ export function memoryAdmin(client: Grafeno, active: string): MemoryAdmin {
     },
     async drop(namespace) {
       await client.dropNamespace(namespace);
+    },
+    async ensure(namespace, description) {
+      try {
+        await client.getNamespace(namespace);
+        return false;
+      } catch (error) {
+        if (!(error instanceof GrafenoError && error.status === 404)) throw error;
+      }
+      await client.createNamespace(namespace, description);
+      return true;
     },
     async empty(namespace) {
       const info = await client.getNamespace(namespace);

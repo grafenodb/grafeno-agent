@@ -434,6 +434,7 @@ function fakeAdmin(): MemoryAdmin & { done: string[] } {
       done.push(`empty ${ns}`);
       return Promise.resolve();
     },
+    ensure: () => Promise.resolve(false),
   };
 }
 
@@ -464,7 +465,7 @@ describe("the memory view", () => {
     app.unmount();
   });
 
-  it("a namespace is emptied or deleted only once its name is typed; this session's is not deleted", async () => {
+  it("a namespace is emptied or deleted only once its name is typed; this session's comes back with the next message", async () => {
     const admin = fakeAdmin();
     const said: string[] = [];
     const app = area(
@@ -478,11 +479,22 @@ describe("the memory view", () => {
       () => (app.lastFrame() ?? "").includes("mpi · this session"),
       "the namespaces",
     );
-    // This session's namespace: deleting it is refused, emptying it warns.
+    // This session's namespace: deleting it says it comes back; emptying it warns.
     await keys(app, ENTER);
     await until(app, () => (app.lastFrame() ?? "").includes("Namespace · mpi"), "its inspector");
     await keys(app, "2");
-    expect(said.at(-1)).toContain("is this session's memory");
+    await until(
+      app,
+      () => (app.lastFrame() ?? "").includes("Delete the namespace mpi?"),
+      "the delete dialog",
+    );
+    expect(app.lastFrame()).toMatch(/made\s+(?:│\s*)*again/);
+    await keys(app, ESC);
+    await until(
+      app,
+      () => !(app.lastFrame() ?? "").includes("Delete the namespace mpi?"),
+      "the dialog closed",
+    );
     await keys(app, "1");
     await until(
       app,
@@ -508,7 +520,7 @@ describe("the memory view", () => {
     await until(app, () => (app.lastFrame() ?? "").includes("one_database"), "the contradictions");
     expect(app.lastFrame()).toMatch(/one_database\s+invalidated/);
     app.unmount();
-  });
+  }, 20_000);
 
   it("browses the memory without knowing a name: by kind, a page at a time; a memory is forgotten", async () => {
     const admin = fakeAdmin();

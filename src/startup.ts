@@ -119,19 +119,20 @@ export async function checkGrafeno(
 }
 
 /**
- * The memory tools of the agent's namespace; a project's namespace that does
- * not exist yet is made first, the first time one of its sessions starts.
+ * The memory tools of the agent's namespace; a namespace that does not exist
+ * yet (a new project, or one deleted from the Memory window) is made first.
  */
 async function toolsOf(client: Grafeno, config: Config): Promise<{ name: string }[]> {
   try {
     return await client.namespace(config.namespace).tools();
   } catch (error) {
-    if (!(error instanceof GrafenoError && error.status === 404) || !config.projectEntry) {
-      throw error;
-    }
+    if (!(error instanceof GrafenoError && error.status === 404)) throw error;
+    // Made the first time (or again, once deleted from the Memory window).
     await client.createNamespace(
       config.namespace,
-      `Grafeno Agent's memory of the project ${config.projectEntry.name} (${config.projectEntry.path})`,
+      config.projectEntry
+        ? `Grafeno Agent's memory of the project ${config.projectEntry.name} (${config.projectEntry.path})`
+        : "Grafeno Agent's general memory (sessions outside a project)",
     );
     return client.namespace(config.namespace).tools();
   }
