@@ -11,7 +11,7 @@ import { Inspector, type Field } from "../ui/inspector.js";
 import { Table, type Row } from "../ui/table.js";
 import { Tree } from "../ui/tree.js";
 
-type Tab = "browse" | "search" | "duplicates" | "contradictions" | "namespaces";
+export type Tab = "browse" | "search" | "duplicates" | "contradictions" | "namespaces";
 const TABS: readonly Tab[] = ["browse", "search", "duplicates", "contradictions", "namespaces"];
 const TAB_TITLE: Readonly<Record<Tab, string>> = {
   browse: "Browse",
@@ -46,13 +46,15 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
  */
 export function MemoryView(props: {
   readonly admin: MemoryAdmin;
+  /** The tab it opens on. Default: Browse. */
+  readonly tab?: Tab;
   readonly notice: (text: string, tone: "success" | "warning" | "error") => void;
   /** Asks the agent something (to consolidate the memory); the view closes. */
   readonly onAsk?: (prompt: string) => void;
   readonly onClose: () => void;
 }): ReactNode {
   const { admin } = props;
-  const [tab, setTab] = useState<Tab>("browse");
+  const [tab, setTab] = useState<Tab>(props.tab ?? "browse");
   const [error, setError] = useState<string | undefined>(undefined);
   // Browse.
   const [kinds, setKinds] = useState<readonly string[]>([]);

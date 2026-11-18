@@ -330,7 +330,21 @@ export class AgentSession {
       { ...DEFAULT_LIFECYCLE, ...policy },
     );
     if (!decision.renew) return;
-    const saved = await this.memory.carryCheckpoint(decision.reason).catch(() => false);
+    options.onRenewal?.(await this.#renew(decision.reason));
+  }
+
+  /**
+   * Frees the model's context now: a checkpoint is saved, and the next
+   * message starts a fresh conversation from it, the compact resume and the
+   * end of this one (as when the context fills up, but asked for). The
+   * conversation on screen and in memory is kept. Resolves to what to say.
+   */
+  async freeContext(reason = "asked for"): Promise<string> {
+    return this.#renew(reason);
+  }
+
+  async #renew(reason: string): Promise<string> {
+    const saved = await this.memory.carryCheckpoint(reason).catch(() => false);
     await this.memory.refreshResume().catch(() => undefined);
     const tail = previousConversation(this.#record.entries, RENEWAL_CARRY);
     await this.#dropAgent();
@@ -338,9 +352,9 @@ export class AgentSession {
     this.#context = undefined;
     this.#turnsSinceRenewal = 0;
     this.#renewals++;
-    const notice = `Started a fresh conversation: ${decision.reason}. It goes on from ${saved ? "a checkpoint saved just now" : "the latest checkpoint"}, the compact resume and the end of the conversation.`;
+    const notice = `Started a fresh conversation: ${reason}. It goes on from ${saved ? "a checkpoint saved just now" : "the latest checkpoint"}, the compact resume and the end of the conversation.`;
     this.store.add(this.#record, { kind: "notice", text: notice });
-    options.onRenewal?.(notice);
+    return notice;
   }
 
   #now(): Date {

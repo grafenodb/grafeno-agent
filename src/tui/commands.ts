@@ -52,6 +52,10 @@ export const COMMANDS: readonly Command[] = [
   { name: "status", description: "Provider, Grafeno, agent, project and model" },
   { name: "memory", description: "What memory brought back when the session started" },
   { name: "checkpoint", description: "Save where the work stands, in memory" },
+  {
+    name: "fresh",
+    description: "Free the model's context: a checkpoint, then a fresh conversation from it",
+  },
   { name: "orchestrate", description: "Plan a request and run it with several workers" },
   { name: "runs", description: "Earlier runs of this project: see or resume one" },
   {

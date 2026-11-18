@@ -148,9 +148,23 @@ const SECTION_ACTIONS: Readonly<Record<SidebarSection, readonly MenuItem[]>> = {
   usage: [
     { id: "command.usage refresh", label: "Usage, asked again" },
     { id: "command.usage", label: "Usage" },
+    {
+      id: "command.fresh",
+      label: "Free the context",
+      hint: "a checkpoint, then a fresh conversation",
+    },
   ],
   memory: [
-    { id: "command.vault", label: "Explore the memory", hint: "search, facts, namespaces" },
+    {
+      id: "command.vault",
+      label: "Explore the memory",
+      hint: "browse, search, forget, namespaces",
+    },
+    {
+      id: "command.vault duplicates",
+      label: "Unify it: merge duplicates, consolidate",
+      hint: "the Duplicates tab",
+    },
     { id: "command.palace", label: "Memory (Grafeno)" },
     { id: "command.memory", label: "What memory brought back" },
     { id: "command.upkeep", label: "Upkeep report" },
@@ -351,6 +365,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     undefined,
   );
   const [memory, setMemory] = useState<MemoryAdmin | undefined>(undefined);
+  const [memoryTab, setMemoryTab] = useState<"browse" | "duplicates">("browse");
   // Which region has the keys: the conversation, or a panel beside it (Tab moves between them),
   // and where the keyboard is in each panel.
   const [region, setRegion] = useState<"main" | "left" | "right">("main");
@@ -1537,6 +1552,17 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           setView("providers");
           setMode("view");
           break;
+        case "fresh": {
+          if (!session) break;
+          setBusy("Saving a checkpoint, then a fresh conversation");
+          try {
+            notice(await session.freeContext("asked for (/fresh)"), "success");
+          } finally {
+            setBusy(undefined);
+          }
+          setTick((t) => t + 1);
+          break;
+        }
         case "vault": {
           if (!session || !services.memoryAdmin) {
             notice("The memory is explored once connected to Grafeno (/palace).", "warning");
@@ -1544,6 +1570,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           }
           try {
             setMemory(await services.memoryAdmin(session.vault.namespace));
+            setMemoryTab(command.args.trim() === "duplicates" ? "duplicates" : "browse");
             setView("memory");
             setMode("view");
           } catch (error) {
@@ -2637,6 +2664,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
             {mode === "view" && view === "memory" && memory && (
               <MemoryView
                 admin={memory}
+                tab={memoryTab}
                 notice={notice}
                 onAsk={(prompt) => {
                   setView(undefined);
