@@ -1045,6 +1045,38 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.unmount();
   });
 
+  it("a model reads the agent's settings freely, and changes one only once the person allows it", async () => {
+    const app = render(
+      <App
+        services={services({
+          turns: [
+            [
+              { call: "agent_settings", input: { action: "get" } },
+              { call: "agent_settings", input: { action: "set", key: "model", value: "haiku" } },
+              { say: (c) => `Settings-Done: ${c.results[1]?.content ?? ""}` },
+            ],
+          ],
+        })}
+      />,
+    );
+    await ready(app);
+    await type(app, "use haiku");
+    app.stdin.write(ENTER);
+    // Reading asks nothing; the change does.
+    await until(() => now(app).includes("Permission needed"), "the question");
+    expect(now(app)).toContain('model = "haiku"');
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    for (let tries = 0; tries < 10 && !seen(app).includes("Settings-Done"); tries++) {
+      app.stdin.write("y");
+      await until(() => seen(app).includes("Settings-Done"), "the answer", 500).catch(
+        () => undefined,
+      );
+    }
+    await until(() => seen(app).includes("Settings-Done: Model: Haiku 5.5."), "the change", 1);
+    expect(seen(app)).toContain("Model: Haiku 5.5. The conversation goes on with it.");
+    app.unmount();
+  });
+
   it("does with a click what the commands do: a suggestion, a list's rows, the permission buttons", async () => {
     const note: Tool = {
       name: "write_note",

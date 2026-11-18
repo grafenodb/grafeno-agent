@@ -72,6 +72,7 @@ import {
 } from "./left-panel.js";
 import { connectionState } from "./adapters/providers.js";
 import { autoVerdict, type AutoMember } from "../app/auto-rules.js";
+import { settingsTool, type SettingsPort } from "../app/settings-tool.js";
 import { Frame } from "./ui/frame.js";
 import type { RecentRun } from "../app/services.js";
 import { MemoryView } from "./views/memory.js";
@@ -569,6 +570,8 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
               launch.current?.(request, signal) ??
               Promise.resolve("Sub-agents cannot be started here."),
           ),
+          // The agent's own settings, for a model: each change approved by the person.
+          settingsTool(() => settingsPort.current),
         ],
       });
       fresh.approve = (call: ToolCall, tool, decision) =>
@@ -1627,6 +1630,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     draft.current = text;
   }, []);
   const who = useMemo(() => whoAndWhere(), []);
+  const settingsPort = useRef<SettingsPort | undefined>(undefined);
   const modeNow = useRef(mode);
   modeNow.current = mode;
   const onWheel = useCallback((direction: number) => {
@@ -2254,6 +2258,77 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   };
 
   // The panels, at the width the layout gives them (beside the conversation, or over it).
+  // What the settings tool reads and changes: the interface's own state and functions, now.
+  settingsPort.current = {
+    read: () => ({
+      mode: auto ? "auto" : "specific",
+      provider: session?.provider.id ?? "none",
+      model: session?.model ?? "default",
+      effort: session?.effort ?? "default",
+      auto_providers: autoIds,
+      leader: process.env.AGENT_LEADER?.trim() ?? "",
+      providers: services.providers.map((p) => ({
+        id: p.id,
+        state:
+          connections.find((c) => c.id === p.id)?.state ??
+          (providerEnabled(p.id) ? "not asked" : "unavailable"),
+      })),
+      models: models.map((m) => m.id),
+      efforts: session ? session.provider.efforts(session.model) : [],
+    }),
+    apply: async (key, value) => {
+      const text = typeof value === "string" ? value : "";
+      switch (key) {
+        case "mode": {
+          if (text === "specific") {
+            enableSpecific();
+            return "Specific: the chat uses the provider chosen in /connect.";
+          }
+          const verdict = autoVerdict(await autoMembersNow(), process.env.AGENT_LEADER?.trim());
+          if (verdict.allowed) enableAuto();
+          return verdict.message;
+        }
+        case "provider": {
+          if (text === "none") {
+            chooseNoModel();
+            return "No model is selected now.";
+          }
+          const target = services.providers.find((p) => p.id === text);
+          if (!target) return `Unknown provider ${text}.`;
+          const found = await target.status();
+          if (!found.installed || !found.signedIn) return `${target.name}: ${found.detail}`;
+          chooseProvider(found, target);
+          return `Provider: ${target.name}.`;
+        }
+        case "model":
+          chooseModel(text);
+          return `Model: ${models.find((m) => m.id === text)?.name ?? text}.`;
+        case "effort":
+          if (!session) return "Not connected.";
+          await session.setEffort(text);
+          services.saveChoice({ effort: text });
+          setTick((t) => t + 1);
+          return `Effort: ${text}.`;
+        case "auto_providers": {
+          const ids = typeof value === "string" ? [value] : [...value];
+          services.saveChoice({ autoProviders: ids });
+          setAutoIds(ids);
+          const current = session?.provider;
+          if (auto && current && !ids.includes(current.id))
+            leaveProvider(current, "is no longer in Auto");
+          return `Auto includes: ${ids.join(", ")}.`;
+        }
+        case "leader":
+          services.saveChoice({ leader: text });
+          process.env.AGENT_LEADER = text;
+          setTick((t) => t + 1);
+          return text === ""
+            ? "No leader: the router chooses who plans each run."
+            : `Leader: ${text}.`;
+      }
+    },
+  };
+
   const agentsFor = (width: number) => (
     <LeftPanel
       width={width}
