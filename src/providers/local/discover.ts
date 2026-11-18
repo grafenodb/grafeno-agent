@@ -188,6 +188,18 @@ async function discoverOllama(
 }
 
 /**
+ * A model that hears or speaks rather than chats (speech to text, text to
+ * speech): a server may list it among its language models, but it answers
+ * no conversation, so it is never offered. Told by its architecture or name.
+ */
+export function speechModel(...names: (string | undefined)[]): boolean {
+  return names.some(
+    (name) =>
+      name !== undefined && /(^|[^a-z])(asr|tts|whisper|speech|audio)([^a-z]|$)/i.test(name),
+  );
+}
+
+/**
  * LM Studio: its REST API's models (v1: capabilities, loaded instances and
  * their context; else v0: state and maximum context), else its
  * OpenAI-compatible list (names only).
@@ -203,6 +215,7 @@ async function discoverLmStudio(
         type?: string;
         key?: string;
         display_name?: string;
+        architecture?: string;
         params_string?: string;
         quantization?: { name?: string } | string;
         loaded_instances?: { config?: { context_length?: number } }[];
@@ -213,7 +226,10 @@ async function discoverLmStudio(
     if (Array.isArray(v1.models)) {
       return {
         models: v1.models
-          .filter((m) => m.type === "llm" && typeof m.key === "string")
+          .filter(
+            (m) =>
+              m.type === "llm" && typeof m.key === "string" && !speechModel(m.architecture, m.key),
+          )
           .map((m) => {
             const instance = m.loaded_instances?.[0];
             const context = num(instance?.config?.context_length) ?? num(m.max_context_length);
@@ -248,6 +264,7 @@ async function discoverLmStudio(
       data?: {
         id?: string;
         type?: string;
+        arch?: string;
         state?: string;
         max_context_length?: number;
         quantization?: string;
@@ -256,7 +273,12 @@ async function discoverLmStudio(
     if (Array.isArray(v0.data)) {
       return {
         models: v0.data
-          .filter((m) => (m.type === "llm" || m.type === "vlm") && typeof m.id === "string")
+          .filter(
+            (m) =>
+              (m.type === "llm" || m.type === "vlm") &&
+              typeof m.id === "string" &&
+              !speechModel(m.arch, m.id),
+          )
           .map((m) => ({
             id: m.id as string,
             name: m.id as string,
@@ -286,7 +308,7 @@ async function discoverOpenAi(
   };
   return {
     models: (listed.data ?? [])
-      .filter((m) => typeof m.id === "string")
+      .filter((m) => typeof m.id === "string" && !speechModel(m.id))
       .map((m) => ({ id: m.id as string, name: m.name ?? (m.id as string) })),
   };
 }

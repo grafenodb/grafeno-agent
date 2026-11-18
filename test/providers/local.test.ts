@@ -296,6 +296,13 @@ describe("discovering a server's models", () => {
               capabilities: { vision: false, trained_for_tool_use: true },
             },
             { type: "embedding", key: "nomic-embed" },
+            // Speech to text, listed as a language model: it answers no conversation.
+            {
+              type: "llm",
+              key: "qwen3-asr-1.7b",
+              architecture: "qwen3_asr",
+              capabilities: { vision: false, trained_for_tool_use: false },
+            },
           ],
         }),
     });
