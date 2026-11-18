@@ -227,6 +227,7 @@ terminal with fewer colors gets the nearest ones, and `NO_COLOR` none.
 | `/memory`      | What memory brought back when the session started                 |
 | `/vault`       | Explore the memory: search, facts, contradictions, namespaces     |
 | `/checkpoint`  | Save where the work stands, in memory                             |
+| `/fresh`       | Free the model's context: a checkpoint, then a fresh conversation |
 | `/orchestrate` | Plan a request and run it with several workers (see below)        |
 | `/runs`        | The project's runs: each one's tasks and attempts; open or resume |
 | `/agents`      | The main agent and its sub-agents: view one, read only            |
@@ -282,9 +283,16 @@ Enter to inspect, Esc to go back) and shows only what the system knows
   the chat's provider's models, with their tier, and their context, tools,
   vision and whether they are loaded when a model server says so; Enter
   inspects one and makes it the chat's model.
-- **`/vault`**: the memory. **Search** it (in this session's namespace),
-  open a memory with its facts (where each comes from and goes, the ones
-  that no longer hold marked) and go from one memory to the next; see the
+- **`/vault`**: the memory (memories: what was remembered; facts: the links
+  between them; kinds: what each memory is). **Browse** it without knowing
+  any name: of a kind or all (←→), a page at a time (n). **Search** it by
+  words (part of a word is enough). Open a memory with its facts (where
+  each comes from and goes, the ones that no longer hold marked), go from
+  one memory to the next, and **forget** it (Del or x, after a dialog: the
+  memory and its facts are deleted). **Duplicates**: what Grafeno takes for
+  the same memory, merged by choosing which one stays (u undoes the last
+  merge); c asks the agent to consolidate old memories (it writes each
+  summary from them, and Grafeno keeps the old ones archived). See the
   **contradictions** Grafeno recorded; and **namespaces**: each with its
   memories and facts, emptied or deleted from its inspector. A dialog asks
   for the namespace's name, typed in full, before either; emptying is
@@ -864,10 +872,34 @@ Every choice can be clicked, chosen with its number, or reached with
 one step** (a section to this menu, a step to the one before); at the
 menu, it closes `/connect`.
 
-In a section, each connection shows its name and a ✓ or ✗; what its
-status says (installed, signed in, plan, how to sign in) is folded:
-**→** opens the selected one's, **←** folds it, **Tab** opens or folds them
-all. The first run shows them all.
+Each section, and `/providers` (every connection), is the same window:
+typed letters search the connections by name, ↑↓ PgUp PgDn scroll, and
+each row shows its state and two switches: **Auto** (whether Auto may use
+it) and **On** (switched off, nothing uses it). ←→ choose which switch
+**Space** flips. Enter uses the connection for the chat (or asks for its
+key when it has none), Shift+F10 or a right click shows its details, **m**
+its models in Auto.
+
+**From the left column.** MODE has Auto's switch (a click, or Enter/Space)
+and the leader of its runs ([choose]); MODELS lists the chat's provider's
+models and PROVIDERS the connections: a **double click** (or Enter) makes
+one the chat's model or provider. The lists scroll with the keyboard.
+
+**Auto's rules.** Auto is never switched on with nothing ready behind it:
+it says why each of its providers is left out (switched off, not signed
+in, held back by billing, failing), and turns on with the ones that are
+ready, naming the rest. Switching off the provider in use, or taking it
+out of Auto, moves the chat to Auto's member with the most room (to no
+model when none is ready); a leader that is not in Auto, not ready or
+switched off is said, and runs plan without it.
+
+**A model can change the settings too.** The agent's own tool
+`agent_settings` (also offered over MCP to the CLI providers) reads the
+mode, the chat's provider, model and effort, Auto's providers, the leader,
+each connection's state and the models there are, never a key or a
+secret; it changes one of them only when you allow it, through the same
+rules as your own changes. Keys, billing, permissions, the sandbox and
+Grafeno are never changed by it.
 
 **Mode: Auto or specific.** `/mode` switches **Auto** on or off, by hand
 (`AGENT_MODE=auto` or `specific`): Auto triages each message across the

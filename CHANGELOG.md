@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- **One providers window** for `/providers` and each section of
+  `/connect`: search by name, scroll, and two switches per connection,
+  Auto and On, flipped with Space (←→ choose which); Enter uses one (or
+  asks for its key), Shift+F10 its details, m its models in Auto.
+- **The left column changes things**: MODE with Auto's switch and the
+  leader's [choose]; MODELS (the chat's provider's) and PROVIDERS, a
+  double click (or Enter) to use one; the lists scroll.
+- **Auto's rules**: never on with nothing ready (why each member is left
+  out is said); leaving the provider in use moves the chat to another of
+  Auto's; the leader's problems are said.
+- **Memory you can look after**: browse it without names (by kind, a page
+  at a time), forget a memory (after a dialog), merge duplicates (and undo
+  it), ask the agent to consolidate old memories; a line says what
+  memories, facts and kinds are.
+- **`/fresh`** frees the model's context: a checkpoint, then a fresh
+  conversation from it.
+- **`agent_settings`**: a model reads the agent's settings and changes
+  mode, provider, model, effort, Auto's providers or the leader, only when
+  the person allows each change; keys, billing, permissions, the sandbox
+  and Grafeno are refused.
+- Fixed: switching a connection from the providers window did nothing
+  when no notice was given.
 - **The main screen, as designed**: a header with the version, each
   connection's state, who and when (the row of buttons is gone: the panels
   and the palette open everything); a left column with MODELS, PROVIDERS
