@@ -100,7 +100,7 @@ export function LeftPanel(props: {
   readonly providerName: string;
   readonly models: readonly ModelRow[];
   readonly connections: readonly ConnectionRow[];
-  /** Connections left out (not in use, not ready): said as a count. */
+  /** Connections switched Off: said as a count. */
   readonly moreConnections: number;
   readonly agents: readonly SubAgent[];
   readonly main: { readonly model: string; readonly doing: string; readonly busy: boolean };
@@ -258,7 +258,7 @@ export function LeftPanel(props: {
         {connections.below > 0 && <Text dimColor>↓ {String(connections.below)} more</Text>}
         {props.moreConnections > 0 && (
           <Text dimColor wrap="truncate-end">
-            +{String(props.moreConnections)} others · /providers
+            {String(props.moreConnections)} off · /connect
           </Text>
         )}
       </Frame>

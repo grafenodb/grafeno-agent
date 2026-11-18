@@ -647,13 +647,11 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     };
   }, [refreshUsage, refreshAutoUsage]);
 
-  // The connections that matter here (Auto's, the chat's, your model servers): each one's state.
+  // The connections switched On, each with its state; the ones Off are a count.
   useEffect(() => {
     let live = true;
     const shown = services.providers.filter(
-      (p) =>
-        providerEnabled(p.id) &&
-        (autoIds.includes(p.id) || p.id === session?.provider.id || isLocalProvider(p.id)),
+      (p) => providerEnabled(p.id) || p.id === session?.provider.id,
     );
     setMoreConnections(services.providers.length - shown.length);
     void Promise.all(
