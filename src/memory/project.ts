@@ -7,7 +7,9 @@ import type { Project } from "./session.js";
  * The project the agent works on: the one named in the settings, else the
  * git repository holding `cwd` (named after its folder), else `cwd` itself.
  */
-export function detectProject(cwd: string, named?: string): Project {
+export function detectProject(cwd: string, given?: string): Project {
+  // An empty setting (AGENT_PROJECT=) names nothing: the folder says which project.
+  const named = given?.trim() || undefined;
   const start = resolve(cwd);
   let dir = start;
   for (;;) {
