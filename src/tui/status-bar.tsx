@@ -30,6 +30,14 @@ export interface StatusBarProps {
   readonly memory?: number;
   /** What the narrow window shows on the right (the model and its usage). */
   readonly right?: ReactNode;
+  /**
+   * The interface's latest notices (a model changed, a provider set aside):
+   * shown here for a few seconds, never in the conversation; /log keeps them.
+   */
+  readonly notes?: readonly {
+    readonly text: string;
+    readonly tone: "info" | "success" | "warning" | "error";
+  }[];
 }
 
 const FOCUS: Readonly<Record<Layer, string>> = {
@@ -54,72 +62,83 @@ export function StatusBar(props: StatusBarProps): ReactNode {
   const keys = props.narrow
     ? `ctrl+p · ${(props.hidden?.length ?? 0) > 0 ? "ctrl+b panel · " : ""}esc`
     : `Ctrl+P commands · Tab panels · Ctrl+B panel · Ctrl+K model · ${props.maximized ? "Ctrl+F panels back · " : ""}Esc back`;
+  // The latest notices (two at most), each a row of its own while it shows: an
+  // error is never hidden at once by the hint that follows it.
   return (
-    <Box
-      paddingX={1}
-      justifyContent="space-between"
-      flexShrink={0}
-      gap={2}
-      backgroundColor={theme.panel}
-    >
-      {/* Narrow: who has the keys and how to move come first; the model on the right gives way. */}
-      <Box flexShrink={props.narrow ? 0 : 1} minWidth={10}>
-        <Text wrap="truncate-end">
-          <Text bold color={props.focus === "modal" ? theme.warning : theme.success}>
-            {focus}
+    <Box flexDirection="column" flexShrink={0}>
+      {(props.notes ?? []).map((n, index) => (
+        <Box key={index} paddingX={1}>
+          <Text wrap="truncate-end" color={theme[n.tone === "info" ? "accent" : n.tone]}>
+            {n.text.split(String.fromCharCode(10), 1)[0]}
           </Text>
-          {props.viewing && <Text color={theme.agent}> {props.viewing}</Text>}
-          {!props.narrow && props.model !== undefined && (
-            <Text>
-              {"   "}
-              <Text dimColor>model: </Text>
-              {props.model}
-            </Text>
-          )}
-          {props.narrow && <Text color={theme.brand}> {props.auto ? "AUTO" : "SPECIFIC"}</Text>}
-          {!props.narrow && props.memory !== undefined && (
-            <Text>
-              {"   "}
-              <Text dimColor>memory: </Text>
-              {props.memory.toLocaleString()}
-            </Text>
-          )}
-          {!props.narrow && (
-            <Text>
-              {"   "}
-              <Text dimColor>agent: </Text>
-              {props.viewing ?? "orchestrator"}
-            </Text>
-          )}
-          {props.unattended ? (
-            <Text>
-              {"   "}
-              <Text inverse bold color={theme.warning}>
-                {" UNATTENDED "}
-              </Text>
-            </Text>
-          ) : props.permissions ? (
-            <Text color={props.permissions.skip ? theme.warning : theme.accent}>
-              {"   "}permissions: {props.permissions.label}
-            </Text>
-          ) : null}
-          {props.maximized && <Text color={theme.focus}>{"   "}maximized</Text>}
-          {!props.narrow && !props.maximized && (props.hidden?.length ?? 0) > 0 && (
-            <Text dimColor>
-              {"   "}no room for the {props.hidden?.join(" and ")} panel: ctrl+b
-            </Text>
-          )}
-          <Text dimColor>
-            {"   "}
-            {keys}
-          </Text>
-        </Text>
-      </Box>
-      {props.right !== undefined && (
-        <Box flexShrink={1} minWidth={0} overflow="hidden">
-          {props.right}
         </Box>
-      )}
+      ))}
+      <Box
+        paddingX={1}
+        justifyContent="space-between"
+        flexShrink={0}
+        gap={2}
+        backgroundColor={theme.panel}
+      >
+        {/* Narrow: who has the keys and how to move come first; the model on the right gives way. */}
+        <Box flexShrink={props.narrow ? 0 : 1} minWidth={10}>
+          <Text wrap="truncate-end">
+            <Text bold color={props.focus === "modal" ? theme.warning : theme.success}>
+              {focus}
+            </Text>
+            {props.viewing && <Text color={theme.agent}> {props.viewing}</Text>}
+            {!props.narrow && props.model !== undefined && (
+              <Text>
+                {"   "}
+                <Text dimColor>model: </Text>
+                {props.model}
+              </Text>
+            )}
+            {props.narrow && <Text color={theme.brand}> {props.auto ? "AUTO" : "SPECIFIC"}</Text>}
+            {!props.narrow && props.memory !== undefined && (
+              <Text>
+                {"   "}
+                <Text dimColor>memory: </Text>
+                {props.memory.toLocaleString()}
+              </Text>
+            )}
+            {!props.narrow && (
+              <Text>
+                {"   "}
+                <Text dimColor>agent: </Text>
+                {props.viewing ?? "orchestrator"}
+              </Text>
+            )}
+            {props.unattended ? (
+              <Text>
+                {"   "}
+                <Text inverse bold color={theme.warning}>
+                  {" UNATTENDED "}
+                </Text>
+              </Text>
+            ) : props.permissions ? (
+              <Text color={props.permissions.skip ? theme.warning : theme.accent}>
+                {"   "}permissions: {props.permissions.label}
+              </Text>
+            ) : null}
+            {props.maximized && <Text color={theme.focus}>{"   "}maximized</Text>}
+            {!props.narrow && !props.maximized && (props.hidden?.length ?? 0) > 0 && (
+              <Text dimColor>
+                {"   "}no room for the {props.hidden?.join(" and ")} panel: ctrl+b
+              </Text>
+            )}
+            <Text dimColor>
+              {"   "}
+              {keys}
+            </Text>
+          </Text>
+        </Box>
+        {props.right !== undefined && (
+          <Box flexShrink={1} minWidth={0} overflow="hidden">
+            {props.right}
+          </Box>
+        )}
+      </Box>
     </Box>
   );
 }

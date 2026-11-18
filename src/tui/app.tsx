@@ -438,12 +438,23 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     setScroll(0);
   }, []);
 
-  const notice = useCallback(
-    (text: string, tone: Tone = "info") => {
-      push({ kind: "notice", text, tone });
-    },
-    [push],
-  );
+  // The interface's notices: the status bar shows the latest for a few
+  // seconds (an error longer); /log shows the last ones. The conversation
+  // holds only what the model answers.
+  const [notes, setNotes] = useState<readonly { text: string; tone: Tone; id: number }[]>([]);
+  const noticeLog = useRef<{ text: string; tone: Tone; at: Date }[]>([]);
+  const notice = useCallback((text: string, tone: Tone = "info") => {
+    noticeLog.current = [...noticeLog.current, { text, tone, at: new Date() }].slice(-100);
+    const id = Date.now() + Math.random();
+    // The last two show: an error is never hidden at once by the hint after it.
+    setNotes((current) => [...current, { text, tone, id }].slice(-2));
+    setTimeout(
+      () => {
+        setNotes((current) => current.filter((n) => n.id !== id));
+      },
+      tone === "error" ? 15_000 : tone === "warning" ? 10_000 : 6_000,
+    );
+  }, []);
 
   /**
    * The provider's real usage. Every minute on a timer (through the
@@ -1581,6 +1592,22 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           }
           break;
         }
+        case "log":
+          // The interface's notices: never in the conversation on their own.
+          push({
+            kind: "block",
+            title: "Notices",
+            lines:
+              noticeLog.current.length === 0
+                ? ["No notices yet."]
+                : noticeLog.current
+                    .slice(-30)
+                    .map(
+                      (n) =>
+                        `${n.at.toLocaleTimeString()}  ${n.tone.padEnd(7)} ${n.text.split(String.fromCharCode(10), 1)[0] ?? ""}`,
+                    ),
+          });
+          break;
         case "clear":
           setItems([]);
           break;
@@ -3347,6 +3374,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       }
       status={
         <Footer
+          notes={notes}
           narrow={layout.right === 0}
           session={session}
           models={models}
@@ -3460,6 +3488,7 @@ function Tip({ keys, text }: { readonly keys: string; readonly text: string }): 
 }
 
 function Footer({
+  notes,
   narrow,
   session,
   models,
@@ -3472,6 +3501,7 @@ function Footer({
   memory,
   hidden,
 }: {
+  readonly notes: readonly { readonly text: string; readonly tone: Tone }[];
   readonly narrow: boolean;
   readonly session: AgentSession | undefined;
   readonly models: readonly ModelOption[];
@@ -3488,6 +3518,7 @@ function Footer({
   const limit = usage?.limits[0];
   return (
     <StatusBar
+      notes={notes}
       focus={focus}
       viewing={viewing}
       auto={auto}
