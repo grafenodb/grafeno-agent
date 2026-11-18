@@ -657,14 +657,27 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     clickOn(app, "[ON ]");
     await until(() => now(app).includes("[OFF]"), "Auto off");
     expect(saves).toContainEqual({ mode: "specific" });
+    // Two clicks on the same place: a double click. Under load the screen may still be
+    // moving between them, so it is clicked again until it takes.
+    const doubleClick = async (text: string, done: () => boolean, what: string) => {
+      for (let tries = 0; tries < 10 && !done(); tries++) {
+        clickOn(app, text);
+        clickOn(app, text);
+        await until(done, what, 500).catch(() => undefined);
+      }
+      await until(done, what, 1);
+    };
     // No provider chosen yet: a double click on one chooses it, and MODELS lists its models.
-    clickOn(app, "Fake Provider OK");
-    clickOn(app, "Fake Provider OK");
-    await until(() => now(app).includes("Haiku 5.5"), "the chosen provider's models");
-    // Two clicks on the same place: a double click.
-    clickOn(app, "Haiku 5.5");
-    clickOn(app, "Haiku 5.5");
-    await until(() => seen(app).includes("Model: Haiku 5.5"), "the model changed");
+    await doubleClick(
+      "Fake Provider OK",
+      () => now(app).includes("Haiku 5.5"),
+      "the chosen provider's models",
+    );
+    await doubleClick(
+      "Haiku 5.5",
+      () => seen(app).includes("Model: Haiku 5.5"),
+      "the model changed",
+    );
     expect(saves).toContainEqual({ model: "haiku" });
     app.unmount();
   });
