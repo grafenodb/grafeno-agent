@@ -16,6 +16,8 @@ export interface ModelRow {
   readonly context?: number | undefined;
   /** The one the chat uses now. */
   readonly active: boolean;
+  /** In Auto: whether runs may use it (a switch); undefined outside Auto. */
+  readonly on?: boolean;
 }
 
 /** A connection as the left column shows it. */
@@ -164,8 +166,16 @@ export function LeftPanel(props: {
           />
         </Clickable>
       </Frame>
-      <Frame title="MODELS" note={props.providerName} focused={at?.kind === "model"}>
-        {props.models.length === 0 && <Text dimColor>none listed · /connect</Text>}
+      <Frame
+        title="MODELS"
+        note={props.auto ? "in Auto · space" : props.providerName}
+        focused={at?.kind === "model"}
+      >
+        {props.models.length === 0 && (
+          <Text dimColor wrap="truncate-end">
+            {props.auto ? "no provider in Auto · /connect" : "none listed · /connect"}
+          </Text>
+        )}
         {models.above > 0 && <Text dimColor>↑ {String(models.above)} more</Text>}
         {models.shown.map((m) => {
           const on = at?.kind === "model" && at.id === m.id;
@@ -194,14 +204,18 @@ export function LeftPanel(props: {
                   </>
                 }
                 right={
-                  <Text {...(m.active ? { color: theme.success } : { dimColor: true })}>
-                    {/* The context only when it is known: "unknown" would crowd the name out. */}
-                    {m.active
-                      ? `active${m.context === undefined ? "" : ` · ${tokens(m.context)}`}`
-                      : m.context === undefined
-                        ? ""
-                        : tokens(m.context)}
-                  </Text>
+                  m.on !== undefined ? (
+                    <Switch on={m.on} />
+                  ) : (
+                    <Text {...(m.active ? { color: theme.success } : { dimColor: true })}>
+                      {/* The context only when it is known: "unknown" would crowd the name out. */}
+                      {m.active
+                        ? `active${m.context === undefined ? "" : ` · ${tokens(m.context)}`}`
+                        : m.context === undefined
+                          ? ""
+                          : tokens(m.context)}
+                    </Text>
+                  )
                 }
               />
             </Clickable>

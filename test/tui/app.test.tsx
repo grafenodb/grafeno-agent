@@ -606,30 +606,31 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
         now(app).includes("Fake Provider OK"),
       "the left column",
     );
-    expect(now(app)).toMatch(/● Fake Default 1\.0\s+active/);
+    // Auto on with none of its providers here: MODELS says so (never the chat's models).
+    expect(now(app)).toContain("no provider in Auto");
     // No button row: the panels and the palette open everything.
     expect(now(app)).not.toContain("[Model]");
-    // Shift+Tab: the left column, at its agents; ↑ to the providers, then the models.
+    // Shift+Tab: the left column, at its agents; ↑ to the providers, then the mode.
     app.stdin.write("\u001B[Z");
     await until(() => focus(app) === "AGENTS", "the agents");
     app.stdin.write(UP);
     await until(() => focus(app) === "PROVIDERS", "the providers");
-    app.stdin.write(UP);
-    await until(() => focus(app) === "MODELS", "the models");
-    // The models are the chat's provider's: the last one is under the cursor, Enter uses it.
-    expect(now(app)).toContain("▸ Haiku 5.5");
+    await press(app, UP, () => now(app).includes("▸ Auto"), "Auto's switch");
+    expect(now(app)).toMatch(/Auto orchestrated\s+\[ON \]/);
+    expect(now(app)).toMatch(/Leader none\s+\[choose\]/);
+    // Space turns Auto off; no provider is chosen yet, so the chat has none.
+    await press(app, " ", () => now(app).includes("[OFF]"), "Auto off");
+    await until(() => now(app).includes("MODELS · No model"), "no model yet");
+    // A double click on a provider chooses it: MODELS lists its models.
+    clickOn(app, "Fake Provider OK");
+    clickOn(app, "Fake Provider OK");
+    await until(() => /Fake Default 1\.0\s+active/.test(now(app)), "the chosen provider's models");
+    // From the provider (the click put the cursor there), ↑ is its last model.
+    await press(app, UP, () => now(app).includes("▸ Haiku 5.5"), "Haiku under the cursor");
     app.stdin.write(ENTER);
     await until(() => seen(app).includes("Model: Haiku 5.5"), "the model changed");
     // Marked active (▸: the cursor is on it).
     await until(() => now(app).match(/▸ Haiku 5\.5\s+active/) !== null, "marked active");
-    // Up to the mode: Auto's switch and the leader.
-    for (let i = 0; i < 4; i++) {
-      app.stdin.write(UP);
-      await new Promise((resolve) => setTimeout(resolve, 30));
-    }
-    await until(() => focus(app) === "MODE", "the mode");
-    expect(now(app)).toMatch(/Auto orchestrated\s+\[ON \]/);
-    expect(now(app)).toMatch(/Leader none\s+\[choose\]/);
     await press(app, "\u001B", () => focus(app) === "CHAT", "back to the chat");
     app.unmount();
   });
@@ -650,15 +651,80 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     Object.defineProperty(app.stdout, "columns", { value: 180, configurable: true });
     app.stdout.emit("resize");
     await ready(app);
-    await until(() => now(app).includes("Haiku 5.5"), "the models");
+    await until(() => now(app).includes("[ON ]"), "Auto's switch");
+    clickOn(app, "[ON ]");
+    await until(() => now(app).includes("[OFF]"), "Auto off");
+    expect(saves).toContainEqual({ mode: "specific" });
+    // No provider chosen yet: a double click on one chooses it, and MODELS lists its models.
+    clickOn(app, "Fake Provider OK");
+    clickOn(app, "Fake Provider OK");
+    await until(() => now(app).includes("Haiku 5.5"), "the chosen provider's models");
     // Two clicks on the same place: a double click.
     clickOn(app, "Haiku 5.5");
     clickOn(app, "Haiku 5.5");
     await until(() => seen(app).includes("Model: Haiku 5.5"), "the model changed");
     expect(saves).toContainEqual({ model: "haiku" });
-    clickOn(app, "[ON ]");
-    await until(() => now(app).includes("[OFF]"), "Auto off");
-    expect(saves).toContainEqual({ mode: "specific" });
+    app.unmount();
+  });
+
+  it("in Auto, MODELS lists the models of Auto's providers, each with a switch runs obey", async () => {
+    const saves: Record<string, unknown>[] = [];
+    const base = services({ turns: [[{ say: "hi" }]] });
+    // Auto's provider (claude-code, as these tests set it): another one than the chat's.
+    const chat = base.providers[0] as Provider;
+    const inAuto: Provider = {
+      ...chat,
+      id: "claude-code",
+      name: "Claude (Claude Code)",
+      models: () =>
+        Promise.resolve([
+          { id: "default", name: "Its own choice" },
+          { id: "haiku", name: "Haiku 5.5" },
+          { id: "opus", name: "Opus 5.5" },
+        ]),
+    };
+    const app = render(
+      <App
+        services={{
+          ...base,
+          providers: [chat, inAuto],
+          saveChoice: (choice) => {
+            saves.push(choice);
+          },
+        }}
+      />,
+    );
+    Object.defineProperty(app.stdout, "columns", { value: 180, configurable: true });
+    app.stdout.emit("resize");
+    await ready(app);
+    // Where each comes from and its name; "default" (its own choice) is not a model to switch.
+    await until(
+      // The column is narrow: the name may end in "…" before its switch.
+      () => /Claude Code Haiku.*\[ON \]/.test(now(app)),
+      () => `Auto's models; screen: ${now(app)}`,
+    );
+    expect(now(app)).toMatch(/Claude Code Opus.*\[ON \]/);
+    expect(now(app)).not.toContain("Its own choice");
+    expect(now(app)).toContain("MODELS · in Auto · space");
+    // A double click switches one off: runs use the others only (kept for the next sessions).
+    clickOn(app, "Claude Code Haiku");
+    clickOn(app, "Claude Code Haiku");
+    await until(() => /Claude Code Haiku.*\[OFF\]/.test(now(app)), "Haiku off");
+    expect(saves).toContainEqual({ autoModels: { "claude-code": ["opus"] } });
+    // The last one on: switching it off is refused (take the provider out of Auto instead).
+    clickOn(app, "Claude Code Opus");
+    clickOn(app, "Claude Code Opus");
+    await until(() => seen(app).includes("last model on"), "the refusal");
+    // On again: no list (every model, new ones too).
+    clickOn(app, "Claude Code Haiku");
+    clickOn(app, "Claude Code Haiku");
+    await until(
+      () =>
+        saves.some(
+          (s) => JSON.stringify(s) === JSON.stringify({ autoModels: { "claude-code": [] } }),
+        ),
+      "every model on",
+    );
     app.unmount();
   });
 
@@ -1659,5 +1725,108 @@ describe("the dashboard", { timeout: 30_000 }, () => {
     } finally {
       rmSync(folder, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the models a run may use", { timeout: 60_000 }, () => {
+  it("before a plan runs, its models can be switched off; it is planned again with the rest", async () => {
+    const repo = join(dir, "gate");
+    mkdirSync(repo);
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, windowsHide: true });
+    git("init", "-q", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.invalid");
+    writeFileSync(join(repo, "README.md"), "# p\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "start");
+    const plan = {
+      goal: "One file",
+      risks: [],
+      tasks: [
+        {
+          id: "alpha",
+          title: "Write alpha",
+          description: "Create alpha.txt.",
+          kind: "docs",
+          dependsOn: [],
+          complexity: 1,
+          capabilities: ["code"],
+          touches: ["alpha.txt"],
+          acceptance: [{ check: "files", exist: ["alpha.txt"] }],
+          parallelSafe: true,
+        },
+      ],
+    };
+    const planner: Provider = {
+      id: "fake",
+      name: "Fake",
+      signIn: "",
+      tiers: { deep: ["m"], standard: ["m"], light: ["m"] },
+      status: () => Promise.resolve({ installed: true, signedIn: true, detail: "" }),
+      models: () => Promise.resolve([{ id: "m", name: "M" }]),
+      efforts: () => [],
+      usage: () => Promise.resolve(undefined),
+      modelName: (id) => id,
+      create: () =>
+        new FakeModel({
+          turns: [() => [{ say: `\`\`\`json\n${JSON.stringify(plan)}\n\`\`\`` }]],
+        }),
+    };
+    const saves: Record<string, unknown>[] = [];
+    let planned = 0;
+    const base = services({
+      turns: [[{ say: "hi" }]],
+      orchestrator: (extra) => {
+        planned++;
+        return Promise.resolve(
+          new Orchestrator({
+            provider: planner,
+            project: { name: "p", path: repo },
+            projectRoot: repo,
+            dataDir: join(dir, "data"),
+            ...extra,
+          }),
+        );
+      },
+    });
+    const chat = base.providers[0] as Provider;
+    const inAuto: Provider = {
+      ...chat,
+      id: "claude-code",
+      name: "Claude (Claude Code)",
+      models: () =>
+        Promise.resolve([
+          { id: "haiku", name: "Haiku 5.5" },
+          { id: "opus", name: "Opus 5.5" },
+        ]),
+    };
+    const app = render(
+      <App
+        services={{
+          ...base,
+          providers: [chat, inAuto],
+          saveChoice: (choice) => {
+            saves.push(choice);
+          },
+        }}
+      />,
+    );
+    Object.defineProperty(app.stdout, "columns", { value: 180, configurable: true });
+    app.stdout.emit("resize");
+    await ready(app);
+    await until(() => now(app).includes("Claude Code Haiku"), "Auto's models");
+    await type(app, "/orchestrate write alpha");
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("Run this plan?"), "the plan");
+    expect(now(app)).toContain("Switch models off first");
+    await press(app, DOWN, () => /▸.*Switch models off first/.test(now(app)), "the models choice");
+    await press(app, ENTER, () => now(app).includes("Models Auto may use"), "the models");
+    // Enter switches the first one off (kept for the next runs too).
+    await press(app, ENTER, () => now(app).includes("[OFF] Claude Code Haiku"), "Haiku off");
+    expect(saves).toContainEqual({ autoModels: { "claude-code": ["opus"] } });
+    // Esc: planned again, with the models left on.
+    await press(app, "\u001B", () => planned === 2, "planned again");
+    await until(() => now(app).includes("Run this plan?"), "the new plan");
+    app.unmount();
   });
 });

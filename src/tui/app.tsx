@@ -251,6 +251,7 @@ type Mode =
   | "permissions"
   | "projects"
   | "plan"
+  | "gate"
   | "runs"
   | "agents"
   | "exiting";
@@ -369,6 +370,28 @@ function AppBody({
   const [autoModelChoice, setAutoModelChoice] = useState<Record<string, string[]>>(() =>
     autoModels(process.env),
   );
+  /** The models of each provider in Auto (switched on): what MODELS lists in Auto. */
+  const [autoPool, setAutoPool] = useState<
+    readonly { provider: { id: string; name: string }; models: readonly ModelOption[] }[]
+  >([]);
+  useEffect(() => {
+    let live = true;
+    const members = services.providers.filter(
+      (p) => autoIds.includes(p.id) && providerEnabled(p.id),
+    );
+    void Promise.all(
+      members.map(async (p) => ({
+        provider: { id: p.id, name: p.name },
+        // "default" is the provider's own choice, not a model to switch.
+        models: (await p.models().catch(() => [])).filter((m) => m.id !== "default"),
+      })),
+    ).then((found) => {
+      if (live) setAutoPool(found.filter((e) => e.models.length > 0));
+    });
+    return () => {
+      live = false;
+    };
+  }, [services, autoIds]);
   /** /permissions: the mode chosen, before its scope is. */
   const [permissionChoice, setPermissionChoice] = useState<PermissionMode | undefined>(undefined);
   const [busy, setBusy] = useState<string | undefined>(undefined);
@@ -457,6 +480,8 @@ function AppBody({
   const launch = useRef<((request: string, signal: AbortSignal) => Promise<string>) | undefined>(
     undefined,
   );
+  /** The request whose plan waits for the models to be chosen ("Switch models off first"). */
+  const gateRequest = useRef<string | undefined>(undefined);
   const orchestration = useRef<
     | {
         orchestrator: Orchestrator;
@@ -2089,12 +2114,43 @@ function AppBody({
     { layer: "base", isActive: region === "right" && layout.right > 0 },
   );
   // The chat's provider's models: the one in use marked, its context when known.
-  const modelRows: ModelRow[] = models.map((m) => ({
-    id: m.id,
-    name: m.name,
-    active: session !== undefined && session.model === m.id,
-    context: session !== undefined && session.model === m.id ? session.context?.window : undefined,
-  }));
+  // Auto: every model of the providers in it, each with its switch (AGENT_AUTO_MODELS);
+  // otherwise the chosen provider's, the one in use marked.
+  const modelRows: ModelRow[] = auto
+    ? autoPool.flatMap(({ provider: p, models: found }) =>
+        found.map((m) => ({
+          id: `${p.id}/${m.id}`,
+          name: `${leaderSource(p)} ${m.name}`,
+          active: false,
+          on: autoModelOn(autoModelChoice[p.id], m.id),
+        })),
+      )
+    : models.map((m) => ({
+        id: m.id,
+        name: m.name,
+        active: session !== undefined && session.model === m.id,
+        context:
+          session !== undefined && session.model === m.id ? session.context?.window : undefined,
+      }));
+  /** Switches a model of Auto on or off ("provider/model"): runs use only the ones on. */
+  const toggleAutoModel = (row: string) => {
+    const cut = row.indexOf("/");
+    const id = row.slice(0, cut);
+    const model = row.slice(cut + 1);
+    const all = autoPool.find((e) => e.provider.id === id)?.models.map((m) => m.id) ?? [];
+    const chosen = autoModelChoice[id] ?? [];
+    const onNow = chosen.length === 0 ? all : chosen.filter((m) => all.includes(m));
+    const next = onNow.includes(model) ? onNow.filter((m) => m !== model) : [...onNow, model];
+    if (next.length === 0) {
+      notice(
+        "That is its last model on: take the provider out of Auto instead (/connect, space on Auto).",
+        "warning",
+      );
+      return;
+    }
+    // Every one on again: no list (new models count too).
+    changeAutoModels(id, next.length === all.length ? [] : all.filter((m) => next.includes(m)));
+  };
   /** Everything the keyboard moves through in the left column, in order. */
   const leftItems: LeftCursor[] = [
     { kind: "auto", id: null },
@@ -2111,8 +2167,10 @@ function AppBody({
       if (auto) enableSpecific();
       else enableAuto();
     } else if (at.kind === "leader") runAction("command.leader");
-    else if (at.kind === "model") chooseModel(at.id);
-    else if (at.kind === "provider") runAction(`use:${at.id}`);
+    else if (at.kind === "model") {
+      if (auto) toggleAutoModel(at.id);
+      else chooseModel(at.id);
+    } else if (at.kind === "provider") runAction(`use:${at.id}`);
     else {
       setViewing(at.id ?? undefined);
       setScroll(0);
@@ -2124,7 +2182,7 @@ function AppBody({
       agentMenu(at.id ?? undefined);
       return;
     }
-    if (at.kind === "auto" || at.kind === "leader") {
+    if (at.kind === "auto" || at.kind === "leader" || (at.kind === "model" && auto)) {
       leftChoose(at);
       return;
     }
@@ -2167,7 +2225,11 @@ function AppBody({
       else if (key.pageUp) setLeftAt(leftItems[Math.max(0, at - LIST_ROWS)] ?? leftAt);
       else if (key.pageDown)
         setLeftAt(leftItems[Math.min(leftItems.length - 1, at + LIST_ROWS)] ?? leftAt);
-      else if (key.return || (input === " " && leftAt.kind === "auto")) leftChoose(leftAt);
+      else if (
+        key.return ||
+        (input === " " && (leftAt.kind === "auto" || (leftAt.kind === "model" && auto)))
+      )
+        leftChoose(leftAt);
     },
     { layer: "base", isActive: region === "left" && layout.left > 0 },
   );
@@ -2520,7 +2582,10 @@ function AppBody({
       onLeader={() => {
         runAction("command.leader");
       }}
-      onModel={chooseModel}
+      onModel={(id) => {
+        if (auto) toggleAutoModel(id);
+        else chooseModel(id);
+      }}
       onProvider={(id) => {
         runAction(`use:${id}`);
       }}
@@ -3069,6 +3134,16 @@ function AppBody({
                     label: "Run it",
                     hint: `${orchestration.current.orchestrator.policy.mode} · each task in its own worktree`,
                   },
+                  // Before it starts: the models it may use, then planned again with them.
+                  ...(!pendingPlan.current && auto && autoPool.length > 0
+                    ? [
+                        {
+                          id: "models",
+                          label: "Switch models off first",
+                          hint: "Auto's models (too costly, too weak), then plan again with the rest",
+                        },
+                      ]
+                    : []),
                   { id: "cancel", label: "Not now" },
                 ]}
                 onCancel={() => {
@@ -3081,6 +3156,13 @@ function AppBody({
                   setMode("chat");
                 }}
                 onSelect={(item) => {
+                  if (item.id === "models") {
+                    gateRequest.current = orchestration.current?.request;
+                    orchestration.current?.orchestrator.close();
+                    orchestration.current = undefined;
+                    setMode("gate");
+                    return;
+                  }
                   setMode("chat");
                   // The main agent's own plan: it starts the run and reads the report.
                   if (pendingPlan.current) {
@@ -3094,6 +3176,24 @@ function AppBody({
                     return;
                   }
                   void startPlanned();
+                }}
+              />
+            )}
+            {mode === "gate" && (
+              <Picker
+                title="Models Auto may use · enter switches one · esc plans again"
+                items={modelRows.map((m) => ({
+                  id: m.id,
+                  label: `${m.on === false ? "[OFF]" : "[ON ]"} ${m.name}`,
+                }))}
+                onSelect={(item) => {
+                  toggleAutoModel(item.id);
+                }}
+                onCancel={() => {
+                  setMode("chat");
+                  const request = gateRequest.current;
+                  gateRequest.current = undefined;
+                  if (request) void submit(`/orchestrate ${request}`);
                 }}
               />
             )}
@@ -3674,6 +3774,11 @@ export function namespaceDescription(project: string | undefined): string {
   return project
     ? `Grafeno Agent's memory of the project ${project}`
     : "Grafeno Agent's general memory (sessions outside a project)";
+}
+
+/** Whether Auto may use a model: no list chosen means every one. */
+export function autoModelOn(chosen: readonly string[] | undefined, model: string): boolean {
+  return chosen === undefined || chosen.length === 0 || chosen.includes(model);
 }
 
 /** Where a model comes from, in a word or two: "Claude Code", "Codex", "OpenRouter". */
