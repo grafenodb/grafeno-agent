@@ -71,6 +71,7 @@ import {
   type ModelRow,
 } from "./left-panel.js";
 import { connectionState } from "./adapters/providers.js";
+import { autoVerdict, type AutoMember } from "../app/auto-rules.js";
 import { Frame } from "./ui/frame.js";
 import type { RecentRun } from "../app/services.js";
 import { MemoryView } from "./views/memory.js";
@@ -2027,28 +2028,72 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   const enableAuto = () => {
     setMode("chat");
     if (!session) return;
-    if (autoIds.length === 0) {
-      notice(
-        "Auto includes no provider yet: in /connect, mark the ones it may use with space, then choose Auto in /mode.",
-        "warning",
-      );
-      return;
-    }
-    setAuto(true);
-    services.saveChoice({ mode: "auto" });
-    void services.pool().then(async (members) => {
+    void (async () => {
+      // Each member as it stands now: Auto never starts with nothing ready behind it.
+      const verdict = autoVerdict(await autoMembersNow(), process.env.AGENT_LEADER?.trim());
+      if (!verdict.allowed) {
+        notice(verdict.message, "warning");
+        return;
+      }
+      setAuto(true);
+      services.saveChoice({ mode: "auto" });
+      const members = await services.pool();
       const best = mostRoom(members);
       if (best && best.provider.id !== session.provider.id) {
         await session.setProvider(best.provider);
         setModels([]);
         setUsage(undefined);
       }
+      notice(verdict.message, verdict.out.length > 0 || verdict.leader ? "warning" : "success");
+      setTick((t) => t + 1);
+    })();
+  };
+
+  /** Each provider Auto includes, as it stands now (what it answered, and its switch). */
+  const autoMembersNow = (): Promise<AutoMember[]> =>
+    Promise.all(
+      services.providers
+        .filter((p) => autoIds.includes(p.id))
+        .map(async (p) => {
+          try {
+            const read = connectionState({ id: p.id, status: await p.status() });
+            return { id: p.id, name: p.name, ...read };
+          } catch (error) {
+            const read = connectionState({
+              id: p.id,
+              failed: error instanceof Error ? error.message : String(error),
+            });
+            return { id: p.id, name: p.name, ...read };
+          }
+        }),
+    );
+
+  /**
+   * The chat leaves a provider it may no longer use (switched off, or out of
+   * Auto): in Auto, to the member with the most room; otherwise, or with
+   * none ready, to no model, said as such.
+   */
+  const leaveProvider = (target: Provider, why: string) => {
+    if (!session || session.provider.id !== target.id) return;
+    void (async () => {
+      const others = auto ? (await services.pool()).filter((m) => m.provider.id !== target.id) : [];
+      const next = mostRoom(others);
+      await session.setProvider(
+        next?.provider ??
+          new NoModelProvider(
+            `${target.name} ${why}, so no model is selected: nothing is sent to any provider. Choose another in /connect.`,
+          ),
+      );
+      setModels([]);
+      setUsage(undefined);
       notice(
-        `General Auto: each message is triaged by a light model, answered directly or planned across ${String(members.length)} ready provider${members.length === 1 ? "" : "s"}.`,
-        "success",
+        next
+          ? `${target.name} ${why}: the chat goes on with ${next.provider.name}, in Auto.`
+          : `${target.name} was the chat's model and ${why}: no model is selected now. Choose another in /connect.`,
+        "warning",
       );
       setTick((t) => t + 1);
-    });
+    })();
   };
 
   /** /mode → specific: the provider chosen in /connect again (or no model, said as such). */
@@ -2078,22 +2123,15 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     const said =
       services.connections?.setEnabled(target.id, on) ??
       "Connections are switched on and off from the terminal here.";
-    if (!on && session && session.provider.id === target.id) {
-      void session
-        .setProvider(
-          new NoModelProvider(
-            `${target.name} is switched off, so no model is selected: nothing is sent to any provider. Choose another in /connect.`,
-          ),
-        )
-        .then(() => {
-          setModels([]);
-          setUsage(undefined);
-          notice(
-            `${target.name} was the chat's model: no model is selected now. Choose another in /connect.`,
-            "warning",
-          );
-          setTick((t) => t + 1);
-        });
+    if (!on) {
+      leaveProvider(target, "is switched off");
+      const leader = process.env.AGENT_LEADER?.trim() ?? "";
+      if (leader.split("/")[0] === target.id) {
+        notice(
+          `${target.name} leads runs (${leader}): switched off, runs plan without a leader until it is on again or another is chosen (/leader).`,
+          "warning",
+        );
+      }
     }
     return said;
   };
@@ -2122,6 +2160,8 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     services.saveChoice({ autoProviders: next });
     setAutoIds(next);
     const name = services.providers.find((p) => p.id === id)?.name ?? id;
+    const target = services.providers.find((p) => p.id === id);
+    if (auto && target && !next.includes(id)) leaveProvider(target, "is no longer in Auto");
     notice(
       `${name} is ${next.includes(id) ? "now" : "no longer"} in Auto.${
         next.includes(id) && API_KEY_PROVIDERS.includes(id)

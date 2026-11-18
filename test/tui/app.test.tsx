@@ -349,8 +349,15 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
         } as unknown as Orchestrator);
       },
     });
+    // Auto includes claude-code (the tests' setting): here it is, and ready.
+    const member: Provider = {
+      ...fakeProvider([[{ say: "Direct-Answer" }]], []),
+      id: "claude-code",
+      name: "Claude",
+    };
     const svc: AppServices = {
       ...base,
+      providers: [...base.providers, member],
       saveChoice: (choice) => {
         saves.push(choice);
       },
@@ -814,7 +821,11 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
       await press(
         app,
         ENTER,
-        () => seen(app).includes("was the chat's model: no model is selected now"),
+        // A long line wraps in the chat's frame: read as one.
+        () =>
+          seen(app)
+            .replace(/[│\s]+/g, " ")
+            .includes("no model is selected now"),
         "the chat left it",
       );
       await press(app, "\u001B", () => now(app).includes("Connect · choose how"), "the menu");
