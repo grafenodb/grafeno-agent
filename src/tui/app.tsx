@@ -2638,6 +2638,11 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
               <MemoryView
                 admin={memory}
                 notice={notice}
+                onAsk={(prompt) => {
+                  setView(undefined);
+                  setMode("chat");
+                  void submit(prompt);
+                }}
                 onClose={() => {
                   setView(undefined);
                   setMode("chat");

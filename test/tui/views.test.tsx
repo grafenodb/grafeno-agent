@@ -392,6 +392,40 @@ function fakeAdmin(): MemoryAdmin & { done: string[] } {
           by: "agent",
         } satisfies ConstraintEvent,
       ]),
+    list: (_ns, options) =>
+      Promise.resolve(
+        options?.after
+          ? { items: [{ id: "n9", title: "A later page", labels: ["Fact"], score: 0 }], next: null }
+          : {
+              items: [
+                { id: "n1", title: "Use SQLite", labels: ["Decision"], score: 0 },
+                ...(options?.kind === "Decision"
+                  ? []
+                  : [{ id: "n4", title: "Ana works on billing", labels: ["Fact"], score: 0 }]),
+              ],
+              next: options?.kind ? null : "n4",
+            },
+      ),
+    forget: (_ns, id) => {
+      done.push(`forget ${id}`);
+      return Promise.resolve();
+    },
+    duplicates: () =>
+      Promise.resolve([
+        {
+          a: { id: "n1", title: "Use SQLite" },
+          b: { id: "n5", title: "SQLite is the store" },
+          score: 0.93,
+        },
+      ]),
+    merge: (_ns, keep, merge) => {
+      done.push(`merge ${merge} into ${keep}`);
+      return Promise.resolve({ undo: "m1" });
+    },
+    undoMerge: (_ns, undo) => {
+      done.push(`undo ${undo}`);
+      return Promise.resolve();
+    },
     drop: (ns) => {
       done.push(`drop ${ns}`);
       return Promise.resolve();
@@ -410,7 +444,10 @@ describe("the memory view", () => {
       <MemoryView admin={admin} notice={() => undefined} onClose={() => undefined} />,
     );
     await wait();
-    await keys(app, ..."sqlite".split(""), ENTER);
+    expect(app.lastFrame()).toContain(
+      "memories: what was remembered · facts: the links between them",
+    );
+    await keys(app, TAB, ..."sqlite".split(""), ENTER);
     await until(app, () => (app.lastFrame() ?? "").includes("Use SQLite (sqlite)"), "the results");
     await keys(app, ENTER);
     await until(app, () => (app.lastFrame() ?? "").includes("Facts (2)"), "the memory");
@@ -434,7 +471,8 @@ describe("the memory view", () => {
       <MemoryView admin={admin} notice={(text) => said.push(text)} onClose={() => undefined} />,
     );
     await wait();
-    await keys(app, TAB);
+    // Shift+Tab from the first tab: the last one.
+    await keys(app, "\u001B[Z");
     await until(
       app,
       () => (app.lastFrame() ?? "").includes("mpi · this session"),
@@ -465,10 +503,85 @@ describe("the memory view", () => {
     await until(app, () => admin.done.length > 1, "deleted");
     expect(admin.done).toEqual(["empty mpi", "drop old"]);
     expect(said.at(-1)).toBe("The namespace old is deleted.");
-    // The contradictions Grafeno recorded.
-    await keys(app, TAB);
+    // The contradictions Grafeno recorded: the tab before.
+    await keys(app, "\u001B[Z");
     await until(app, () => (app.lastFrame() ?? "").includes("one_database"), "the contradictions");
     expect(app.lastFrame()).toMatch(/one_database\s+invalidated/);
+    app.unmount();
+  });
+
+  it("browses the memory without knowing a name: by kind, a page at a time; a memory is forgotten", async () => {
+    const admin = fakeAdmin();
+    const said: string[] = [];
+    const app = area(
+      <MemoryView admin={admin} notice={(text) => said.push(text)} onClose={() => undefined} />,
+    );
+    await until(
+      app,
+      () => (app.lastFrame() ?? "").includes("Ana works on billing"),
+      "the memories",
+    );
+    expect(app.lastFrame()).toContain("[all]");
+    expect(app.lastFrame()).toContain("n more");
+    await keys(app, "n");
+    await until(app, () => (app.lastFrame() ?? "").includes("A later page"), "the next page");
+    // → a kind: Decision only.
+    await keys(app, "\u001B[C");
+    await until(
+      app,
+      () => !(app.lastFrame() ?? "").includes("Ana works on billing"),
+      "Decision only",
+    );
+    expect(app.lastFrame()).toContain("[Decision]");
+    // Open it, then x: a dialog, and it is forgotten only on yes.
+    await keys(app, ENTER);
+    await until(app, () => (app.lastFrame() ?? "").includes("Facts (2)"), "the memory");
+    await keys(app, "x");
+    await until(app, () => (app.lastFrame() ?? "").includes("Forget “Use SQLite”?"), "the dialog");
+    await keys(app, "n");
+    expect(admin.done).toEqual([]);
+    await keys(app, "x", "y");
+    await until(app, () => admin.done.length > 0, "forgotten");
+    expect(admin.done).toEqual(["forget n1"]);
+    expect(said.at(-1)).toBe("Forgotten: Use SQLite.");
+    app.unmount();
+  });
+
+  it("duplicates: merged by choosing which stays, undone with u; c asks the agent to consolidate", async () => {
+    const admin = fakeAdmin();
+    const asked: string[] = [];
+    const app = area(
+      <MemoryView
+        admin={admin}
+        notice={() => undefined}
+        onAsk={(prompt) => asked.push(prompt)}
+        onClose={() => undefined}
+      />,
+    );
+    await wait();
+    await keys(app, TAB, TAB);
+    await until(
+      app,
+      () => (app.lastFrame() ?? "").includes("SQLite is the store"),
+      "the duplicates",
+    );
+    expect(app.lastFrame()).toMatch(/Use SQLite\s+SQLite is the store\s+0\.93/);
+    await keys(app, ENTER);
+    await until(app, () => (app.lastFrame() ?? "").includes("which memory stays"), "the choice");
+    await keys(app, "1");
+    await until(app, () => admin.done.length > 0, "merged");
+    expect(admin.done).toEqual(["merge n5 into n1"]);
+    await until(
+      app,
+      () => (app.lastFrame() ?? "").includes("u undo the last merge"),
+      "undo offered",
+    );
+    await keys(app, "u");
+    await until(app, () => admin.done.length > 1, "undone");
+    expect(admin.done).toEqual(["merge n5 into n1", "undo m1"]);
+    await keys(app, "c");
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toContain("consolidate the groups of old memories");
     app.unmount();
   });
 });
