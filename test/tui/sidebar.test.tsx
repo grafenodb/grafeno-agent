@@ -49,7 +49,8 @@ describe("the side panel in Auto", () => {
     expect(screen).toMatch(/Free requests today\s+24%/);
     expect(screen).toContain("its API does not report usage");
     // In Auto, the per-provider list replaces the single plan's usage.
-    expect(screen).not.toContain("PLAN USAGE");
+    expect(screen).toContain("PLAN USAGE · AUTO");
+    expect(screen).not.toMatch(/PLAN USAGE ·\s+just now/);
     app.unmount();
   });
 });

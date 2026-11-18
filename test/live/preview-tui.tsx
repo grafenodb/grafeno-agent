@@ -42,7 +42,7 @@ const ANSWER = `Here is what **src/tui** holds:
 | prompt.tsx | The box one types in, with the slash commands |
 | sidebar.tsx | Model, context, plan usage, environment, memory |
 
-\`\`\`ts
+\`\`\`ts src/tui/run.tsx
 export function runTui(services: AppServices): Promise<void>
 \`\`\`
 
@@ -124,6 +124,27 @@ const services: AppServices = {
   orchestrator: () => Promise.reject(new Error("not in the preview")),
   pool: () => Promise.resolve([]),
   triage: () => Promise.resolve({ route: "direct", reason: "the preview" }),
+  recentRuns: () => [
+    { id: "r1", request: "analyze the repo", state: "completed", seconds: 64 },
+    { id: "r2", request: "consolidate memory", state: "completed", seconds: 8 },
+    { id: "r3", request: "tests for the API", state: "running", seconds: 30 },
+  ],
+  memoryAdmin: (namespace) =>
+    Promise.resolve({
+      active: namespace,
+      stats: () =>
+        Promise.resolve({
+          name: namespace,
+          nodes: 1246,
+          edges: 3120,
+          node_labels: { Decision: 410, Fact: 380, Project: 12, Person: 9, Concept: 120 },
+          edge_labels: {},
+          texts: 900,
+          text_terms: 0,
+          vectors: 0,
+          vector_dimension: null,
+        }),
+    } as unknown as Awaited<ReturnType<NonNullable<AppServices["memoryAdmin"]>>>),
 };
 
 const app = render(<App services={services} />);
@@ -132,7 +153,10 @@ Object.defineProperty(app.stdout, "columns", { value: Number(cols), configurable
 app.stdout.emit("resize");
 const frame = () => app.lastFrame() ?? "";
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-while (!frame().includes("Ask anything")) await wait(50);
+// Ready, or 20 s (then shown as it is: what kept it from being ready is on screen).
+for (const end = Date.now() + 20_000; !frame().includes("Ask anything") && Date.now() < end;) {
+  await wait(50);
+}
 await wait(800);
 console.log(`----- start (${cols}×${lines}) -----\n${frame()}\n`);
 for (const char of "What is in src/tui?") {

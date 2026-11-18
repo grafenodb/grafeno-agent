@@ -39,6 +39,18 @@ import type { ModelChoice, Provider } from "../providers/types.js";
 import { settingsPath, updateSettings } from "../settings-file.js";
 import { Grafeno } from "@grafenodb/client";
 import { memoryAdmin, type MemoryAdmin } from "./memory-admin.js";
+import { runStoreFile } from "../orchestrator/orchestrator.js";
+import { SqliteStore } from "../orchestrator/store.js";
+import { dataDir } from "../data-dir.js";
+
+/** One of a project's latest runs, as the side panel shows it. */
+export interface RecentRun {
+  readonly id: string;
+  readonly request: string;
+  readonly state: string;
+  /** From its start to its last change. */
+  readonly seconds: number;
+}
 import { checkGrafeno } from "../startup.js";
 import { localRouting } from "../orchestrator/router.js";
 import { AgentSession, type SessionExtensions } from "./session.js";
@@ -142,6 +154,8 @@ export interface AppServices {
    * included Grafeno, the agent's key otherwise.
    */
   memoryAdmin?(namespace: string): Promise<MemoryAdmin>;
+  /** A project's latest runs, read from its runs' store (none when it has none). */
+  recentRuns?(project: string, count?: number): RecentRun[];
   /** What /connect does to connections: keys, switches, billing, disconnecting. */
   readonly connections?: ConnectionActionsApi;
   /**
@@ -474,6 +488,27 @@ export function realServices(version: string): AppServices {
         `${chosen.provider.id}/${model ?? "default"}`,
         signal,
       );
+    },
+    recentRuns(project: string, count = 5) {
+      const file = runStoreFile(dataDir(env), project);
+      if (!existsSync(file)) return [];
+      const store = new SqliteStore(file);
+      try {
+        return store
+          .runs()
+          .slice(0, count)
+          .map((run) => ({
+            id: run.id,
+            request: run.request,
+            state: run.state,
+            seconds: Math.max(
+              0,
+              Math.round((Date.parse(run.updated) - Date.parse(run.created)) / 1000),
+            ),
+          }));
+      } finally {
+        store.close();
+      }
     },
     async memoryAdmin(namespace: string) {
       const config = await prepareGrafeno(loadConfig(env), env);

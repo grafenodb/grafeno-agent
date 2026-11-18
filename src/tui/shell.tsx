@@ -16,10 +16,13 @@ export function Shell(props: {
   readonly rows: number;
   readonly layout: Layout;
   readonly header: ReactNode;
-  readonly menu: ReactNode;
+  /** A row under the header (none now: the panels and the palette open everything). */
+  readonly menu?: ReactNode;
   readonly left?: (width: number) => ReactNode;
   readonly main: ReactNode;
   readonly right?: (width: number) => ReactNode;
+  /** The prompt, across the screen under the columns. */
+  readonly input?: ReactNode;
   readonly status: ReactNode;
 }): ReactNode {
   const { layout } = props;
@@ -29,11 +32,12 @@ export function Shell(props: {
       {props.menu}
       <Box flexDirection="row" flexGrow={1}>
         {layout.left > 0 && props.left?.(layout.left)}
-        <Box flexDirection="column" flexGrow={1} paddingX={1}>
+        <Box flexDirection="column" flexGrow={1}>
           {props.main}
         </Box>
         {layout.right > 0 && props.right?.(layout.right)}
       </Box>
+      {props.input}
       {props.status}
     </Box>
   );

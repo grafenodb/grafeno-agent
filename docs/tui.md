@@ -18,8 +18,12 @@ src/tui/
 │  runs · providers · models · memory
 ├─ adapters/        what the core recorded, as rows and fields
 │  runs · providers          (memory: src/app/memory-admin.ts)
-├─ shell.tsx        the frame: header, menu, left, main, right, status
-├─ status-bar.tsx   who has the keys, the mode, the keys that work anywhere
+├─ shell.tsx        the frame: header, left, main, right, input, status
+├─ header.tsx       the agent, the connections, who and when
+├─ left-panel.tsx   MODELS, PROVIDERS, AGENTS
+├─ sidebar.tsx      PLAN USAGE, MEMORY, RUNS
+├─ suggestions.tsx  the commands under the prompt
+├─ status-bar.tsx   who has the keys, the model, the memory, the agent, the keys
 └─ app.tsx          the conversation, and what opens over it
 ```
 
@@ -83,6 +87,9 @@ or off, their widths) is kept in `AGENT_TUI_LAYOUT`; Ctrl+F (maximized) is
 not.
 
 ## Components
+
+`ui/frame.tsx` draws every panel: a titled box whose border turns cyan
+while the keyboard is in it (a ▸ before the title says so too).
 
 | Component     | Keys                                                     | Mouse                                    |
 | ------------- | -------------------------------------------------------- | ---------------------------------------- |

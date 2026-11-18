@@ -37,8 +37,11 @@ export function AgentsPanel({
   cursor,
   onInspect,
   onMenu,
+  bare = false,
 }: {
   readonly width: number;
+  /** Inside a frame of its own (the left column): no border, title or note. */
+  readonly bare?: boolean;
   readonly main: { readonly model: string; readonly doing: string; readonly busy: boolean };
   readonly agents: readonly SubAgent[];
   /** The key of the agent shown, or undefined for the main one. */
@@ -58,20 +61,28 @@ export function AgentsPanel({
       flexDirection="column"
       width={width}
       flexShrink={0}
-      borderStyle="single"
-      borderTop={false}
-      borderBottom={false}
-      borderLeft={false}
-      borderColor={theme.muted}
-      paddingRight={1}
+      {...(bare
+        ? {}
+        : {
+            borderStyle: "single" as const,
+            borderTop: false,
+            borderBottom: false,
+            borderLeft: false,
+            borderColor: theme.muted,
+            paddingRight: 1,
+          })}
     >
-      <Text bold color={theme.agent}>
-        AGENTS
-      </Text>
-      <Text dimColor>
-        {String(running)} of {String(agents.length)} sub-agents working
-      </Text>
-      <Box marginTop={1} flexDirection="column">
+      {!bare && (
+        <Text bold color={theme.agent}>
+          AGENTS
+        </Text>
+      )}
+      {(!bare || agents.length > 0) && (
+        <Text dimColor>
+          {String(running)} of {String(agents.length)} sub-agents working
+        </Text>
+      )}
+      <Box marginTop={bare ? 0 : 1} flexDirection="column">
         <Entry
           selected={viewing === undefined}
           cursor={cursor === null}
@@ -149,12 +160,14 @@ export function AgentsPanel({
           );
         })}
       </Box>
-      <Box marginTop={1}>
-        <Text dimColor wrap="wrap">
-          click one, or ctrl+n next (▌ the one on screen) · tab here: ↑↓, enter view, shift+f10
-          actions · /agents
-        </Text>
-      </Box>
+      {!bare && (
+        <Box marginTop={1}>
+          <Text dimColor wrap="wrap">
+            click one, or ctrl+n next (▌ the one on screen) · tab here: ↑↓, enter view, shift+f10
+            actions · /agents
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 }

@@ -139,6 +139,7 @@ function render(tree: Parameters<typeof renderInk>[0]): ReturnType<typeof render
 
 const ENTER = "\r";
 const DOWN = "\u001B[B";
+const UP = "\u001B[A";
 
 async function until(
   check: () => boolean,
@@ -170,6 +171,16 @@ async function press(
   await until(done, what, 1);
 }
 const seen = (app: App) => app.frames.join("\n");
+/** Who has the keys, as the status bar says it: its first word (CHAT, MENU, PANEL…). */
+const focus = (app: App) =>
+  (app.lastFrame() ?? "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001B\[[0-9;?]*[A-Za-z]/g, "")
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .at(-1)
+    ?.trim()
+    .split(/\s+/)[0] ?? "";
 const now = (app: App) => app.lastFrame() ?? "";
 
 async function type(app: App, text: string): Promise<void> {
@@ -192,6 +203,19 @@ function clickOn(app: App, text: string): void {
   app.stdin.write(`\u001B[<0;${String(column + 1)};${String(row + 1)}m`);
 }
 
+/** A click on one of the suggestions under the prompt. */
+function clickSuggestion(app: App, command: string): void {
+  const lines = now(app)
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001B\[[0-9;?]*[A-Za-z]/g, "")
+    .split("\n");
+  const row = lines.findIndex((line) => line.includes("suggestions:"));
+  if (row < 0) throw new Error(`no suggestions on the screen:\n${lines.join("\n")}`);
+  const column = (lines[row] ?? "").indexOf(command) + 1;
+  app.stdin.write(`\u001B[<0;${String(column + 1)};${String(row + 1)}M`);
+  app.stdin.write(`\u001B[<0;${String(column + 1)};${String(row + 1)}m`);
+}
+
 async function ready(app: App): Promise<void> {
   await until(() => now(app).includes("Ask anything"), "the prompt");
   // The box listens to keys from the moment after it is drawn active.
@@ -206,7 +230,8 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     expect(now(app)).toContain("G R A F E N O");
     expect(now(app)).toContain("Fake Default 1.0");
     expect(now(app)).toContain("grafeno-agent-test");
-    expect(now(app)).toContain("Fake Provider · Fake Pro");
+    // The plan, with its usage.
+    expect(now(app)).toContain("PLAN USAGE · Fake Pro");
     app.unmount();
   });
 
@@ -453,12 +478,12 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
       />,
     );
     await ready(app);
-    expect(now(app)).toContain(" CHAT ");
-    expect(now(app)).toContain("AUTO");
+    expect(focus(app)).toBe("CHAT");
+    expect(now(app)).toContain("model: auto");
     expect(now(app)).toContain("MEMORY");
     app.stdin.write("\u0010");
-    await until(() => now(app).includes(" MENU "), "a menu has the keys");
-    await press(app, "\u001B", () => now(app).includes(" CHAT "), "the chat again");
+    await until(() => focus(app) === "MENU", "a menu has the keys");
+    await press(app, "\u001B", () => focus(app) === "CHAT", "the chat again");
     // Maximized: the side panel steps aside, and comes back; nothing is kept.
     app.stdin.write("\u0006");
     await until(() => !now(app).includes("MEMORY") && now(app).includes("maximized"), "maximized");
@@ -482,26 +507,26 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     await type(app, "/upk");
     app.stdin.write("\t");
     await until(() => now(app).includes("/upkeep"), "the command completed");
-    expect(now(app)).toContain(" CHAT ");
+    expect(focus(app)).toBe("CHAT");
     for (let i = 0; i < 8; i++) {
       app.stdin.write("\u007F");
       await new Promise((resolve) => setTimeout(resolve, 15));
     }
     await until(() => now(app).includes("Ask anything"), "the prompt empty");
     app.stdin.write("\t");
-    await until(() => now(app).includes(" PANEL "), "the panel has the keys");
-    expect(now(app)).toContain("▸ MODEL");
+    await until(() => focus(app) === "PANEL", "the panel has the keys");
+    expect(now(app)).toContain("▸ PLAN USAGE");
     app.stdin.write(DOWN);
-    await until(() => now(app).includes("▸ PLAN USAGE") || now(app).includes("▸ USAGE"), "usage");
+    await until(() => now(app).includes("▸ MEMORY"), "memory");
     // A key for the prompt goes to the panel now: nothing is typed.
     await type(app, "x");
     expect(now(app)).toContain("Ask anything");
     app.stdin.write("\u001B[21;2~");
-    await until(() => now(app).includes("Usage · actions"), "its actions");
-    expect(now(app)).toContain(" MENU ");
-    await press(app, "\u001B", () => now(app).includes(" PANEL "), "back to the panel");
-    expect(now(app)).toMatch(/▸ (PLAN )?USAGE/);
-    await press(app, "\u001B", () => now(app).includes(" CHAT "), "back to the chat");
+    await until(() => now(app).includes("Memory · actions"), "its actions");
+    expect(focus(app)).toBe("MENU");
+    await press(app, "\u001B", () => focus(app) === "PANEL", "back to the panel");
+    expect(now(app)).toContain("▸ MEMORY");
+    await press(app, "\u001B", () => focus(app) === "CHAT", "back to the chat");
     // A right click on a section: its actions too.
     const lines = now(app)
       // eslint-disable-next-line no-control-regex
@@ -512,7 +537,7 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.stdin.write(`\u001B[<2;${String(column)};${String(row + 1)}M`);
     await until(() => now(app).includes("Memory · actions"), "the memory actions");
     expect(now(app)).toContain("Upkeep report");
-    await press(app, "\u001B", () => now(app).includes(" CHAT "), "closed");
+    await press(app, "\u001B", () => focus(app) === "CHAT", "closed");
     app.unmount();
   });
 
@@ -555,6 +580,36 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.unmount();
   });
 
+  it("a wide window has the left column: models, providers, agents; the keyboard moves through it", async () => {
+    const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
+    Object.defineProperty(app.stdout, "columns", { value: 180, configurable: true });
+    app.stdout.emit("resize");
+    await ready(app);
+    await until(
+      () =>
+        now(app).includes("MODELS") &&
+        now(app).includes("PROVIDERS") &&
+        now(app).includes("Fake Provider OK"),
+      "the left column",
+    );
+    expect(now(app)).toMatch(/● Fake Default 1\.0\s+active/);
+    // No button row: the panels and the palette open everything.
+    expect(now(app)).not.toContain("[Model]");
+    // Shift+Tab: the left column, at its agents; ↑ to the providers, then the models.
+    app.stdin.write("\u001B[Z");
+    await until(() => focus(app) === "AGENTS", "the agents");
+    app.stdin.write(UP);
+    await until(() => focus(app) === "PROVIDERS", "the providers");
+    app.stdin.write(UP);
+    await until(() => focus(app) === "MODELS", "the models");
+    // Enter on the chat's model: its details.
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("Models · Fake Provider"), "the models view");
+    await press(app, "\u001B", () => focus(app) === "MODELS", "back to the models");
+    await press(app, "\u001B", () => focus(app) === "CHAT", "back to the chat");
+    app.unmount();
+  });
+
   it("in a narrow window the conversation is alone; ctrl+b opens the panel over it", async () => {
     const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
     await ready(app);
@@ -568,7 +623,7 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
       () => now(app).includes("Panels") && now(app).includes("MEMORY"),
       "the panel over it",
     );
-    expect(now(app)).toContain(" MENU ");
+    expect(focus(app)).toBe("MENU");
     await press(app, "\u001B", () => !now(app).includes("Panels"), "closed");
     // Wide again: back beside the conversation, as it was.
     Object.defineProperty(app.stdout, "columns", { value: 120, configurable: true });
@@ -592,9 +647,9 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     await until(() => now(app).includes("Haiku 5.5"), "the model list, from the palette");
     await press(app, "\u001B", () => now(app).includes("half a thought"), "the prompt again");
     expect(now(app)).not.toContain("half a thoughtmodels");
-    // The menu button runs the same action.
-    clickOn(app, "[Model]");
-    await until(() => now(app).includes("Haiku 5.5"), "the model list, from the menu");
+    // Ctrl+K runs the same action.
+    app.stdin.write("\u000b");
+    await until(() => now(app).includes("Haiku 5.5"), "the model list, from ctrl+k");
     await press(app, "\u001B", () => now(app).includes("half a thought"), "the prompt, once more");
     app.unmount();
   });
@@ -941,7 +996,7 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.unmount();
   });
 
-  it("does with a click what the commands do: the menu bar, a list's rows, the permission buttons", async () => {
+  it("does with a click what the commands do: a suggestion, a list's rows, the permission buttons", async () => {
     const note: Tool = {
       name: "write_note",
       description: "Writes a note.",
@@ -966,9 +1021,8 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
       />,
     );
     await ready(app);
-    // The menu bar: [Model] opens the list of models, as /models does.
-    expect(now(app)).toContain("[New]");
-    clickOn(app, "[Model]");
+    // A suggestion under the prompt: /models opens the list of models, as typing it does.
+    clickSuggestion(app, "/models");
     await until(
       () => now(app).includes("Haiku 5.5") && now(app).includes("click choose"),
       "the models",
@@ -978,12 +1032,11 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     await until(() => seen(app).includes("Model: Haiku 5.5"), "the model chosen by a click");
     // The list's own cancel, and the help button.
     await ready(app);
-    clickOn(app, "[Effort]");
+    await type(app, "/effort");
+    app.stdin.write(ENTER);
     await until(() => now(app).includes("esc cancel"), "the efforts");
     clickOn(app, "esc cancel");
     await ready(app);
-    clickOn(app, "[Help]");
-    await until(() => seen(app).includes("/permissions"), "the help");
     // A permission request: answered with its button, after the moment it takes no answer.
     await type(app, "write it");
     app.stdin.write(ENTER);
@@ -998,29 +1051,6 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     }
     await until(() => seen(app).includes("result: written"), "the answer", 1);
     expect(seen(app)).toContain("Allowed: write a note");
-    app.unmount();
-  });
-
-  it("menus: the same button closes its menu, another moves to it, and Esc only closes", async () => {
-    const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
-    await ready(app);
-    clickOn(app, "[Model]");
-    await until(() => now(app).includes("Haiku 5.5"), "the models");
-    // Another button: its menu takes the place of the one open.
-    clickOn(app, "[Effort]");
-    await until(
-      () => now(app).includes("Effort ·") && !now(app).includes("Haiku 5.5"),
-      "the efforts",
-    );
-    // The same button again: the menu closes.
-    clickOn(app, "[Effort]");
-    await until(() => now(app).includes("Ask anything"), "the menu closed");
-    // Esc closes a menu and does nothing else.
-    clickOn(app, "[Model]");
-    await until(() => now(app).includes("Haiku 5.5"), "the models again");
-    app.stdin.write("");
-    await until(() => now(app).includes("Ask anything"), "closed by esc");
-    expect(seen(app)).not.toContain("Pausing the run");
     app.unmount();
   });
 
@@ -1292,7 +1322,7 @@ describe("sub-agents in the interface", { timeout: 90_000 }, () => {
     // Tab to the agents panel: ↓ a sub-agent, shift+f10 its actions, Inspect: what the run recorded.
     await ready(app);
     app.stdin.write("\t");
-    await until(() => now(app).includes(" AGENTS "), "the agents panel has the keys");
+    await until(() => focus(app) === "AGENTS", "the agents panel has the keys");
     app.stdin.write("\u001B[B");
     await new Promise((resolve) => setTimeout(resolve, 40));
     app.stdin.write("\u001B[21;2~");
@@ -1304,8 +1334,8 @@ describe("sub-agents in the interface", { timeout: 90_000 }, () => {
     );
     expect(now(app)).toMatch(/Agent · \S+/);
     expect(now(app)).toMatch(/State\s+completed/);
-    await press(app, "\u001B", () => now(app).includes(" AGENTS "), "back to the agents panel");
-    await press(app, "\u001B", () => now(app).includes(" CHAT "), "back to the chat");
+    await press(app, "\u001B", () => focus(app) === "AGENTS", "back to the agents panel");
+    await press(app, "\u001B", () => focus(app) === "CHAT", "back to the chat");
     // ctrl+n: the first sub-agent, read only, with what it did.
     app.stdin.write("\u000e");
     await until(

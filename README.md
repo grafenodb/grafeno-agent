@@ -294,6 +294,28 @@ Enter to inspect, Esc to go back) and shows only what the system knows
   the `Drop` permission on the namespace (the included Grafeno's owner
   has it); without it, Grafeno's refusal is what is shown.
 
+**The screen.** On top, the agent and its version, each connection (●
+usable now, ○ not), who runs it and when. Then three columns, each part in
+a titled frame:
+
+- **left**: **MODELS** (the model each provider uses now: the chat's one
+  active, the others ready, with its context window when it is known, `ctx
+?` otherwise), **PROVIDERS** (each connection that matters here: OK,
+  held back, sign in, —, error; the rest are counted, and `/providers` shows
+  them all) and **AGENTS** (the main one, and a run's sub-agents);
+- **centre**: the **CHAT** (the project and its branch in its title), each
+  tool's work in a frame of its own (folded, a click or Ctrl+O opens it),
+  code in a frame with its file and line numbers;
+- **right**: **PLAN USAGE** (each window, with its plan and when it resets;
+  the context; the session's tokens), **MEMORY** (its memories and facts,
+  its most common kinds, the palace, the agent, the namespace) and **RUNS**
+  (the latest ones, how each ended and how long it took).
+
+Under them, the prompt across the screen, with a few commands to click,
+and the status bar: who has the keys, the model, the memory, the agent and
+the keys that work anywhere (Ctrl+K opens the models). A narrower window
+drops the left column first, then the right one.
+
 How the interface is built (input by layer, actions, layout, components,
 views) is in [docs/tui.md](docs/tui.md).
 

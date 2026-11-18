@@ -56,7 +56,8 @@ describe("groups of actions", () => {
     const folded = render(<ActionGroup records={records} open={false} />);
     const line = folded.lastFrame() ?? "";
     expect(line).toContain("Read a file, edited a file, ran a command · 1 failed ▸");
-    expect(line.split("\n")).toHaveLength(1);
+    // Folded: in its frame, its title and one line, whatever the number of actions.
+    expect(line.split("\n").filter((l) => /[A-Za-z]/.test(l))).toHaveLength(2);
     folded.unmount();
     const open = render(<ActionGroup records={records} open />);
     const shown = open.lastFrame() ?? "";

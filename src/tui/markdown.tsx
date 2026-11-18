@@ -53,7 +53,13 @@ type Block =
       readonly depth: number;
     }
   | { readonly kind: "quote"; readonly text: string }
-  | { readonly kind: "code"; readonly lang: string; readonly lines: string[] }
+  | {
+      readonly kind: "code";
+      readonly lang: string;
+      /** What follows the language on the fence: a file's path, when the answer names one. */
+      readonly title?: string;
+      readonly lines: string[];
+    }
   | { readonly kind: "table"; readonly header: string[]; readonly rows: string[][] }
   | { readonly kind: "rule" }
   | { readonly kind: "blank" }
@@ -65,12 +71,13 @@ export function blocks(text: string): Block[] {
   const lines = text.replace(/\r\n/g, "\n").split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
-    const fence = /^\s*```(\S*)/.exec(line);
+    const fence = /^\s*```(\S*)[ \t]*(.*)$/.exec(line);
     if (fence) {
       const code: string[] = [];
       i++;
       while (i < lines.length && !/^\s*```/.test(lines[i] ?? "")) code.push(lines[i++] ?? "");
-      out.push({ kind: "code", lang: fence[1] ?? "", lines: code });
+      const title = (fence[2] ?? "").trim();
+      out.push({ kind: "code", lang: fence[1] ?? "", ...(title ? { title } : {}), lines: code });
       continue;
     }
     if (isRow(line) && isRule(lines[i + 1] ?? "")) {
@@ -230,7 +237,14 @@ export function Markdown({ text }: { readonly text: string }): ReactNode {
                 paddingX={1}
                 marginY={0}
               >
-                <Text dimColor>{block.lang !== "" ? block.lang : "code"}</Text>
+                <Text>
+                  <Text bold color={theme.focus}>
+                    {block.title ?? (block.lang !== "" ? block.lang : "code")}
+                  </Text>
+                  {block.title !== undefined && block.lang !== "" && (
+                    <Text dimColor> · {block.lang}</Text>
+                  )}
+                </Text>
                 {block.lines.map((line, n) => {
                   const color = diff
                     ? line.startsWith("+")
@@ -241,9 +255,12 @@ export function Markdown({ text }: { readonly text: string }): ReactNode {
                           ? theme.accent
                           : theme.code
                     : theme.code;
+                  // Line numbers, except in a diff (its own marks say where each line goes).
+                  const width = String(block.lines.length).length;
                   return (
-                    <Text key={n} color={color}>
-                      {line === "" ? " " : line}
+                    <Text key={n}>
+                      {!diff && <Text dimColor>{String(n + 1).padStart(width)} </Text>}
+                      <Text color={color}>{line === "" ? " " : line}</Text>
                     </Text>
                   );
                 })}

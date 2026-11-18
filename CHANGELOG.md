@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **The main screen, as designed**: a header with the version, each
+  connection's state, who and when (the row of buttons is gone: the panels
+  and the palette open everything); a left column with MODELS, PROVIDERS
+  and AGENTS; the chat in a titled frame, each tool's work in a frame and
+  code with its file and line numbers; a right column with PLAN USAGE (and
+  the plan's name), MEMORY (memories, facts, most common kinds) and RUNS
+  (the latest, with how long each took); the prompt across the screen with
+  a few commands to click; a status bar with the model, the memory and the
+  agent. Ctrl+K opens the models. The keyboard moves through the left
+  column's three parts once Tab brings it there.
 - **A long answer is drawn a few times, not once per fragment**: what
   streams in is drawn at most every 40 ms (1000 fragments: well under 250
   frames, none lost).

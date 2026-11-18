@@ -1,5 +1,5 @@
 import { Box, measureElement, Text, useApp, useWindowSize, type DOMElement } from "ink";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { readEnvironment, type Environment } from "../app/environment.js";
 import type { AppServices } from "../app/services.js";
 import { chatProvider } from "../providers/chat.js";
@@ -47,7 +47,7 @@ import {
   type SubAgent,
   withReport,
 } from "./agents.js";
-import { AgentsPanel, AgentView, agentKey } from "./agents-panel.js";
+import { AgentView, agentKey } from "./agents-panel.js";
 import { ClickArea, Clickable } from "./clicks.js";
 import { InputArea, useFocusLayer, useGlobalKeys, useKeys, useMenuKey } from "./core/input.js";
 import { ContextMenu, type MenuItem } from "./ui/context-menu.js";
@@ -61,13 +61,19 @@ import {
   type LayoutPrefs,
 } from "./core/layout.js";
 import { PanelOverlay, Shell } from "./shell.js";
+import { Header, whoAndWhere } from "./header.js";
+import { Suggestions } from "./suggestions.js";
+import { LeftPanel, type ConnectionRow, type LeftCursor, type ModelRow } from "./left-panel.js";
+import { connectionState } from "./adapters/providers.js";
+import { Frame } from "./ui/frame.js";
+import type { RecentRun } from "../app/services.js";
 import { MemoryView } from "./views/memory.js";
 import { ModelsView } from "./views/models.js";
 import { ProvidersView } from "./views/providers.js";
 import { RunsView } from "./views/runs.js";
 import type { MemoryAdmin } from "../app/memory-admin.js";
 import { StatusBar } from "./status-bar.js";
-import { commandAction, commandActions, paletteItems, VIEW_ACTIONS } from "./core/actions.js";
+import { commandActions, paletteItems, VIEW_ACTIONS } from "./core/actions.js";
 import { ProjectsPanel } from "./projects.js";
 import { deleteProjectEverywhere, describeDeletion } from "../app/project-delete.js";
 import { projectFootprint } from "../projects.js";
@@ -116,7 +122,13 @@ import {
 } from "../app/connections.js";
 import { apiKeySpec } from "../providers/api-key.js";
 import { PROVIDER_PROFILES, providerEnabled, type ConnectionType } from "../providers/profiles.js";
-import { Sidebar, SIDEBAR_SECTIONS, type SidebarSection, type AutoUsage } from "./sidebar.js";
+import {
+  Sidebar,
+  SIDEBAR_SECTIONS,
+  type MemoryStats,
+  type SidebarSection,
+  type AutoUsage,
+} from "./sidebar.js";
 import { Spinner } from "./spinner.js";
 import { theme } from "./theme.js";
 
@@ -124,16 +136,8 @@ export type { AppServices } from "../app/services.js";
 
 /** Days between upkeeps before the interface suggests one. */
 const UPKEEP_EVERY_DAYS = 7;
-/** What each section of the side panel offers: the first is what Enter (or a click) does. */
+/** What each section of the right column offers: the first is what Enter (or a click) does. */
 const SECTION_ACTIONS: Readonly<Record<SidebarSection, readonly MenuItem[]>> = {
-  model: [
-    { id: "command.models", label: "Choose the model" },
-    { id: "command.effort", label: "How hard it thinks" },
-    { id: "command.mode", label: "Auto or specific" },
-    { id: "command.connect", label: "Connections" },
-    { id: "view.models", label: "Models · details", hint: "what is verified of each" },
-    { id: "command.providers", label: "Providers · states" },
-  ],
   usage: [
     { id: "command.usage refresh", label: "Usage, asked again" },
     { id: "command.usage", label: "Usage" },
@@ -145,12 +149,23 @@ const SECTION_ACTIONS: Readonly<Record<SidebarSection, readonly MenuItem[]>> = {
     { id: "command.upkeep", label: "Upkeep report" },
     { id: "command.checkpoint", label: "Save a checkpoint" },
   ],
+  runs: [
+    { id: "command.runs", label: "Runs", hint: "each run's tasks and attempts" },
+    { id: "command.agents", label: "Agents" },
+  ],
 };
 const SECTION_TITLES: Readonly<Record<SidebarSection, string>> = {
-  model: "Model",
-  usage: "Usage",
+  usage: "Plan usage",
   memory: "Memory",
+  runs: "Runs",
 };
+/** What the chat's model offers (the left column's MODELS, its active row). */
+const MODEL_ACTIONS: readonly MenuItem[] = [
+  { id: "command.models", label: "Choose the model" },
+  { id: "command.effort", label: "How hard it thinks" },
+  { id: "command.mode", label: "Auto or specific" },
+  { id: "view.models", label: "Models · details", hint: "what is verified of each" },
+];
 
 /** How often what streams in is drawn, in ms (the terminal shows at most 30 frames a second). */
 const LIVE_MS = 40;
@@ -332,8 +347,13 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   // Which region has the keys: the conversation, or a panel beside it (Tab moves between them),
   // and where the keyboard is in each panel.
   const [region, setRegion] = useState<"main" | "left" | "right">("main");
-  const [sideAt, setSideAt] = useState<SidebarSection>("model");
-  const [agentAt, setAgentAt] = useState<string | null>(null);
+  const [sideAt, setSideAt] = useState<SidebarSection>("usage");
+  const [leftAt, setLeftAt] = useState<LeftCursor>({ kind: "agent", id: null });
+  // What the screen shows of the connections, the memory and the runs (asked now and then).
+  const [connections, setConnections] = useState<readonly ConnectionRow[]>([]);
+  const [moreConnections, setMoreConnections] = useState(0);
+  const [memoryStats, setMemoryStats] = useState<MemoryStats | undefined>(undefined);
+  const [recentRuns, setRecentRuns] = useState<readonly RecentRun[]>([]);
   /** A context menu or an inspector open over what is on screen. */
   const [overlay, setOverlay] = useState<
     | {
@@ -360,7 +380,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   // Folded actions: all unfolded with ctrl+o; a click flips one group.
   const [allOpen, setAllOpen] = useState(false);
   const [flipped, setFlipped] = useState<ReadonlySet<number>>(new Set());
-  const [, setTick] = useState(0);
+  const [tick, setTick] = useState(0);
   const [watched, setWatched] = useState<Watched | undefined>(undefined);
   // Sub-agents the main agent's runs started, and the one shown (undefined: the main agent).
   const [agents, setAgents] = useState<SubAgent[]>([]);
@@ -590,6 +610,66 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       clearInterval(timer);
     };
   }, [refreshUsage, refreshAutoUsage]);
+
+  // The connections that matter here (Auto's, the chat's, your model servers): each one's state.
+  useEffect(() => {
+    let live = true;
+    const shown = services.providers.filter(
+      (p) =>
+        providerEnabled(p.id) &&
+        (autoIds.includes(p.id) || p.id === session?.provider.id || isLocalProvider(p.id)),
+    );
+    setMoreConnections(services.providers.length - shown.length);
+    void Promise.all(
+      shown.map(async (p) => {
+        try {
+          return {
+            id: p.id,
+            name: p.name,
+            state: connectionState({ id: p.id, status: await p.status() }).state,
+          };
+        } catch (error) {
+          return {
+            id: p.id,
+            name: p.name,
+            state: connectionState({
+              id: p.id,
+              failed: error instanceof Error ? error.message : String(error),
+            }).state,
+          };
+        }
+      }),
+    ).then((found) => {
+      if (live) setConnections(found);
+    });
+    return () => {
+      live = false;
+    };
+  }, [services, autoIds, session, tick]);
+  // What the memory holds, and the latest runs: after each turn, and every minute.
+  useEffect(() => {
+    if (!session || busy !== undefined) return;
+    let live = true;
+    setRecentRuns(services.recentRuns?.(session.memory.project.name) ?? []);
+    const namespace = session.vault.namespace;
+    void services
+      .memoryAdmin?.(namespace)
+      .then((admin) => admin.stats(namespace))
+      .then((stats) => {
+        if (!live) return;
+        setMemoryStats({
+          nodes: stats.nodes,
+          edges: stats.edges,
+          labels: Object.entries(stats.node_labels)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5),
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [services, session, busy, tick]);
 
   /** Runs a turn and shows it as it comes. */
   const runTurn = useCallback(
@@ -1512,6 +1592,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   const keepDraft = useCallback((text: string) => {
     draft.current = text;
   }, []);
+  const who = useMemo(() => whoAndWhere(), []);
   const modeNow = useRef(mode);
   modeNow.current = mode;
   const onWheel = useCallback((direction: number) => {
@@ -1526,6 +1607,16 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
    * or a command typed with "/" (which goes through `submit` as typed).
    */
   const runAction = (id: string) => {
+    if (id.startsWith("use:")) {
+      // A provider for the chat, from the left column.
+      const target = services.providers.find((p) => p.id === id.slice("use:".length));
+      if (target) {
+        void target.status().then((found) => {
+          chooseProvider(found, target);
+        });
+      }
+      return;
+    }
     if (id.startsWith("command.")) {
       const name = id.slice("command.".length);
       setPermissionChoice(undefined);
@@ -1659,6 +1750,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     else if (key.ctrl && input === "o") runAction("view.fold");
     else if (key.ctrl && input === "p") runAction("palette");
     else if (key.ctrl && input === "f") runAction("view.maximize");
+    else if (key.ctrl && input === "k") runAction("command.models");
     else if (key.ctrl && input === "n") runAction("agents.next");
     else if (key.ctrl && input === "c") {
       if (busy !== undefined && abort.current) abort.current.abort();
@@ -1669,7 +1761,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   });
 
   // Where each region goes, from what each needs and what fits (core/layout).
-  const layout = computeLayout({ columns, rows, prefs, agents: agents.length > 0, maximized });
+  const layout = computeLayout({ columns, rows, prefs, agents: true, maximized });
 
   // A panel that left the screen gives the keys back to the conversation.
   const regionShown = region === "main" || (region === "left" ? layout.left > 0 : layout.right > 0);
@@ -1786,23 +1878,82 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     },
     { layer: "base", isActive: region === "right" && layout.right > 0 },
   );
-  // The agents panel with the keys: ↑↓ the agents, Enter views one, Shift+F10 its actions.
+  // The models each provider uses now: the chat's, then the others ready in Auto.
+  const modelRows: ModelRow[] = connections
+    .filter((c) => c.state === "available" || c.id === session?.provider.id)
+    .map((c) => {
+      const current = session && c.id === session.provider.id ? session : undefined;
+      const active = current !== undefined;
+      const chosen = autoModelChoice[c.id]?.[0];
+      const provider = services.providers.find((p) => p.id === c.id);
+      return {
+        id: c.id,
+        name: current
+          ? modelLine(current, models)
+          : chosen && provider
+            ? provider.modelName(chosen)
+            : "auto",
+        vendor: c.name,
+        context: current?.context?.window,
+        state: active ? "active" : isLocalProvider(c.id) ? "local" : "ready",
+      };
+    });
+  /** Everything the keyboard moves through in the left column, in order. */
+  const leftItems: LeftCursor[] = [
+    ...modelRows.map((m) => ({ kind: "model" as const, id: m.id })),
+    ...connections.map((c) => ({ kind: "provider" as const, id: c.id })),
+    { kind: "agent" as const, id: null },
+    ...agents.map((a) => ({ kind: "agent" as const, id: agentKey(a) })),
+  ];
+  const sameLeft = (a: LeftCursor, b: LeftCursor) => a.kind === b.kind && a.id === b.id;
+  /** What a row of the left column offers. */
+  const leftMenu = (at: LeftCursor) => {
+    if (at.kind === "agent") {
+      agentMenu(at.id ?? undefined);
+      return;
+    }
+    const name = services.providers.find((p) => p.id === at.id)?.name ?? at.id;
+    const active = at.id === session?.provider.id;
+    setOverlay({
+      kind: "menu",
+      title: at.kind === "model" ? `Model · ${name}` : `Connection · ${name}`,
+      items:
+        at.kind === "model" && active
+          ? MODEL_ACTIONS
+          : [
+              ...(active ? [] : [{ id: `use:${at.id}`, label: "Use it for the chat" }]),
+              { id: "command.providers", label: "Providers · states" },
+              { id: "command.connect", label: "Connections" },
+            ],
+      run: runAction,
+    });
+    setMode("overlay");
+  };
+  // The left column with the keys: ↑↓ through it, Enter opens a row, Shift+F10 its actions.
   useKeys(
     (_input, key) => {
-      const keys: (string | null)[] = [null, ...agents.map(agentKey)];
-      const at = Math.max(0, keys.indexOf(agentAt));
-      if (key.upArrow) setAgentAt(keys[Math.max(0, at - 1)] ?? null);
-      else if (key.downArrow) setAgentAt(keys[Math.min(keys.length - 1, at + 1)] ?? null);
+      const at = Math.max(
+        0,
+        leftItems.findIndex((item) => sameLeft(item, leftAt)),
+      );
+      if (key.upArrow) setLeftAt(leftItems[Math.max(0, at - 1)] ?? leftAt);
+      else if (key.downArrow)
+        setLeftAt(leftItems[Math.min(leftItems.length - 1, at + 1)] ?? leftAt);
       else if (key.return) {
-        setViewing(agentAt ?? undefined);
-        setScroll(0);
+        if (leftAt.kind === "agent") {
+          setViewing(leftAt.id ?? undefined);
+          setScroll(0);
+        } else if (leftAt.kind === "model" && leftAt.id === session?.provider.id) {
+          runAction("view.models");
+        } else if (leftAt.kind === "provider") runAction("command.providers");
+        else leftMenu(leftAt);
       }
     },
     { layer: "base", isActive: region === "left" && layout.left > 0 },
   );
   useMenuKey(
     () => {
-      agentMenu(agentAt ?? undefined);
+      leftMenu(leftAt);
     },
     { layer: "base", isActive: region === "left" && layout.left > 0 },
   );
@@ -1970,22 +2121,32 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
 
   // The panels, at the width the layout gives them (beside the conversation, or over it).
   const agentsFor = (width: number) => (
-    <AgentsPanel
-      cursor={region === "left" ? agentAt : undefined}
-      onInspect={agentInspect}
-      onMenu={agentMenu}
+    <LeftPanel
       width={width}
+      models={modelRows}
+      connections={connections}
+      moreConnections={moreConnections}
+      agents={agents}
       main={{
         model: session ? modelLine(session, models) : "not connected",
         doing: busy ?? "waiting for you",
         busy: busy !== undefined,
       }}
-      agents={agents}
       viewing={viewed ? viewing : undefined}
-      onSelect={(key) => {
+      cursor={region === "left" ? leftAt : undefined}
+      onModel={(id) => {
+        if (id === session?.provider.id) runAction("view.models");
+        else leftMenu({ kind: "model", id });
+      }}
+      onProvider={() => {
+        runAction("command.providers");
+      }}
+      onMenu={leftMenu}
+      onAgent={(key) => {
         setViewing(key);
         setScroll(0);
       }}
+      onInspectAgent={agentInspect}
     />
   );
   const sidebarFor = (width: number) => (
@@ -2001,6 +2162,8 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       models={models}
       environment={environment}
       recall={recall}
+      memoryStats={memoryStats}
+      runs={recentRuns}
       {...(auto ? { autoUsage } : {})}
       local={provider ? isLocalProvider(provider.id) : false}
       {...(viewed ? { agent: viewed } : {})}
@@ -2021,32 +2184,30 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       layout={layout}
       header={
         <Header
-          session={session}
-          models={models}
-          grafeno={grafeno.mode}
+          version={services.version}
+          connections={connections.filter(
+            (c) => c.state !== "unavailable" || c.id === session?.provider.id,
+          )}
           busy={busy !== undefined}
           narrow={layout.right === 0}
-        />
-      }
-      menu={
-        <MenuBar
-          open={mode}
-          busy={busy !== undefined || phase === "starting"}
-          blocked={approval !== undefined}
-          onCommand={(command, close) => {
-            // The same menu again closes it; another one takes its place.
-            if (close) {
-              setMode("chat");
-              return;
-            }
-            runAction(commandAction(command));
-          }}
+          now={new Date()}
+          who={who}
         />
       }
       left={agentsFor}
       right={sidebarFor}
       main={
-        <>
+        <Frame
+          title={
+            viewed
+              ? `AGENT · ${viewed.id}`
+              : `CHAT${session ? ` · ${session.memory.project.name}` : ""}`
+          }
+          color={viewed ? theme.agent : theme.brand}
+          note={viewed ? "read only" : environment.branch}
+          focused={region === "main" && mode === "chat"}
+          grow
+        >
           {viewed ? (
             <Viewport scroll={scroll} onClamp={setScroll}>
               <AgentView agent={viewed} allOpen={allOpen} />
@@ -2944,36 +3105,47 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                 </Text>
               </Box>
             )}
-            {mode === "chat" && !approval && !viewed && (
-              <Prompt
-                layer="base"
-                active={phase !== "starting" && region === "main"}
-                canSubmit={busy === undefined}
-                onHeld={() => {
-                  notice(
-                    "The agent is still answering: what you typed stays here; enter sends it once it is done (esc stops it).",
-                    "info",
-                  );
-                }}
-                initial={draft.current}
-                onChange={keepDraft}
-                placeholder={
-                  phase === "starting"
-                    ? "Connecting…"
-                    : busy !== undefined
-                      ? "Working… type ahead, esc to interrupt"
-                      : session
-                        ? "Ask anything · / for commands"
-                        : "Not connected · /palace · /connect"
-                }
-                history={sent}
-                onSubmit={(text) => {
-                  void submit(text);
-                }}
-              />
-            )}
           </Box>
-        </>
+        </Frame>
+      }
+      input={
+        <Box flexDirection="column" paddingX={1} flexShrink={0}>
+          {mode === "chat" && !approval && !viewed && (
+            <Prompt
+              layer="base"
+              active={phase !== "starting" && region === "main"}
+              canSubmit={busy === undefined}
+              onHeld={() => {
+                notice(
+                  "The agent is still answering: what you typed stays here; enter sends it once it is done (esc stops it).",
+                  "info",
+                );
+              }}
+              initial={draft.current}
+              onChange={keepDraft}
+              placeholder={
+                phase === "starting"
+                  ? "Connecting…"
+                  : busy !== undefined
+                    ? "Working… type ahead, esc to interrupt"
+                    : session
+                      ? "Ask anything · / for commands"
+                      : "Not connected · /palace · /connect"
+              }
+              history={sent}
+              onSubmit={(text) => {
+                void submit(text);
+              }}
+            />
+          )}
+          {mode === "chat" && !approval && !viewed && busy === undefined && (
+            <Suggestions
+              onPick={(command) => {
+                void submit(command);
+              }}
+            />
+          )}
+        </Box>
       }
       status={
         <Footer
@@ -2985,6 +3157,10 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           viewing={viewed?.id}
           maximized={maximized}
           region={region}
+          leftSection={
+            leftAt.kind === "model" ? "MODELS" : leftAt.kind === "provider" ? "PROVIDERS" : "AGENTS"
+          }
+          memory={memoryStats?.nodes}
           hidden={layout.hidden.map((side) => (side === "left" ? "agents" : "side"))}
         />
       }
@@ -3019,45 +3195,6 @@ function Viewport({
       <Box ref={inner} flexDirection="column" flexShrink={0}>
         {children}
       </Box>
-    </Box>
-  );
-}
-
-function Header({
-  session,
-  models,
-  grafeno,
-  busy,
-  narrow,
-}: {
-  readonly session: AgentSession | undefined;
-  readonly models: readonly ModelOption[];
-  readonly grafeno: "included" | "external";
-  readonly busy: boolean;
-  readonly narrow: boolean;
-}): ReactNode {
-  return (
-    <Box paddingX={1} justifyContent="space-between" flexShrink={0} gap={2}>
-      <Box flexShrink={1} flexGrow={1} minWidth={10}>
-        <Text wrap="truncate-end">
-          <Glyph /> <Text bold>Grafeno Agent</Text>
-          {session && <Text dimColor> · {session.memory.project.name}</Text>}
-          {session && session.conversation.title !== "" && (
-            <Text dimColor> · {session.conversation.title}</Text>
-          )}
-        </Text>
-      </Box>
-      <Text wrap="truncate-end">
-        {busy && <Spinner />}
-        {session ? (
-          <Text color={theme.brand}> {modelLine(session, models)}</Text>
-        ) : (
-          <Text dimColor> not connected</Text>
-        )}
-        {!narrow && (
-          <Text dimColor> · {grafeno === "included" ? "Grafeno included" : "Grafeno server"}</Text>
-        )}
-      </Text>
     </Box>
   );
 }
@@ -3127,6 +3264,8 @@ function Footer({
   viewing,
   maximized,
   region,
+  leftSection,
+  memory,
   hidden,
 }: {
   readonly narrow: boolean;
@@ -3137,6 +3276,8 @@ function Footer({
   readonly viewing: string | undefined;
   readonly maximized: boolean;
   readonly region: "main" | "left" | "right";
+  readonly leftSection: string;
+  readonly memory: number | undefined;
   readonly hidden: readonly string[];
 }): ReactNode {
   const focus = useFocusLayer();
@@ -3157,8 +3298,13 @@ function Footer({
       }
       maximized={maximized}
       region={region}
+      leftSection={leftSection}
       hidden={hidden}
       narrow={narrow}
+      {...(session
+        ? { model: `${auto ? "auto" : "specific"} (${modelLine(session, models)})` }
+        : {})}
+      {...(memory === undefined ? {} : { memory })}
       right={
         narrow && session ? (
           <Text wrap="truncate-start">
@@ -3451,87 +3597,6 @@ function ApprovalBox({
 }
 
 /** The commands the menu bar offers, in order: each button does what its command does. */
-const MENU: readonly (readonly [label: string, command: string])[] = [
-  ["Projects", "projects"],
-  ["New", "new"],
-  ["Sessions", "resume"],
-  ["Model", "models"],
-  ["Effort", "effort"],
-  ["Provider", "connect"],
-  ["Mode", "mode"],
-  ["Permissions", "permissions"],
-  ["Memory", "palace"],
-  ["Runs", "runs"],
-  ["Agents", "agents"],
-  ["Usage", "usage"],
-  ["Help", "help"],
-];
-
-/** The menu each button opens, when it opens one: a second click on it closes it. */
-const MENU_MODE: Readonly<Record<string, Mode>> = {
-  projects: "projects",
-  resume: "resume",
-  models: "models",
-  effort: "effort",
-  connect: "connect",
-  mode: "mode",
-  permissions: "permissions",
-  palace: "palace",
-  runs: "view",
-  agents: "agents",
-};
-
-/** Buttons that only look, so they stay on while the agent works. */
-const WHILE_BUSY = new Set(["agents", "usage", "help", "runs", "permissions"]);
-
-/**
- * A row of buttons under the header: the main commands, one click each.
- * The menu open now shows pressed; clicking it again closes it, clicking
- * another one moves to it.
- */
-function MenuBar({
-  open,
-  busy,
-  blocked,
-  onCommand,
-}: {
-  /** The menu open now, if any. */
-  readonly open: Mode;
-  readonly busy: boolean;
-  /** A question waits for an answer: nothing else may be clicked. */
-  readonly blocked: boolean;
-  readonly onCommand: (command: string, close: boolean) => void;
-}): ReactNode {
-  return (
-    <Box paddingX={1} gap={1} flexShrink={0} height={1} overflow="hidden">
-      {MENU.map(([label, command]) => {
-        const pressed = MENU_MODE[command] === open;
-        const enabled = !blocked && (!busy || WHILE_BUSY.has(command) || pressed);
-        return (
-          <Clickable
-            key={command}
-            flexShrink={0}
-            {...(enabled
-              ? {
-                  onClick: () => {
-                    onCommand(command, pressed);
-                  },
-                }
-              : {})}
-          >
-            {pressed ? (
-              <Text inverse bold color={theme.brand}>
-                [{label}]
-              </Text>
-            ) : (
-              <Text {...(enabled ? { color: theme.brand } : { dimColor: true })}>[{label}]</Text>
-            )}
-          </Clickable>
-        );
-      })}
-    </Box>
-  );
-}
 
 function helpLines(): string[] {
   const width = Math.max(...COMMANDS.map((c) => c.name.length)) + 2;

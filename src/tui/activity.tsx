@@ -309,8 +309,23 @@ export function ActionGroup({
   const failed = records.filter((r) => r.failed).length;
   const only = records.length === 1 ? records[0] : undefined;
   return (
-    <Box flexDirection="column">
-      <Clickable paddingLeft={2} onClick={onToggle}>
+    <Box
+      flexDirection="column"
+      borderStyle="single"
+      borderColor={failed > 0 ? theme.error : theme.border}
+      paddingX={1}
+    >
+      <Text wrap="truncate-end">
+        <Text bold color={theme.user}>
+          {only ? "tool" : "tools"}
+        </Text>
+        <Text dimColor>
+          {" "}
+          · {only ? only.action.verb.toLowerCase() : `${String(records.length)} calls`}
+          {open ? "" : " · click or ctrl+o to open"}
+        </Text>
+      </Text>
+      <Clickable onClick={onToggle}>
         <Box width={2} flexShrink={0}>
           <Text color={failed > 0 ? theme.error : theme.success}>{failed > 0 ? "✗" : "✓"}</Text>
         </Box>
