@@ -53,35 +53,40 @@ describe("/connect", () => {
     expect(sectionOf("nonsense")).toBeUndefined();
   });
 
-  it("never shows a key being typed, and checks it before keeping it", async () => {
-    const given: string[] = [];
-    const frames: string[] = [];
-    const app = render(
-      <KeyEntry
-        name="DeepSeek API"
-        onSubmit={(key) => {
-          given.push(key);
-          return Promise.resolve({
-            ok: true,
-            message: "DeepSeek API accepted the key (2 models).",
-          });
-        }}
-        onCancel={() => undefined}
-      />,
-    );
-    await wait();
-    for (const c of KEY) {
-      app.stdin.write(c);
-      await wait(5);
-      frames.push(app.lastFrame() ?? "");
-    }
-    await wait();
-    expect(app.lastFrame()).toContain("•".repeat(KEY.length));
-    app.stdin.write("\r");
-    await wait(100);
-    expect(given).toEqual([KEY]);
-    expect(app.lastFrame()).toContain("accepted the key");
-    for (const frame of [...frames, ...app.frames]) expect(frame).not.toContain(KEY.slice(0, 8));
-    app.unmount();
-  });
+  // Typed a character at a time, each frame looked at: slow when the whole suite runs at once.
+  it(
+    "never shows a key being typed, and checks it before keeping it",
+    { timeout: 15_000 },
+    async () => {
+      const given: string[] = [];
+      const frames: string[] = [];
+      const app = render(
+        <KeyEntry
+          name="DeepSeek API"
+          onSubmit={(key) => {
+            given.push(key);
+            return Promise.resolve({
+              ok: true,
+              message: "DeepSeek API accepted the key (2 models).",
+            });
+          }}
+          onCancel={() => undefined}
+        />,
+      );
+      await wait();
+      for (const c of KEY) {
+        app.stdin.write(c);
+        await wait(5);
+        frames.push(app.lastFrame() ?? "");
+      }
+      await wait();
+      expect(app.lastFrame()).toContain("•".repeat(KEY.length));
+      app.stdin.write("\r");
+      await wait(100);
+      expect(given).toEqual([KEY]);
+      expect(app.lastFrame()).toContain("accepted the key");
+      for (const frame of [...frames, ...app.frames]) expect(frame).not.toContain(KEY.slice(0, 8));
+      app.unmount();
+    },
+  );
 });

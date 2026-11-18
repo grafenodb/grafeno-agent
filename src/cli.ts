@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { applyNoColor } from "./tui/colors.js";
 import { TASK_KINDS } from "./orchestrator/plan.js";
 import {
   isAuto,
@@ -34,7 +35,6 @@ import { createModel } from "./model/index.js";
 import { StartupError, checkGrafeno, type AgentIdentity } from "./startup.js";
 import { embedderFor, prepareGrafeno, realServices } from "./app/services.js";
 import { CHAT_CONTINUE_ROUNDS, CHAT_STEPS } from "./app/session.js";
-import { runTui } from "./tui/run.js";
 import { createInterface } from "node:readline/promises";
 import { createOrchestrator, describePlan, type OrchestrateSettings } from "./app/orchestrate.js";
 import type { Orchestrator, OrchestratorOptions } from "./orchestrator/orchestrator.js";
@@ -265,6 +265,9 @@ async function startMemory(
 async function chat(plain: boolean): Promise<number> {
   // In a terminal, the full interface; piped or with --plain, line by line.
   if (!plain && process.stdin.isTTY && process.stdout.isTTY) {
+    // Colors are decided when the interface's libraries load: NO_COLOR first.
+    applyNoColor(process.env);
+    const { runTui } = await import("./tui/run.js");
     await runTui(realServices(version()));
     return 0;
   }

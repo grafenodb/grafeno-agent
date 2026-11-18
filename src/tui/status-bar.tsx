@@ -46,11 +46,12 @@ export function StatusBar(props: StatusBarProps): ReactNode {
         : undefined;
   const focus = props.viewing ? "AGENT" : (panel ?? (props.focus ? FOCUS[props.focus] : "…"));
   const keys = props.narrow
-    ? "ctrl+p commands · esc back"
+    ? `ctrl+p · ${(props.hidden?.length ?? 0) > 0 ? "ctrl+b panel · " : ""}esc`
     : `ctrl+p commands · tab region · ctrl+b panels · ctrl+f ${props.maximized ? "panels back" : "focus"} · shift+f10 actions · esc back or stop`;
   return (
     <Box paddingX={1} justifyContent="space-between" flexShrink={0} gap={2}>
-      <Box flexShrink={1} minWidth={10}>
+      {/* Narrow: who has the keys and how to move come first; the model on the right gives way. */}
+      <Box flexShrink={props.narrow ? 0 : 1} minWidth={10}>
         <Text wrap="truncate-end">
           <Text inverse bold color={props.focus === "modal" ? theme.warning : theme.focus}>
             {` ${focus} `}
@@ -74,13 +75,17 @@ export function StatusBar(props: StatusBarProps): ReactNode {
             </>
           ) : null}
           {props.maximized && <Text color={theme.focus}> │ maximized</Text>}
-          {!props.maximized && (props.hidden?.length ?? 0) > 0 && (
+          {!props.narrow && !props.maximized && (props.hidden?.length ?? 0) > 0 && (
             <Text dimColor> │ no room for the {props.hidden?.join(" and ")} panel: ctrl+b</Text>
           )}
           <Text dimColor> │ {keys}</Text>
         </Text>
       </Box>
-      {props.right}
+      {props.right !== undefined && (
+        <Box flexShrink={1} minWidth={0} overflow="hidden">
+          {props.right}
+        </Box>
+      )}
     </Box>
   );
 }

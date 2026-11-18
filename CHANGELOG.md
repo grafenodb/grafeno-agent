@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **A long answer is drawn a few times, not once per fragment**: what
+  streams in is drawn at most every 40 ms (1000 fragments: well under 250
+  frames, none lost).
+- **`NO_COLOR`** turns the interface's colors off (its terminal library
+  reads only `FORCE_COLOR`; the CLI tells it before it loads).
+- In a narrow window the status bar says the keys short (`ctrl+p · ctrl+b
+panel · esc`) and they come before the model on the right.
+- [docs/tui.md](docs/tui.md): how the interface is built, for whoever adds
+  a view.
 - **Views over the conversation**, with the same keys and only what the
   system knows: `/runs` (each run's tasks and attempts: model, outcome,
   time, tokens, checks, why routed; o opens it as before), `/providers`

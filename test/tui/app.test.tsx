@@ -516,6 +516,45 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.unmount();
   });
 
+  it("draws a long streamed answer a few times, not once per fragment, and loses none of it", async () => {
+    const fragments = Array.from({ length: 1000 }, (_, i) => ({ say: `f${String(i)} ` }));
+    const app = render(
+      <App services={services({ turns: [[...fragments, { say: "The-End" }]] })} />,
+    );
+    await ready(app);
+    await type(app, "go");
+    const before = app.frames.length;
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("The-End"), "the whole answer", 15_000);
+    await until(() => now(app).includes("Ask anything"), "the turn done");
+    const drawn = app.frames.length - before;
+    // A thousand fragments, drawn at most every 40 ms: far fewer frames than fragments.
+    expect(drawn).toBeLessThan(250);
+    expect(seen(app)).toContain("f999 ");
+    expect(seen(app)).toContain("f0 f1 f2");
+    app.unmount();
+  });
+
+  it("works in a small terminal: the conversation alone, the prompt and the status bar", async () => {
+    const app = render(<App services={services({ turns: [[{ say: "Small-Answer" }]] })} />);
+    Object.defineProperty(app.stdout, "columns", { value: 50, configurable: true });
+    Object.defineProperty(app.stdout, "rows", { value: 16, configurable: true });
+    app.stdout.emit("resize");
+    await ready(app);
+    expect(now(app)).not.toContain("MEMORY");
+    // A narrow window says the keys short: the palette, the panel over it, back.
+    expect(now(app)).toContain("ctrl+p · ctrl+b panel · esc");
+    await type(app, "hi");
+    app.stdin.write(ENTER);
+    await until(() => seen(app).includes("Small-Answer"), "the answer");
+    // Every line fits the window.
+    for (const line of now(app).split("\n")) {
+      // eslint-disable-next-line no-control-regex
+      expect(line.replace(/\u001B\[[0-9;?]*[A-Za-z]/g, "").length).toBeLessThanOrEqual(50);
+    }
+    app.unmount();
+  });
+
   it("in a narrow window the conversation is alone; ctrl+b opens the panel over it", async () => {
     const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
     await ready(app);
@@ -523,7 +562,7 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     Object.defineProperty(app.stdout, "columns", { value: 80, configurable: true });
     app.stdout.emit("resize");
     await until(() => !now(app).includes("MEMORY"), "the panel gone for lack of room");
-    expect(now(app)).toContain("no room for the side panel");
+    expect(now(app)).toContain("ctrl+b panel");
     app.stdin.write("\u0002");
     await until(
       () => now(app).includes("Panels") && now(app).includes("MEMORY"),

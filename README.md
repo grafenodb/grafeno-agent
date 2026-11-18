@@ -294,6 +294,9 @@ Enter to inspect, Esc to go back) and shows only what the system knows
   the `Drop` permission on the namespace (the included Grafeno's owner
   has it); without it, Grafeno's refusal is what is shown.
 
+How the interface is built (input by layer, actions, layout, components,
+views) is in [docs/tui.md](docs/tui.md).
+
 **Keys go where the focus is.** A menu or a dialog takes the keys while it
 is open, and an approval takes them over everything: a key typed there
 never reaches the prompt behind it, and PgUp/PgDn or the wheel scroll the

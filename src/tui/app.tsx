@@ -152,6 +152,9 @@ const SECTION_TITLES: Readonly<Record<SidebarSection, string>> = {
   memory: "Memory",
 };
 
+/** How often what streams in is drawn, in ms (the terminal shows at most 30 frames a second). */
+const LIVE_MS = 40;
+
 /** Items kept on screen: older ones stay in the kept conversation. */
 const KEEP = 300;
 
@@ -601,7 +604,17 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       const done: ActionRecord[] = [];
       const started = Date.now();
       let buffer = "";
+      // What streams in is drawn at most every LIVE_MS, not once per fragment:
+      // the whole screen re-renders on each change, and a model sends many.
+      let painting: ReturnType<typeof setTimeout> | undefined;
+      const paint = () => {
+        painting = undefined;
+        setLive(buffer);
+        setScroll(0);
+      };
       const flush = () => {
+        if (painting !== undefined) clearTimeout(painting);
+        painting = undefined;
         if (buffer.trim() !== "") push({ kind: "assistant", text: buffer });
         buffer = "";
         setLive("");
@@ -621,8 +634,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
             switch (event.type) {
               case "text":
                 buffer += event.text;
-                setLive(buffer);
-                setScroll(0);
+                painting ??= setTimeout(paint, LIVE_MS);
                 break;
               case "tool_call": {
                 flush();
