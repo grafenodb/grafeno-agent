@@ -439,10 +439,45 @@ function fakeAdmin(): MemoryAdmin & { done: string[] } {
 }
 
 describe("the memory view", () => {
+  it("opens on the agent's namespaces, by whose memory they are; enter opens one, apart from the others", async () => {
+    const base = fakeAdmin();
+    const listed: string[] = [];
+    const admin: MemoryAdmin = {
+      ...base,
+      namespaces: () =>
+        base
+          .namespaces()
+          .then((found) => [
+            ...found,
+            { name: "someone-else", nodes: 9, edges: 9, created_at: 1_600_000_000_000_000 },
+          ]),
+      list: (ns, options) => {
+        listed.push(ns);
+        return base.list(ns, options);
+      },
+    };
+    const owner = (ns: string) =>
+      ns === "mpi" ? "General (outside projects)" : ns === "old" ? "Project Old" : undefined;
+    const app = area(
+      <MemoryView admin={admin} owner={owner} notice={() => undefined} onClose={() => undefined} />,
+    );
+    await until(app, () => (app.lastFrame() ?? "").includes("Project Old"), "the namespaces");
+    const screen = app.lastFrame() ?? "";
+    expect(screen).toContain("General (outside projects) · this session");
+    // Not the agent's: not listed.
+    expect(screen).not.toContain("someone-else");
+    await keys(app, DOWN, ENTER);
+    await until(app, () => listed.includes("old"), "the project's memories");
+    // Only that namespace is read: never this session's along with it.
+    expect(listed.every((ns) => ns === "old")).toBe(true);
+    expect(app.lastFrame()).toMatch(/Memory · Project Old/);
+    app.unmount();
+  });
+
   it("searches the memory, opens a memory with its facts, and goes from one to another", async () => {
     const admin = fakeAdmin();
     const app = area(
-      <MemoryView admin={admin} notice={() => undefined} onClose={() => undefined} />,
+      <MemoryView admin={admin} tab="browse" notice={() => undefined} onClose={() => undefined} />,
     );
     await wait();
     expect(app.lastFrame()).toContain(
@@ -469,7 +504,12 @@ describe("the memory view", () => {
     const admin = fakeAdmin();
     const said: string[] = [];
     const app = area(
-      <MemoryView admin={admin} notice={(text) => said.push(text)} onClose={() => undefined} />,
+      <MemoryView
+        admin={admin}
+        tab="browse"
+        notice={(text) => said.push(text)}
+        onClose={() => undefined}
+      />,
     );
     await wait();
     // Shift+Tab from the first tab: the last one.
@@ -480,7 +520,7 @@ describe("the memory view", () => {
       "the namespaces",
     );
     // This session's namespace: deleting it says it comes back; emptying it warns.
-    await keys(app, ENTER);
+    await keys(app, ESC + "[21;2~"); // shift+f10: its actions (enter opens it)
     await until(app, () => (app.lastFrame() ?? "").includes("Namespace · mpi"), "its inspector");
     await keys(app, "2");
     await until(
@@ -509,7 +549,7 @@ describe("the memory view", () => {
     expect(admin.done).toEqual(["empty mpi"]);
     // Another one, deleted.
     await until(app, () => (app.lastFrame() ?? "").includes("old"), "the list again");
-    await keys(app, DOWN, ENTER);
+    await keys(app, DOWN, ESC + "[21;2~");
     await until(app, () => (app.lastFrame() ?? "").includes("Namespace · old"), "old's inspector");
     await keys(app, "2", "o", "l", "d", ENTER);
     await until(app, () => admin.done.length > 1, "deleted");
@@ -526,7 +566,12 @@ describe("the memory view", () => {
     const admin = fakeAdmin();
     const said: string[] = [];
     const app = area(
-      <MemoryView admin={admin} notice={(text) => said.push(text)} onClose={() => undefined} />,
+      <MemoryView
+        admin={admin}
+        tab="browse"
+        notice={(text) => said.push(text)}
+        onClose={() => undefined}
+      />,
     );
     await until(
       app,
@@ -564,6 +609,7 @@ describe("the memory view", () => {
     const asked: string[] = [];
     const app = area(
       <MemoryView
+        tab="browse"
         admin={admin}
         notice={() => undefined}
         onAsk={(prompt) => asked.push(prompt)}

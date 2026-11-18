@@ -84,7 +84,7 @@ import { StatusBar } from "./status-bar.js";
 import { commandActions, paletteItems, VIEW_ACTIONS } from "./core/actions.js";
 import { ProjectsPanel } from "./projects.js";
 import { deleteProjectEverywhere, describeDeletion } from "../app/project-delete.js";
-import { projectFootprint } from "../projects.js";
+import { loadProjects, projectFootprint, sharedNamespace } from "../projects.js";
 import { sessionsDir } from "../sessions/store.js";
 import { dataDir } from "../data-dir.js";
 import { SessionsPanel } from "./sessions.js";
@@ -371,7 +371,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     undefined,
   );
   const [memory, setMemory] = useState<MemoryAdmin | undefined>(undefined);
-  const [memoryTab, setMemoryTab] = useState<"browse" | "duplicates">("browse");
+  const [memoryTab, setMemoryTab] = useState<"namespaces" | "browse" | "duplicates">("namespaces");
   // Which region has the keys: the conversation, or a panel beside it (Tab moves between them),
   // and where the keyboard is in each panel.
   const [region, setRegion] = useState<"main" | "left" | "right">("main");
@@ -1630,7 +1630,13 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           }
           try {
             setMemory(await services.memoryAdmin(session.vault.namespace));
-            setMemoryTab(command.args.trim() === "duplicates" ? "duplicates" : "browse");
+            setMemoryTab(
+              command.args.trim() === "duplicates"
+                ? "duplicates"
+                : command.args.trim() === "browse"
+                  ? "browse"
+                  : "namespaces",
+            );
             setView("memory");
             setMode("view");
           } catch (error) {
@@ -2878,6 +2884,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
               <MemoryView
                 admin={memory}
                 tab={memoryTab}
+                owner={memoryOwner}
                 notice={notice}
                 onAsk={(prompt) => {
                   setView(undefined);
@@ -3597,6 +3604,20 @@ function Tip({ keys, text }: { readonly keys: string; readonly text: string }): 
       <Text dimColor>{text}</Text>
     </Text>
   );
+}
+
+/**
+ * Whose memory a namespace is, when it is the agent's: General (sessions
+ * outside a project) or a project's. Others on the server are not its own.
+ */
+export function memoryOwner(namespace: string): string | undefined {
+  if (namespace === sharedNamespace()) return "General (outside projects)";
+  try {
+    const project = loadProjects().find((p) => p.namespace === namespace);
+    return project ? `Project ${project.name}` : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** What a namespace made by the agent says it holds. */

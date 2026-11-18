@@ -12,7 +12,7 @@ import { Table, type Row } from "../ui/table.js";
 import { Tree } from "../ui/tree.js";
 
 export type Tab = "browse" | "search" | "duplicates" | "contradictions" | "namespaces";
-const TABS: readonly Tab[] = ["browse", "search", "duplicates", "contradictions", "namespaces"];
+const TABS: readonly Tab[] = ["namespaces", "browse", "search", "duplicates", "contradictions"];
 const TAB_TITLE: Readonly<Record<Tab, string>> = {
   browse: "Browse",
   search: "Search",
@@ -41,11 +41,18 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
  * **Duplicates** lists what Grafeno takes for the same memory, merged with
  * Enter (u undoes the last merge); c asks the agent to consolidate old
  * memories. **Contradictions**, as Grafeno recorded them. **Namespaces**,
- * emptied or deleted after the name is typed in full. Tab moves between
+ * where it opens: the agent's own (General, and one per project), each apart;
+ * Enter opens one for the other tabs, Shift+F10 empties or deletes it after
+ * the name is typed in full. Tab moves between
  * the tabs; Esc goes back a step and closes from a tab.
  */
 export function MemoryView(props: {
   readonly admin: MemoryAdmin;
+  /**
+   * The agent's own namespaces, by what they hold ("General", "Project x"):
+   * the others on the server are not listed. Undefined: every one is.
+   */
+  readonly owner?: (namespace: string) => string | undefined;
   /** The tab it opens on. Default: Browse. */
   readonly tab?: Tab;
   readonly notice: (text: string, tone: "success" | "warning" | "error") => void;
@@ -54,7 +61,10 @@ export function MemoryView(props: {
   readonly onClose: () => void;
 }): ReactNode {
   const { admin } = props;
-  const [tab, setTab] = useState<Tab>(props.tab ?? "browse");
+  const [tab, setTab] = useState<Tab>(props.tab ?? "namespaces");
+  // The namespace looked at: this session's, until another is opened. Each one apart.
+  const [ns, setNs] = useState(admin.active);
+  const label = (name: string) => props.owner?.(name) ?? name;
   const [error, setError] = useState<string | undefined>(undefined);
   // Browse.
   const [kinds, setKinds] = useState<readonly string[]>([]);
@@ -86,54 +96,60 @@ export function MemoryView(props: {
   const loadPage = useCallback(
     (after?: string) => {
       setError(undefined);
-      admin
-        .list(admin.active, { ...(kindNow ? { kind: kindNow } : {}), ...(after ? { after } : {}) })
-        .then(
-          (found) => {
-            setPage((was) => ({
-              items: after && was ? [...was.items, ...found.items] : [...found.items],
-              next: found.next,
-            }));
-          },
-          (e: unknown) => {
-            setError(message(e));
-          },
-        );
+      admin.list(ns, { ...(kindNow ? { kind: kindNow } : {}), ...(after ? { after } : {}) }).then(
+        (found) => {
+          setPage((was) => ({
+            items: after && was ? [...was.items, ...found.items] : [...found.items],
+            next: found.next,
+          }));
+        },
+        (e: unknown) => {
+          setError(message(e));
+        },
+      );
     },
-    [admin, kindNow],
+    [admin, kindNow, ns],
   );
   const loadSpaces = useCallback(() => {
     setSpaces(undefined);
     admin.namespaces().then(
       (found) => {
         setSpaces(
-          found.map((n) => ({
-            id: n.name,
-            cells: {
-              name: `${n.name}${n.name === admin.active ? " · this session" : ""}`,
-              nodes: String(n.nodes),
-              edges: String(n.edges),
-              created: when(n.created_at),
-              description: n.description ?? "",
-            },
-          })),
+          found
+            .filter(
+              (n) =>
+                props.owner === undefined ||
+                n.name === admin.active ||
+                props.owner(n.name) !== undefined,
+            )
+            .map((n) => ({
+              id: n.name,
+              cells: {
+                name: `${props.owner?.(n.name) ?? n.name}${n.name === admin.active ? " · this session" : ""}${n.name === ns ? " · open" : ""}`,
+                namespace: n.name,
+                nodes: String(n.nodes),
+                edges: String(n.edges),
+                created: when(n.created_at),
+                description: n.description ?? "",
+              },
+            })),
         );
       },
       (e: unknown) => {
         setError(message(e));
       },
     );
-  }, [admin]);
+  }, [admin, props, ns]);
   const loadPairs = useCallback(() => {
     setPairs(undefined);
-    admin.duplicates(admin.active).then(setPairs, (e: unknown) => {
+    admin.duplicates(ns).then(setPairs, (e: unknown) => {
       setError(message(e));
     });
-  }, [admin]);
+  }, [admin, ns]);
 
-  // The kinds, once: what Browse filters by.
+  // The kinds of the namespace open: what Browse filters by.
   useEffect(() => {
-    admin.stats(admin.active).then(
+    admin.stats(ns).then(
       (stats) => {
         setKinds(
           Object.entries(stats.node_labels)
@@ -143,7 +159,7 @@ export function MemoryView(props: {
       },
       () => undefined,
     );
-  }, [admin]);
+  }, [admin, ns]);
   // Browse, again for each kind.
   useEffect(() => {
     if (tab === "browse") loadPage();
@@ -152,7 +168,7 @@ export function MemoryView(props: {
     if (tab === "namespaces" && spaces === undefined) loadSpaces();
     if (tab === "duplicates" && pairs === undefined) loadPairs();
     if (tab === "contradictions" && contradictions === undefined) {
-      admin.contradictions(admin.active).then(
+      admin.contradictions(ns).then(
         (found) => {
           setContradictions(
             found.map((c, i) => ({
@@ -171,11 +187,11 @@ export function MemoryView(props: {
         },
       );
     }
-  }, [tab, spaces, pairs, contradictions, admin, loadSpaces, loadPairs]);
+  }, [tab, spaces, pairs, contradictions, admin, ns, loadSpaces, loadPairs]);
 
   const openNode = (id: string) => {
     setError(undefined);
-    admin.node(admin.active, id).then(
+    admin.node(ns, id).then(
       ({ node: found, relations }) => {
         setNode({
           id: found.id,
@@ -203,6 +219,20 @@ export function MemoryView(props: {
     );
   };
 
+  /** Looks at another namespace: what was shown of the one before goes. */
+  const openNamespace = (name: string) => {
+    if (name !== ns) {
+      setNs(name);
+      setKind(0);
+      setKinds([]);
+      setPage(undefined);
+      setHits(undefined);
+      setPairs(undefined);
+      setContradictions(undefined);
+      setLastMerge(undefined);
+    }
+    setTab("browse");
+  };
   const openSpace = (name: string) => {
     setError(undefined);
     admin.stats(name).then(
@@ -265,7 +295,7 @@ export function MemoryView(props: {
     else if (tab === "duplicates" && input === "u" && lastMerge) {
       const undo = lastMerge;
       setLastMerge(undefined);
-      admin.undoMerge(admin.active, undo).then(
+      admin.undoMerge(ns, undo).then(
         () => {
           props.notice("The last merge is undone: both memories are back.", "success");
           loadPairs();
@@ -299,7 +329,9 @@ export function MemoryView(props: {
         <Text bold color={theme.memory}>
           Memory
         </Text>
-        <Text dimColor> · {admin.active} · </Text>
+        <Text dimColor> · </Text>
+        <Text color={theme.memory}>{label(ns)}</Text>
+        <Text dimColor> · </Text>
         {TABS.map((t) => (
           <Text
             key={t}
@@ -358,7 +390,7 @@ export function MemoryView(props: {
               if (words === "") return;
               setError(undefined);
               setHits(undefined);
-              admin.search(admin.active, words).then(
+              admin.search(ns, words).then(
                 (found) => {
                   setHits(found);
                   setFocus("results");
@@ -447,7 +479,8 @@ export function MemoryView(props: {
           ) : (
             <Table
               columns={[
-                { key: "name", title: "Namespace", width: 26 },
+                { key: "name", title: "Memory of", width: 46 },
+                { key: "namespace", title: "Namespace", width: 22 },
                 { key: "nodes", title: "Memories", align: "right" },
                 { key: "edges", title: "Facts", align: "right" },
                 { key: "created", title: "Created" },
@@ -456,12 +489,16 @@ export function MemoryView(props: {
               rows={spaces}
               height={8}
               isActive={!busy}
-              onOpen={openSpace}
+              onOpen={(name) => {
+                openNamespace(name);
+              }}
+              onMenu={openSpace}
             />
           )}
-          <Text dimColor>
-            enter inspect (empty or delete from there: the dialog shows the name to type) · tab next
-            tab · esc close
+          <Text dimColor wrap="wrap">
+            one per project, and General for sessions outside a project: each apart from the others
+            · enter opens one (Browse, Search… then work in it) · shift+f10 empty or delete it · tab
+            next tab · esc close
           </Text>
         </>
       )}
@@ -506,7 +543,7 @@ export function MemoryView(props: {
             const gone = node;
             setForgetting(false);
             setNode(undefined);
-            admin.forget(admin.active, gone.id).then(
+            admin.forget(ns, gone.id).then(
               () => {
                 props.notice(`Forgotten: ${gone.title}.`, "success");
                 setHits((was) => was?.filter((h) => h.id !== gone.id));
@@ -535,7 +572,7 @@ export function MemoryView(props: {
             setPair(undefined);
             if (id === "none") return;
             const [keep, merge] = id === "a" ? [chosen.a, chosen.b] : [chosen.b, chosen.a];
-            admin.merge(admin.active, keep.id, merge.id).then(
+            admin.merge(ns, keep.id, merge.id).then(
               ({ undo }) => {
                 setLastMerge(undo || undefined);
                 props.notice(
