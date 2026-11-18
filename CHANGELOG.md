@@ -1,7 +1,42 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-11-18)
 
+- **Sessions in tabs**: one window holds several sessions at once, a
+  General one or a project's, each in its own folder with its own model and
+  memory; the ones not on screen go on working. F2 opens the home page
+  (what each is doing, and a new session, General or for a project), F3
+  and F4 go to the tab before and the next, a click on the bar does too;
+  `/exit` closes a tab, and the program ends with the last one.
+- **MODELS follows the mode**: the chosen provider's models, or in Auto
+  every model of Auto's providers, each named by where it comes from
+  ("Codex GPT-5.5") with a switch; the ones off are never used by runs
+  (`AGENT_AUTO_MODELS`). Before a plan runs, "Switch models off first"
+  opens the same switches and plans again with the rest.
+- **One Connections window** for `/connect` and `/providers`: what is
+  connected (or on), with its Auto and On switches, then "+ Add
+  connection" (`/connect add`) and "Manage connections"; typing a name
+  finds the rest. The left PROVIDERS lists every provider switched on.
+- **The memory by namespace**: the Memory window opens on the agent's
+  namespaces (General, and one per project), each apart; Enter opens one
+  for Browse, Search, Duplicates and Contradictions. A namespace, this
+  session's too, can be deleted: it is made again, empty, with the next
+  message or session. The MEMORY panel says only where the memory lives.
+- **Notices in the status bar**, never in the conversation: a few seconds
+  (an error longer); `/log` shows the last ones.
+- **Copying**: F6 lends the mouse to the terminal to select text (F6 again
+  takes it back); `/copy` puts the last answer on the clipboard (`/copy 2`
+  the one before).
+- **Actions**: an open group shows a line per action, and a click on one
+  its output; Ctrl+O opens the latest group, never all of them.
+- The leader picker shows only where a model comes from and its name
+  ("Claude Code Haiku 5.5").
+- Fewer legends: no taglines, and RUNS, Memory and the home page without
+  explanations.
+- Fixed: a local server's speech models (ASR, TTS, Whisper) were offered
+  as chat models; an empty `AGENT_PROJECT` made `cancel`, `pause` and
+  `sessions` miss the folder's project; deleting a project left its runs'
+  worktrees behind.
 - **One providers window** for `/providers` and each section of
   `/connect`: search by name, scroll, and two switches per connection,
   Auto and On, flipped with Space (←→ choose which); Enter uses one (or
@@ -14,8 +49,7 @@
   Auto's; the leader's problems are said.
 - **Memory you can look after**: browse it without names (by kind, a page
   at a time), forget a memory (after a dialog), merge duplicates (and undo
-  it), ask the agent to consolidate old memories; a line says what
-  memories, facts and kinds are.
+  it), ask the agent to consolidate old memories.
 - **`/fresh`** frees the model's context: a checkpoint, then a fresh
   conversation from it.
 - **`agent_settings`**: a model reads the agent's settings and changes
@@ -53,7 +87,6 @@ panel · esc`) and they come before the model on the right.
   Grafeno recorded).
 - **Delete or empty a namespace** from `/vault`: a dialog asks for its name
   typed in full; emptying deletes and makes it again with its description;
-  this session's own is not deleted (it can be emptied, with a warning);
   Grafeno's `Drop` permission decides.
 - Keys reached a list drawn in the same moment late: its handler was
   registered after the screen showed it, so an Enter pressed at once was
