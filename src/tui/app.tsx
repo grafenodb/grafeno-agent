@@ -2078,6 +2078,42 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     return said;
   };
 
+  /** A provider in Auto or out of it (Space in the providers window, or its inspector). */
+  const toggleAuto = (id: string) => {
+    const next = autoIds.includes(id) ? autoIds.filter((x) => x !== id) : [...autoIds, id];
+    if (next.length === 0) {
+      notice(
+        "Auto needs at least one provider: put another in first, or switch Auto off in /mode.",
+        "warning",
+      );
+      return;
+    }
+    services.saveChoice({ autoProviders: next });
+    setAutoIds(next);
+    const name = services.providers.find((p) => p.id === id)?.name ?? id;
+    notice(
+      `${name} is ${next.includes(id) ? "now" : "no longer"} in Auto.${
+        next.includes(id) && API_KEY_PROVIDERS.includes(id)
+          ? " It uses an API key: billed per token unless it is a free tier, and never billed without AGENT_ALLOW_BILLING."
+          : ""
+      }`,
+      next.includes(id) && API_KEY_PROVIDERS.includes(id) ? "warning" : "success",
+    );
+  };
+  /** The models a provider in Auto may use (none chosen: all of them). */
+  const changeAutoModels = (id: string, chosen: string[]) => {
+    const next = { ...autoModelChoice, [id]: chosen };
+    services.saveChoice({ autoModels: next });
+    setAutoModelChoice(next);
+    const name = services.providers.find((p) => p.id === id)?.name ?? id;
+    notice(
+      chosen.length === 0
+        ? `${name} in Auto: every model, chosen by the task and by what each spends.`
+        : `${name} in Auto: ${chosen.join(", ")}, as you chose them (the hardest tasks to the strongest, simple ones to the lightest).`,
+      "success",
+    );
+  };
+
   /** Makes a provider the chat's (from /connect): said when it cannot be, and why. */
   const chooseProvider = (found: ProviderStatus, chosen: Provider) => {
     const ready = found.installed && found.signedIn;
@@ -2473,7 +2509,13 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
             {mode === "view" && view === "providers" && (
               <ProvidersView
                 providers={services.providers}
-                {...(session ? { current: session.provider.id } : {})}
+                {...(session && !auto ? { current: session.provider.id } : {})}
+                autoMembers={autoIds}
+                onToggleAuto={toggleAuto}
+                autoModels={autoModelChoice}
+                onAutoModels={changeAutoModels}
+                none={session !== undefined && isNoModel(session.provider) && !auto}
+                onNone={chooseNoModel}
                 onUse={(chosen, found) => {
                   setView(undefined);
                   setMode("chat");
@@ -2965,7 +3007,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
               />
             )}
             {mode === "connect" && connectView.kind === "section" && (
-              <ProviderPanel
+              <ProvidersView
                 title={
                   connectView.type === "cli"
                     ? "CLI / Subscription"
@@ -2980,70 +3022,37 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                     (PROVIDER_PROFILES[p.id]?.connectionType ?? "api-key") === connectView.type,
                 )}
                 {...(provider && !auto ? { current: provider.id } : {})}
-                auto={auto}
                 autoMembers={autoIds}
-                apiKeyProviders={API_KEY_PROVIDERS}
+                onToggleAuto={toggleAuto}
+                onSwitch={(id, on) => {
+                  const target = services.providers.find((p) => p.id === id);
+                  return target ? switchConnection(target, on) : `${id} is not known.`;
+                }}
                 autoModels={autoModelChoice}
-                onAutoModels={(id, chosen) => {
-                  const next = { ...autoModelChoice, [id]: chosen };
-                  services.saveChoice({ autoModels: next });
-                  setAutoModelChoice(next);
-                  const name = services.providers.find((p) => p.id === id)?.name ?? id;
-                  notice(
-                    chosen.length === 0
-                      ? `${name} in Auto: every model, chosen by the task and by what each spends.`
-                      : `${name} in Auto: ${chosen.join(", ")}, as you chose them (the hardest tasks to the strongest, simple ones to the lightest).`,
-                    "success",
-                  );
+                onAutoModels={changeAutoModels}
+                needsKey={(chosen, found) =>
+                  !found.signedIn &&
+                  apiKeySpec(chosen.id) !== undefined &&
+                  providerEnabled(chosen.id)
+                }
+                onKey={(chosen) => {
+                  setConnectView({ kind: "key", provider: chosen, back: connectView.type });
                 }}
-                onToggleAuto={(id) => {
-                  const next = autoIds.includes(id)
-                    ? autoIds.filter((x) => x !== id)
-                    : [...autoIds, id];
-                  if (next.length === 0) {
-                    notice("Auto needs at least one provider.", "warning");
-                    return;
-                  }
-                  services.saveChoice({ autoProviders: next });
-                  setAutoIds(next);
-                  const name = services.providers.find((p) => p.id === id)?.name ?? id;
-                  notice(
-                    `${name} is ${next.includes(id) ? "now" : "no longer"} in Auto.${
-                      next.includes(id) && API_KEY_PROVIDERS.includes(id)
-                        ? " It uses an API key: billed per token unless it is a free tier, and never billed without AGENT_ALLOW_BILLING."
-                        : ""
-                    }`,
-                    next.includes(id) && API_KEY_PROVIDERS.includes(id) ? "warning" : "success",
-                  );
-                }}
-                onDone={(found, chosen) => {
-                  if (
-                    found &&
-                    chosen &&
-                    !found.signedIn &&
-                    apiKeySpec(chosen.id) !== undefined &&
-                    providerEnabled(chosen.id)
-                  ) {
-                    setConnectView({
-                      kind: "key",
-                      provider: chosen,
-                      back: connectView.type,
-                    });
-                    return;
-                  }
-                  if (!chosen) {
-                    // Esc: back to where the section was opened from.
-                    setConnectView(
-                      connectView.back === "local" ? { kind: "local" } : { kind: "menu" },
-                    );
-                    return;
-                  }
+                onUse={(chosen, found) => {
                   setMode("chat");
-                  if (!found) return;
                   chooseProvider(found, chosen);
                 }}
                 none={session !== undefined && isNoModel(session.provider) && !auto}
                 onNone={chooseNoModel}
+                notice={(text) => {
+                  notice(text, "info");
+                }}
+                onClose={() => {
+                  // Esc: back to where the section was opened from.
+                  setConnectView(
+                    connectView.back === "local" ? { kind: "local" } : { kind: "menu" },
+                  );
+                }}
               />
             )}
             {mode === "palace" && (

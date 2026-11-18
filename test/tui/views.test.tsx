@@ -115,36 +115,95 @@ describe("a connection's state comes from what it answered, never from its setti
   });
 });
 
-describe("the providers view", () => {
-  it("lists each connection with its state; Enter inspects one; use it for the chat", async () => {
+describe("the providers window (/providers and each section of /connect)", () => {
+  const list = () => [
+    provider("codex", "Codex", {
+      installed: true,
+      signedIn: true,
+      detail: "Ready.",
+      version: "1.2",
+    }),
+    provider("gemini", "Gemini", { installed: true, signedIn: false, detail: "No key yet." }),
+    provider("ollama", "Ollama", new Error("ECONNREFUSED")),
+  ];
+
+  it("lists each connection with its state and switches; Shift+F10 inspects one; use it for the chat", async () => {
     const used: string[] = [];
     const app = area(
       <ProvidersView
-        providers={[
-          provider("codex", "Codex", {
-            installed: true,
-            signedIn: true,
-            detail: "Ready.",
-            version: "1.2",
-          }),
-          provider("gemini", "Gemini", { installed: true, signedIn: false, detail: "No key yet." }),
-          provider("ollama", "Ollama", new Error("ECONNREFUSED")),
-        ]}
+        providers={list()}
         current="gemini"
+        autoMembers={["codex"]}
+        onToggleAuto={() => undefined}
+        onSwitch={() => ""}
         onUse={(p) => used.push(p.id)}
         onClose={() => undefined}
       />,
     );
     await until(app, () => !(app.lastFrame() ?? "").includes("asking"), "the states");
     const screen = app.lastFrame() ?? "";
-    expect(screen).toMatch(/Codex\s+CLI\s+● available/);
-    expect(screen).toMatch(/Gemini · in use\s+API key\s+○ configured/);
-    expect(screen).toMatch(/Ollama\s+local\s+✗ error\s+ECONNREFUSED/);
-    await keys(app, ENTER);
+    expect(screen).toMatch(/Codex\s+CLI\s+● available\s+\[ON \]\s+\[ON \]/);
+    expect(screen).toMatch(/Gemini · in use\s+API key\s+○ configured\s+\[OFF\]/);
+    expect(screen).toMatch(/Ollama\s+local\s+✗ error/);
+    expect(screen).toContain("▸Auto");
+    // Shift+F10 (or a right click): its details.
+    await keys(app, "\u001B[21;2~");
     await until(app, () => (app.lastFrame() ?? "").includes("Connection · Codex"), "the inspector");
     expect(app.lastFrame()).toMatch(/Version\s+1\.2/);
     await keys(app, ENTER);
     expect(used).toEqual(["codex"]);
+    app.unmount();
+  });
+
+  it("searches by name as it is typed; Space flips Auto, ←→ then Space flips On", async () => {
+    const toggled: string[] = [];
+    const switched: string[] = [];
+    const app = area(
+      <ProvidersView
+        providers={list()}
+        autoMembers={[]}
+        onToggleAuto={(id) => toggled.push(id)}
+        onSwitch={(id, on) => {
+          switched.push(`${id} ${on ? "on" : "off"}`);
+          return `${id} switched`;
+        }}
+        onUse={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+    await until(app, () => !(app.lastFrame() ?? "").includes("asking"), "the states");
+    await keys(app, ..."gem".split(""));
+    await until(app, () => (app.lastFrame() ?? "").includes("1 of 3"), "the search");
+    expect(app.lastFrame()).not.toContain("Codex");
+    await keys(app, " ");
+    expect(toggled).toEqual(["gemini"]);
+    await keys(app, "\u001B[C");
+    expect(app.lastFrame()).toContain("▸On");
+    await keys(app, " ");
+    expect(switched).toEqual(["gemini off"]);
+    // Esc clears the search first: everything again.
+    await keys(app, ESC);
+    await until(app, () => (app.lastFrame() ?? "").includes("Codex"), "every connection");
+    app.unmount();
+  });
+
+  it("a connection with no key yet: Enter is where the key is typed", async () => {
+    const keyed: string[] = [];
+    const app = area(
+      <ProvidersView
+        providers={list()}
+        autoMembers={[]}
+        onToggleAuto={() => undefined}
+        onSwitch={() => ""}
+        onUse={() => undefined}
+        needsKey={(_p, status) => !status.signedIn}
+        onKey={(p) => keyed.push(p.id)}
+        onClose={() => undefined}
+      />,
+    );
+    await until(app, () => !(app.lastFrame() ?? "").includes("asking"), "the states");
+    await keys(app, DOWN, ENTER);
+    expect(keyed).toEqual(["gemini"]);
     app.unmount();
   });
 });

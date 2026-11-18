@@ -1,33 +1,54 @@
 import { Box, Text } from "ink";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { providerEnabled } from "../../providers/profiles.js";
 import type { Provider, ProviderStatus } from "../../providers/types.js";
 import { connectionState, connectionType, STATE_LOOK } from "../adapters/providers.js";
+import { AutoModelsPanel } from "../auto-models.js";
 import { useKeys } from "../core/input.js";
 import { theme } from "../theme.js";
 import { Inspector, type Field } from "../ui/inspector.js";
 import { Table, type Row } from "../ui/table.js";
 
-const COLUMNS = [
-  { key: "name", title: "Connection", width: 28 },
-  { key: "type", title: "Type" },
-  { key: "state", title: "State", width: 14 },
-  { key: "why", title: "Detail", width: 44 },
-];
+/** Which switch Space flips on the row chosen: in Auto or not, switched on or off. */
+type Switch = "auto" | "on";
+
+const NO_MODEL_ROW = "\u0000none";
+
+/** Whether a connection matches what was typed: its name or its id, in any case. */
+export function matchesConnection(provider: Pick<Provider, "id" | "name">, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  return q === "" || provider.name.toLowerCase().includes(q) || provider.id.includes(q);
+}
 
 /**
- * Every connection and what it is now: available, connected (held back),
- * configured (not signed in), unavailable or in error, from what each
- * answered (a setting alone is never a connection). Enter inspects one:
- * use it for the chat, switch it on or off, or ask it again.
+ * The connections, one window for /providers and each section of /connect:
+ * typed letters search them by name, ↑↓ PgUp PgDn scroll, and each row has
+ * two switches: **Auto** (whether General Auto may use it) and **On**
+ * (switched off, nothing uses it, whatever is signed in). ←→ choose which
+ * switch Space flips. Enter uses one for the chat (or asks for its key when
+ * it has none yet), m chooses its models in Auto, ctrl+r asks them again.
+ * Each one's state comes from what it answered, never a setting alone.
  */
 export function ProvidersView(props: {
   readonly providers: readonly Provider[];
+  readonly title?: string;
   /** The chat's provider now. */
   readonly current?: string;
+  /** No model is selected now (offered as a row, when `onNone` is given). */
+  readonly none?: boolean;
+  readonly onNone?: () => void;
+  /** The providers General Auto includes. */
+  readonly autoMembers: readonly string[];
+  readonly onToggleAuto: (id: string) => void;
+  /** Switches a connection on or off; says what happened. */
+  readonly onSwitch: (id: string, on: boolean) => string;
   readonly onUse: (provider: Provider, status: ProviderStatus) => void;
-  /** Switches a connection on or off; resolves to what to say. */
-  readonly onSwitch?: (id: string, on: boolean) => string;
+  /** A connection that needs a key it does not have yet: where it is typed. */
+  readonly needsKey?: (provider: Provider, status: ProviderStatus) => boolean;
+  readonly onKey?: (provider: Provider) => void;
+  /** For each provider in Auto, the models chosen (none: all); m changes them. */
+  readonly autoModels?: Readonly<Record<string, readonly string[]>>;
+  readonly onAutoModels?: (id: string, models: string[]) => void;
   readonly notice?: (message: string) => void;
   readonly onClose: () => void;
 }): ReactNode {
@@ -35,6 +56,12 @@ export function ProvidersView(props: {
   const [failed, setFailed] = useState<ReadonlyMap<string, string>>(new Map());
   const [asked, setAsked] = useState(0);
   const [open, setOpen] = useState<string | undefined>(undefined);
+  const [models, setModels] = useState<Provider | undefined>(undefined);
+  const [query, setQuery] = useState("");
+  const [switchOn, setSwitchOn] = useState<Switch>("auto");
+  const [selected, setSelected] = useState<string | undefined>(undefined);
+  // Switched on or off here: shown at once (the setting is read again on the next ask).
+  const [, setFlips] = useState(0);
   useEffect(() => {
     let live = true;
     void Promise.all(
@@ -54,14 +81,14 @@ export function ProvidersView(props: {
       live = false;
     };
   }, [props.providers, asked]);
-  useKeys((input, key) => {
-    if (open) return;
-    if (key.escape) props.onClose();
-    else if (key.ctrl && input === "r") {
-      setStatuses(new Map());
-      setAsked((n) => n + 1);
-    }
-  });
+
+  const shown = useMemo(
+    () => props.providers.filter((p) => matchesConnection(p, query)),
+    [props.providers, query],
+  );
+  const offerNone =
+    props.onNone !== undefined &&
+    ["nomodel", "none"].some((w) => w.includes(query.replace(/\s/g, "").toLowerCase()));
   const stateOf = (id: string) => {
     const status = statuses.get(id);
     const why = failed.get(id);
@@ -71,22 +98,104 @@ export function ProvidersView(props: {
       ...(why === undefined ? {} : { failed: why }),
     });
   };
-  const rows: Row[] = props.providers.map((p) => {
-    const asking = !statuses.has(p.id) && !failed.has(p.id);
-    const { state, why } = stateOf(p.id);
-    const look = STATE_LOOK[state];
-    return {
-      id: p.id,
-      cells: {
-        name: `${p.name}${p.id === props.current ? " · in use" : ""}`,
-        type: connectionType(p.id),
-        state: asking ? "… asking" : `${look.mark} ${state}`,
-        why: asking ? "" : why,
-      },
-      ...(asking ? {} : { tone: look.tone }),
-    };
+  const toggle = (on: boolean) => (on ? "[ON ]" : "[OFF]");
+  const rows: Row[] = [
+    ...(offerNone
+      ? [
+          {
+            id: NO_MODEL_ROW,
+            cells: {
+              name: `No model${props.none === true ? " · in use" : ""}`,
+              type: "—",
+              state: "the chat uses none",
+              auto: "",
+              on: "",
+              why: "enter: nothing connected is sent anything from the chat",
+            },
+            tone: "muted" as const,
+          },
+        ]
+      : []),
+    ...shown.map((p) => {
+      const asking = !statuses.has(p.id) && !failed.has(p.id);
+      const { state, why } = stateOf(p.id);
+      const look = STATE_LOOK[state];
+      return {
+        id: p.id,
+        cells: {
+          name: `${p.name}${p.id === props.current ? " · in use" : ""}`,
+          type: connectionType(p.id),
+          state: asking ? "… asking" : `${look.mark} ${state}`,
+          auto: toggle(props.autoMembers.includes(p.id)),
+          on: toggle(providerEnabled(p.id)),
+          why: asking ? "" : why,
+        },
+        ...(asking ? {} : { tone: look.tone }),
+      };
+    }),
+  ];
+  const chosenId =
+    selected !== undefined && rows.some((r) => r.id === selected) ? selected : rows[0]?.id;
+  const chosen = shown.find((p) => p.id === chosenId);
+
+  const flip = () => {
+    if (!chosen) return;
+    if (switchOn === "auto") props.onToggleAuto(chosen.id);
+    else {
+      // Switched first, then said: an optional notice must not skip the switch.
+      const said = props.onSwitch(chosen.id, !providerEnabled(chosen.id));
+      props.notice?.(said);
+      setFlips((n) => n + 1);
+      setAsked((n) => n + 1);
+    }
+  };
+  const enter = (id: string) => {
+    if (id === NO_MODEL_ROW) {
+      props.onNone?.();
+      return;
+    }
+    const provider = props.providers.find((p) => p.id === id);
+    const status = statuses.get(id);
+    if (provider && status && props.needsKey?.(provider, status) === true) {
+      props.onKey?.(provider);
+      return;
+    }
+    if (provider && status) props.onUse(provider, status);
+    else if (provider) props.notice?.(`${provider.name} has not answered yet.`);
+  };
+
+  const busy = open !== undefined || models !== undefined;
+  useKeys((input, key) => {
+    if (busy) return;
+    if (key.escape) {
+      if (query !== "") setQuery("");
+      else props.onClose();
+    } else if (key.leftArrow || key.rightArrow) setSwitchOn((s) => (s === "auto" ? "on" : "auto"));
+    else if (input === " ") flip();
+    else if (key.ctrl && input === "r") {
+      setStatuses(new Map());
+      setAsked((n) => n + 1);
+    } else if (input === "m" && query === "" && chosen && props.onAutoModels) setModels(chosen);
+    else if (key.backspace || key.delete) setQuery((q) => q.slice(0, -1));
+    else if (input && !key.ctrl && !key.meta && !key.tab && !key.return && input !== " ") {
+      setQuery((q) => q + input);
+    }
   });
-  const chosen = open ? props.providers.find((p) => p.id === open) : undefined;
+
+  if (models) {
+    return (
+      <AutoModelsPanel
+        provider={models}
+        chosen={props.autoModels?.[models.id] ?? []}
+        onDone={(picked) => {
+          if (picked !== undefined) props.onAutoModels?.(models.id, picked);
+          setModels(undefined);
+        }}
+      />
+    );
+  }
+
+  const inspected = open ? props.providers.find((p) => p.id === open) : undefined;
   const fields = (p: Provider): Field[] => {
     const status = statuses.get(p.id);
     const { state, why } = stateOf(p.id);
@@ -97,43 +206,81 @@ export function ProvidersView(props: {
       { label: "State", value: `${STATE_LOOK[state].mark} ${state}`, tone: STATE_LOOK[state].tone },
       { label: "Why", value: why },
       { label: "Switched", value: providerEnabled(p.id) ? "on" : "off" },
+      { label: "In Auto", value: props.autoMembers.includes(p.id) ? "yes" : "no" },
       { label: "Version", value: status?.version ?? "unknown" },
       { label: "Plan", value: status?.plan ?? "unknown" },
       { label: "Billing", value: status?.billing?.kind ?? "unknown" },
       { label: "In use", value: p.id === props.current ? "yes, by the chat" : "no" },
     ];
   };
+  const head = (name: string, mine: Switch) => (switchOn === mine ? `▸${name}` : name);
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.focus} paddingX={1}>
       <Text>
         <Text bold color={theme.focus}>
-          Providers
+          {props.title ?? "Providers"}
         </Text>
-        <Text dimColor> · {String(props.providers.length)} connections</Text>
+        <Text dimColor>
+          {" "}
+          · {String(shown.length)}
+          {query === "" ? "" : ` of ${String(props.providers.length)}`} · search:{" "}
+        </Text>
+        <Text color={theme.accent}>{query === "" ? "type a name" : query}</Text>
       </Text>
-      <Table columns={COLUMNS} rows={rows} height={12} isActive={!open} onOpen={setOpen} />
-      <Text dimColor>enter inspect · ctrl+r ask again · esc close</Text>
-      {chosen && (
+      {rows.length === 0 && (
+        <Text color={theme.warning}>Nothing matches “{query}”: esc clears it.</Text>
+      )}
+      <Table
+        columns={[
+          { key: "name", title: "Connection", width: 28 },
+          { key: "type", title: "Type", width: 8 },
+          { key: "state", title: "State", width: 14 },
+          { key: "auto", title: head("Auto", "auto"), width: 6 },
+          { key: "on", title: head("On", "on"), width: 6 },
+          { key: "why", title: "Detail", width: 40 },
+        ]}
+        rows={rows}
+        height={12}
+        isActive={!busy}
+        onSelect={setSelected}
+        onOpen={enter}
+        onMenu={(id) => {
+          if (id !== NO_MODEL_ROW) setOpen(id);
+        }}
+      />
+      <Text dimColor wrap="truncate-end">
+        type to search · ↑↓ PgUp PgDn · ←→ which switch · space flips it (
+        {switchOn === "auto" ? "Auto" : "On"}) · enter use · shift+f10 details
+        {props.onAutoModels ? " · m its models in Auto" : ""} · ctrl+r ask again · esc{" "}
+        {query === "" ? "close" : "clear"}
+      </Text>
+      {inspected && (
         <Inspector
-          title={`Connection · ${chosen.name}`}
-          fields={fields(chosen)}
+          title={`Connection · ${inspected.name}`}
+          fields={fields(inspected)}
           actions={[
             { id: "use", label: "Use it for the chat" },
-            providerEnabled(chosen.id)
+            props.autoMembers.includes(inspected.id)
+              ? { id: "auto", label: "Leave Auto" }
+              : { id: "auto", label: "Put in Auto" },
+            providerEnabled(inspected.id)
               ? { id: "off", label: "Switch off" }
               : { id: "on", label: "Switch on" },
             { id: "ask", label: "Ask it again" },
           ]}
           onAction={(id) => {
-            const status = statuses.get(chosen.id);
+            const status = statuses.get(inspected.id);
             if (id === "use" && status) {
               setOpen(undefined);
-              props.onUse(chosen, status);
-            } else if (id === "use") props.notice?.(`${chosen.name} has not answered yet.`);
-            else if ((id === "on" || id === "off") && props.onSwitch) {
-              props.notice?.(props.onSwitch(chosen.id, id === "on"));
+              props.onUse(inspected, status);
+            } else if (id === "use") props.notice?.(`${inspected.name} has not answered yet.`);
+            else if (id === "auto") props.onToggleAuto(inspected.id);
+            else if (id === "on" || id === "off") {
+              const said = props.onSwitch(inspected.id, id === "on");
+              props.notice?.(said);
+              setFlips((n) => n + 1);
               setAsked((n) => n + 1);
-            } else if (id === "ask") {
+            } else {
               setStatuses(new Map());
               setAsked((n) => n + 1);
             }
