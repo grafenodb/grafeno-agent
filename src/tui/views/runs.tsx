@@ -53,6 +53,11 @@ export function RunsView(props: {
             </Text>
             <Text dimColor> · {String(rows.length)} in this project</Text>
           </Text>
+          <Text dimColor wrap="wrap">
+            A run is a big task Auto split into parts: each part went to a model, was checked, and
+            the run ends with a report. Open one to see its parts, who did them, and how many tries
+            they took.
+          </Text>
           <Table
             columns={RUN_COLUMNS}
             rows={rows}
