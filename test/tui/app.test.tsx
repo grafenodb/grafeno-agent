@@ -602,11 +602,49 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     await until(() => focus(app) === "PROVIDERS", "the providers");
     app.stdin.write(UP);
     await until(() => focus(app) === "MODELS", "the models");
-    // Enter on the chat's model: its details.
+    // The models are the chat's provider's: the last one is under the cursor, Enter uses it.
+    expect(now(app)).toContain("▸ Haiku 5.5");
     app.stdin.write(ENTER);
-    await until(() => now(app).includes("Models · Fake Provider"), "the models view");
-    await press(app, "\u001B", () => focus(app) === "MODELS", "back to the models");
+    await until(() => seen(app).includes("Model: Haiku 5.5"), "the model changed");
+    // Marked active (▸: the cursor is on it).
+    await until(() => now(app).match(/▸ Haiku 5\.5\s+active/) !== null, "marked active");
+    // Up to the mode: Auto's switch and the leader.
+    for (let i = 0; i < 4; i++) {
+      app.stdin.write(UP);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+    await until(() => focus(app) === "MODE", "the mode");
+    expect(now(app)).toMatch(/Auto orchestrated\s+\[ON \]/);
+    expect(now(app)).toMatch(/Leader none\s+\[choose\]/);
     await press(app, "\u001B", () => focus(app) === "CHAT", "back to the chat");
+    app.unmount();
+  });
+
+  it("a double click changes the model; a click on Auto's switch turns it off", async () => {
+    const saves: Record<string, unknown>[] = [];
+    const base = services({ turns: [[{ say: "hi" }]] });
+    const app = render(
+      <App
+        services={{
+          ...base,
+          saveChoice: (choice) => {
+            saves.push(choice);
+          },
+        }}
+      />,
+    );
+    Object.defineProperty(app.stdout, "columns", { value: 180, configurable: true });
+    app.stdout.emit("resize");
+    await ready(app);
+    await until(() => now(app).includes("Haiku 5.5"), "the models");
+    // Two clicks on the same place: a double click.
+    clickOn(app, "Haiku 5.5");
+    clickOn(app, "Haiku 5.5");
+    await until(() => seen(app).includes("Model: Haiku 5.5"), "the model changed");
+    expect(saves).toContainEqual({ model: "haiku" });
+    clickOn(app, "[ON ]");
+    await until(() => now(app).includes("[OFF]"), "Auto off");
+    expect(saves).toContainEqual({ mode: "specific" });
     app.unmount();
   });
 

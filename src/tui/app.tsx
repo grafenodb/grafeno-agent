@@ -63,7 +63,13 @@ import {
 import { PanelOverlay, Shell } from "./shell.js";
 import { Header, whoAndWhere } from "./header.js";
 import { Suggestions } from "./suggestions.js";
-import { LeftPanel, type ConnectionRow, type LeftCursor, type ModelRow } from "./left-panel.js";
+import {
+  LeftPanel,
+  LIST_ROWS,
+  type ConnectionRow,
+  type LeftCursor,
+  type ModelRow,
+} from "./left-panel.js";
 import { connectionState } from "./adapters/providers.js";
 import { Frame } from "./ui/frame.js";
 import type { RecentRun } from "../app/services.js";
@@ -1607,6 +1613,10 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
    * or a command typed with "/" (which goes through `submit` as typed).
    */
   const runAction = (id: string) => {
+    if (id.startsWith("model:")) {
+      chooseModel(id.slice("model:".length));
+      return;
+    }
     if (id.startsWith("use:")) {
       // A provider for the chat, from the left column.
       const target = services.providers.find((p) => p.id === id.slice("use:".length));
@@ -1878,60 +1888,75 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     },
     { layer: "base", isActive: region === "right" && layout.right > 0 },
   );
-  // The models each provider uses now: the chat's, then the others ready in Auto.
-  const modelRows: ModelRow[] = connections
-    .filter((c) => c.state === "available" || c.id === session?.provider.id)
-    .map((c) => {
-      const current = session && c.id === session.provider.id ? session : undefined;
-      const active = current !== undefined;
-      const chosen = autoModelChoice[c.id]?.[0];
-      const provider = services.providers.find((p) => p.id === c.id);
-      return {
-        id: c.id,
-        name: current
-          ? modelLine(current, models)
-          : chosen && provider
-            ? provider.modelName(chosen)
-            : "auto",
-        vendor: c.name,
-        context: current?.context?.window,
-        state: active ? "active" : isLocalProvider(c.id) ? "local" : "ready",
-      };
-    });
+  // The chat's provider's models: the one in use marked, its context when known.
+  const modelRows: ModelRow[] = models.map((m) => ({
+    id: m.id,
+    name: m.name,
+    active: session !== undefined && session.model === m.id,
+    context: session !== undefined && session.model === m.id ? session.context?.window : undefined,
+  }));
   /** Everything the keyboard moves through in the left column, in order. */
   const leftItems: LeftCursor[] = [
+    { kind: "auto", id: null },
+    { kind: "leader", id: null },
     ...modelRows.map((m) => ({ kind: "model" as const, id: m.id })),
     ...connections.map((c) => ({ kind: "provider" as const, id: c.id })),
-    { kind: "agent" as const, id: null },
+    { kind: "agent", id: null },
     ...agents.map((a) => ({ kind: "agent" as const, id: agentKey(a) })),
   ];
   const sameLeft = (a: LeftCursor, b: LeftCursor) => a.kind === b.kind && a.id === b.id;
+  /** What a row of the left column does when chosen (Enter, a double click). */
+  const leftChoose = (at: LeftCursor) => {
+    if (at.kind === "auto") {
+      if (auto) enableSpecific();
+      else enableAuto();
+    } else if (at.kind === "leader") runAction("command.leader");
+    else if (at.kind === "model") chooseModel(at.id);
+    else if (at.kind === "provider") runAction(`use:${at.id}`);
+    else {
+      setViewing(at.id ?? undefined);
+      setScroll(0);
+    }
+  };
   /** What a row of the left column offers. */
   const leftMenu = (at: LeftCursor) => {
     if (at.kind === "agent") {
       agentMenu(at.id ?? undefined);
       return;
     }
+    if (at.kind === "auto" || at.kind === "leader") {
+      leftChoose(at);
+      return;
+    }
+    if (at.kind === "model") {
+      const name = models.find((m) => m.id === at.id)?.name ?? at.id;
+      setOverlay({
+        kind: "menu",
+        title: `Model · ${name}`,
+        items: [{ id: `model:${at.id}`, label: "Use it in the chat" }, ...MODEL_ACTIONS],
+        run: runAction,
+      });
+      setMode("overlay");
+      return;
+    }
     const name = services.providers.find((p) => p.id === at.id)?.name ?? at.id;
-    const active = at.id === session?.provider.id;
     setOverlay({
       kind: "menu",
-      title: at.kind === "model" ? `Model · ${name}` : `Connection · ${name}`,
-      items:
-        at.kind === "model" && active
-          ? MODEL_ACTIONS
-          : [
-              ...(active ? [] : [{ id: `use:${at.id}`, label: "Use it for the chat" }]),
-              { id: "command.providers", label: "Providers · states" },
-              { id: "command.connect", label: "Connections" },
-            ],
+      title: `Connection · ${name}`,
+      items: [
+        ...(at.id === session?.provider.id
+          ? []
+          : [{ id: `use:${at.id}`, label: "Use it for the chat" }]),
+        { id: "command.providers", label: "Providers · states and switches" },
+        { id: "command.connect", label: "Connections" },
+      ],
       run: runAction,
     });
     setMode("overlay");
   };
-  // The left column with the keys: ↑↓ through it, Enter opens a row, Shift+F10 its actions.
+  // The left column with the keys: ↑↓ through it, Enter (or Space on a switch) chooses, Shift+F10 its actions.
   useKeys(
-    (_input, key) => {
+    (input, key) => {
       const at = Math.max(
         0,
         leftItems.findIndex((item) => sameLeft(item, leftAt)),
@@ -1939,15 +1964,10 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       if (key.upArrow) setLeftAt(leftItems[Math.max(0, at - 1)] ?? leftAt);
       else if (key.downArrow)
         setLeftAt(leftItems[Math.min(leftItems.length - 1, at + 1)] ?? leftAt);
-      else if (key.return) {
-        if (leftAt.kind === "agent") {
-          setViewing(leftAt.id ?? undefined);
-          setScroll(0);
-        } else if (leftAt.kind === "model" && leftAt.id === session?.provider.id) {
-          runAction("view.models");
-        } else if (leftAt.kind === "provider") runAction("command.providers");
-        else leftMenu(leftAt);
-      }
+      else if (key.pageUp) setLeftAt(leftItems[Math.max(0, at - LIST_ROWS)] ?? leftAt);
+      else if (key.pageDown)
+        setLeftAt(leftItems[Math.min(leftItems.length - 1, at + LIST_ROWS)] ?? leftAt);
+      else if (key.return || (input === " " && leftAt.kind === "auto")) leftChoose(leftAt);
     },
     { layer: "base", isActive: region === "left" && layout.left > 0 },
   );
@@ -2078,6 +2098,17 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     return said;
   };
 
+  /** A model of the chat's provider: the conversation goes on with it (as /models does). */
+  const chooseModel = (id: string) => {
+    if (!session) return;
+    const label = models.find((m) => m.id === id)?.name ?? session.provider.modelName(id);
+    void session.setModel(id).then(() => {
+      services.saveChoice({ model: id });
+      notice(`Model: ${label}. The conversation goes on with it.`, "success");
+      setTick((t) => t + 1);
+    });
+  };
+
   /** A provider in Auto or out of it (Space in the providers window, or its inspector). */
   const toggleAuto = (id: string) => {
     const next = autoIds.includes(id) ? autoIds.filter((x) => x !== id) : [...autoIds, id];
@@ -2159,6 +2190,9 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   const agentsFor = (width: number) => (
     <LeftPanel
       width={width}
+      auto={auto}
+      leader={process.env.AGENT_LEADER?.trim() || undefined}
+      providerName={session?.provider.name ?? "not connected"}
       models={modelRows}
       connections={connections}
       moreConnections={moreConnections}
@@ -2170,12 +2204,19 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
       }}
       viewing={viewed ? viewing : undefined}
       cursor={region === "left" ? leftAt : undefined}
-      onModel={(id) => {
-        if (id === session?.provider.id) runAction("view.models");
-        else leftMenu({ kind: "model", id });
+      onAuto={() => {
+        leftChoose({ kind: "auto", id: null });
       }}
-      onProvider={() => {
-        runAction("command.providers");
+      onLeader={() => {
+        runAction("command.leader");
+      }}
+      onModel={chooseModel}
+      onProvider={(id) => {
+        runAction(`use:${id}`);
+      }}
+      onPoint={(at) => {
+        setRegion("left");
+        setLeftAt(at);
       }}
       onMenu={leftMenu}
       onAgent={(key) => {
@@ -3167,7 +3208,13 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           maximized={maximized}
           region={region}
           leftSection={
-            leftAt.kind === "model" ? "MODELS" : leftAt.kind === "provider" ? "PROVIDERS" : "AGENTS"
+            leftAt.kind === "model"
+              ? "MODELS"
+              : leftAt.kind === "provider"
+                ? "PROVIDERS"
+                : leftAt.kind === "agent"
+                  ? "AGENTS"
+                  : "MODE"
           }
           memory={memoryStats?.nodes}
           hidden={layout.hidden.map((side) => (side === "left" ? "agents" : "side"))}
