@@ -13,6 +13,8 @@ import { Table, type Row } from "../ui/table.js";
 type Switch = "auto" | "on";
 
 const NO_MODEL_ROW = "\u0000none";
+/** The rows of the window's own actions ("Add connection", "Manage") start so. */
+const ACTION_ROW = "\u0000action:";
 
 /** Whether a connection matches what was typed: its name or its id, in any case. */
 export function matchesConnection(provider: Pick<Provider, "id" | "name">, query: string): boolean {
@@ -50,6 +52,18 @@ export function ProvidersView(props: {
   readonly autoModels?: Readonly<Record<string, readonly string[]>>;
   readonly onAutoModels?: (id: string, models: string[]) => void;
   readonly notice?: (message: string) => void;
+  /**
+   * Only what is connected (or switched On) is listed; typing searches them
+   * all. The window's first screen, as /connect and /providers open it.
+   */
+  readonly connectedOnly?: boolean;
+  /** Rows of the window's own above the connections: "+ Add connection", "Manage". */
+  readonly actions?: readonly {
+    readonly id: string;
+    readonly label: string;
+    readonly hint: string;
+  }[];
+  readonly onAction?: (id: string) => void;
   readonly onClose: () => void;
 }): ReactNode {
   const [statuses, setStatuses] = useState<ReadonlyMap<string, ProviderStatus>>(new Map());
@@ -83,8 +97,17 @@ export function ProvidersView(props: {
   }, [props.providers, asked]);
 
   const shown = useMemo(
-    () => props.providers.filter((p) => matchesConnection(p, query)),
-    [props.providers, query],
+    () =>
+      props.providers.filter((p) => {
+        if (!matchesConnection(p, query)) return false;
+        // The first screen: what is connected or On; a search finds the rest.
+        if (props.connectedOnly !== true || query !== "" || providerEnabled(p.id)) return true;
+        const status = statuses.get(p.id);
+        return (
+          status !== undefined && connectionState({ id: p.id, status }).state !== "unavailable"
+        );
+      }),
+    [props.providers, props.connectedOnly, query, statuses],
   );
   const offerNone =
     props.onNone !== undefined &&
@@ -100,6 +123,12 @@ export function ProvidersView(props: {
   };
   const toggle = (on: boolean) => (on ? "[ON ]" : "[OFF]");
   const rows: Row[] = [
+    ...(query === ""
+      ? (props.actions ?? []).map((a) => ({
+          id: ACTION_ROW + a.id,
+          cells: { name: a.label, type: "", state: "", auto: "", on: "", why: a.hint },
+        }))
+      : []),
     ...(offerNone
       ? [
           {
@@ -137,6 +166,7 @@ export function ProvidersView(props: {
   const chosenId =
     selected !== undefined && rows.some((r) => r.id === selected) ? selected : rows[0]?.id;
   const chosen = shown.find((p) => p.id === chosenId);
+  const hidden = props.providers.length - shown.length;
 
   const flip = () => {
     if (!chosen) return;
@@ -150,6 +180,10 @@ export function ProvidersView(props: {
     }
   };
   const enter = (id: string) => {
+    if (id.startsWith(ACTION_ROW)) {
+      props.onAction?.(id.slice(ACTION_ROW.length));
+      return;
+    }
     if (id === NO_MODEL_ROW) {
       props.onNone?.();
       return;
@@ -226,6 +260,9 @@ export function ProvidersView(props: {
           {query === "" ? "" : ` of ${String(props.providers.length)}`} · search:{" "}
         </Text>
         <Text color={theme.accent}>{query === "" ? "type a name" : query}</Text>
+        {props.connectedOnly === true && query === "" && hidden > 0 && (
+          <Text dimColor> · {String(hidden)} not connected (type to find them)</Text>
+        )}
       </Text>
       {rows.length === 0 && (
         <Text color={theme.warning}>Nothing matches “{query}”: esc clears it.</Text>
@@ -245,7 +282,7 @@ export function ProvidersView(props: {
         onSelect={setSelected}
         onOpen={enter}
         onMenu={(id) => {
-          if (id !== NO_MODEL_ROW) setOpen(id);
+          if (id !== NO_MODEL_ROW && !id.startsWith(ACTION_ROW)) setOpen(id);
         }}
       />
       <Text dimColor wrap="truncate-end">

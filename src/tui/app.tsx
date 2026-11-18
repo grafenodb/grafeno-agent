@@ -320,6 +320,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
   const [mode, setMode] = useState<Mode>("chat");
   // Where /connect is: its menu, a section, a key being typed, or managing one connection.
   const [connectView, setConnectView] = useState<
+    | { kind: "home" }
     | { kind: "menu" }
     | { kind: "section"; type: ConnectionType; back?: "local" }
     | { kind: "key"; provider: Provider; back: ConnectionType }
@@ -328,7 +329,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     | { kind: "billing"; provider: Provider }
     | { kind: "plan"; provider: Provider }
     | { kind: "local" }
-  >({ kind: "menu" });
+  >({ kind: "home" });
   /** For each provider in Auto, the models chosen (AGENT_AUTO_MODELS). */
   const [autoModelChoice, setAutoModelChoice] = useState<Record<string, string[]>>(() =>
     autoModels(process.env),
@@ -1382,13 +1383,15 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
             break;
           }
           setConnectView(
-            section === "menu"
-              ? { kind: "menu" }
-              : section === "manage"
-                ? { kind: "manage" }
-                : section === "local"
-                  ? { kind: "local" }
-                  : { kind: "section", type: section },
+            section === "home"
+              ? { kind: "home" }
+              : section === "menu"
+                ? { kind: "menu" }
+                : section === "manage"
+                  ? { kind: "manage" }
+                  : section === "local"
+                    ? { kind: "local" }
+                    : { kind: "section", type: section },
           );
           setMode("connect");
           break;
@@ -1589,8 +1592,9 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
           runAction("view.sidebar");
           break;
         case "providers":
-          setView("providers");
-          setMode("view");
+          // One window with /connect: its first screen.
+          setConnectView({ kind: "home" });
+          setMode("connect");
           break;
         case "fresh": {
           if (!session) break;
@@ -2787,8 +2791,28 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                 }}
               />
             )}
-            {mode === "view" && view === "providers" && (
+            {((mode === "view" && view === "providers") ||
+              (mode === "connect" && connectView.kind === "home")) && (
               <ProvidersView
+                title="Connections"
+                connectedOnly
+                actions={[
+                  {
+                    id: "add",
+                    label: "+ Add connection",
+                    hint: "CLI / subscription, API key, coding plan, local models",
+                  },
+                  {
+                    id: "manage",
+                    label: "  Manage connections",
+                    hint: "check one, change its key, its billing, disconnect it",
+                  },
+                ]}
+                onAction={(id) => {
+                  setView(undefined);
+                  setMode("connect");
+                  setConnectView(id === "add" ? { kind: "menu" } : { kind: "manage" });
+                }}
                 providers={services.providers}
                 {...(session && !auto ? { current: session.provider.id } : {})}
                 autoMembers={autoIds}
@@ -3032,7 +3056,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
             {mode === "connect" && connectView.kind === "menu" && (
               <ConnectMenu
                 onCancel={() => {
-                  setMode("chat");
+                  setConnectView({ kind: "home" });
                 }}
                 onSection={(section) => {
                   if (section === "list") {
@@ -3040,6 +3064,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                     void showConnections(false);
                   } else if (section === "manage") setConnectView({ kind: "manage" });
                   else if (section === "local") setConnectView({ kind: "local" });
+                  else if (section === "home") setConnectView({ kind: "home" });
                   else if (section !== "menu") setConnectView({ kind: "section", type: section });
                 }}
               />

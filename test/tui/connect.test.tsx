@@ -40,7 +40,8 @@ describe("/connect", () => {
   });
 
   it("takes its sections as words: cli, api, plans, list, status, manage, disconnect", () => {
-    expect(sectionOf("")).toBe("menu");
+    expect(sectionOf("")).toBe("home");
+    expect(sectionOf("add")).toBe("menu");
     expect(sectionOf("cli")).toBe("cli");
     expect(sectionOf("api")).toBe("api-key");
     expect(sectionOf("plans")).toBe("coding-plan");

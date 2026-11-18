@@ -364,16 +364,16 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     };
     const app = render(<App services={svc} />);
     await ready(app);
-    await type(app, "/connect");
+    await type(app, "/connect add");
     app.stdin.write(ENTER);
-    // The menu first: how to connect, five choices; 2 opens the API Key section.
-    await until(() => now(app).includes("Connect · choose how"), "the menu");
+    // Adding one: how to connect, five choices; 2 opens the API Key section.
+    await until(() => now(app).includes("Add a connection · choose how"), "the menu");
     expect(now(app)).toContain("1. CLI / Subscription");
     expect(now(app)).toContain("3. Coding Plan");
     await press(
       app,
       "2",
-      () => !now(app).includes("Connect · choose how") && now(app).includes("API Key"),
+      () => !now(app).includes("Add a connection · choose how") && now(app).includes("API Key"),
       () => `the API Key section; screen: ${now(app)}`,
     );
     await until(
@@ -382,7 +382,13 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     );
     // Auto is not switched on here any more: /mode does it, by hand.
     expect(now(app)).not.toMatch(/▸ Auto|Auto · in use/);
-    await press(app, "\u001B", () => now(app).includes("Connect · choose how"), "the menu");
+    await press(
+      app,
+      "\u001B",
+      () => now(app).includes("Add a connection · choose how"),
+      "the menu",
+    );
+    await press(app, "\u001B", () => now(app).includes("Connections ·"), "the connections");
     await press(app, "\u001B", () => now(app).includes("Ask anything"), "the chat");
     await type(app, "/mode");
     app.stdin.write(ENTER);
@@ -731,14 +737,44 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     app.unmount();
   });
 
-  it("goes back a step with esc in /connect: a section to its menu, the menu to the chat", async () => {
+  it("/connect and /providers open one window: the connections with their switches, Add connection and Manage", async () => {
+    const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
+    await ready(app);
+    for (const command of ["/connect", "/providers"]) {
+      await type(app, command);
+      app.stdin.write(ENTER);
+      await until(() => now(app).includes("Connections ·"), `the connections (${command})`);
+      expect(now(app)).toContain("+ Add connection");
+      expect(now(app)).toContain("Manage connections");
+      await press(app, "\u001B", () => now(app).includes("Ask anything"), "the chat");
+    }
+    await type(app, "/connect");
+    app.stdin.write(ENTER);
+    await until(() => now(app).includes("+ Add connection"), "the connections");
+    // The first row is "+ Add connection": Enter opens the ways to connect.
+    await press(
+      app,
+      ENTER,
+      () => now(app).includes("Add a connection · choose how"),
+      "the ways to connect",
+    );
+    app.unmount();
+  });
+
+  it("goes back a step with esc in /connect: a section to its menu, the menu to the connections, then the chat", async () => {
     const app = render(<App services={services({ turns: [[{ say: "hi" }]] })} />);
     await ready(app);
     await type(app, "/connect api");
     app.stdin.write(ENTER);
     await until(() => now(app).includes("API Key"), "the section");
-    await press(app, "\u001B", () => now(app).includes("Connect · choose how"), "the menu again");
+    await press(
+      app,
+      "\u001B",
+      () => now(app).includes("Add a connection · choose how"),
+      "the menu again",
+    );
     expect(now(app)).not.toContain("Ask anything");
+    await press(app, "\u001B", () => now(app).includes("Connections ·"), "the connections");
     await press(app, "\u001B", () => now(app).includes("Ask anything"), "the chat");
     app.unmount();
   });
@@ -828,7 +864,13 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
             .includes("no model is selected now"),
         "the chat left it",
       );
-      await press(app, "\u001B", () => now(app).includes("Connect · choose how"), "the menu");
+      await press(
+        app,
+        "\u001B",
+        () => now(app).includes("Add a connection · choose how"),
+        "the menu",
+      );
+      await press(app, "\u001B", () => now(app).includes("Connections ·"), "the connections");
       await press(app, "\u001B", () => now(app).includes("Ask anything"), "the chat");
       await type(app, "hello");
       app.stdin.write(ENTER);

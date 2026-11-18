@@ -8,7 +8,7 @@ import { Spinner } from "./spinner.js";
 import { theme } from "./theme.js";
 
 /** Where /connect is: its menu, one of its sections, or a step inside one. */
-export type ConnectSection = "menu" | ConnectionType | "list" | "manage";
+export type ConnectSection = "home" | "menu" | ConnectionType | "list" | "manage";
 
 /** The ways into /connect, as the menu offers them (each clickable, by number too). */
 export const CONNECT_MENU: readonly (PickerItem & { readonly section: ConnectSection })[] = [
@@ -55,6 +55,9 @@ export function sectionOf(args: string): ConnectSection | "status" | "disconnect
   const word = args.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
   switch (word) {
     case "":
+      return "home";
+    case "add":
+    case "new":
       return "menu";
     case "cli":
     case "subscription":
@@ -98,7 +101,7 @@ export function ConnectMenu({
 }): ReactNode {
   return (
     <Picker
-      title="Connect · choose how"
+      title="Add a connection · choose how"
       items={CONNECT_MENU}
       onSelect={(item) => {
         const chosen = CONNECT_MENU.find((m) => m.id === item.id);

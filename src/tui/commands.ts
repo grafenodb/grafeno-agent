@@ -27,11 +27,15 @@ export const COMMANDS: readonly Command[] = [
     description: "Choose the leader of orchestrated runs: it plans, assigns and audits the tasks",
   },
   { name: "effort", description: "Choose how hard the model thinks" },
-  { name: "connect", description: "Choose the provider the chat uses (Claude, Codex…)" },
+  {
+    name: "connect",
+    description:
+      "Connections: switch each On or in Auto, use one, add one (/connect add), manage them",
+  },
   { name: "mode", description: "Auto, or the provider chosen in /connect (auto, specific)" },
   {
     name: "providers",
-    description: "Every connection and its state: available, connected, configured…",
+    description: "The same window as /connect: the connections, their switches and state",
   },
   { name: "vault", description: "Explore the memory: search, facts, contradictions, namespaces" },
   { name: "palace", description: "Grafeno: included, or a server you already have" },
