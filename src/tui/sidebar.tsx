@@ -7,6 +7,7 @@ import type { AgentSession } from "../app/session.js";
 import type { ModelOption, ProviderStatus, ProviderUsage } from "../providers/types.js";
 import { ago, bar, compact, shortResets, usageTone } from "./labels.js";
 import { theme } from "./theme.js";
+import { memoryOwner } from "../projects.js";
 import { Frame } from "./ui/frame.js";
 import type { RecentRun } from "../app/services.js";
 import type { SubAgent } from "./agents.js";
@@ -218,15 +219,10 @@ export function Sidebar(props: SidebarProps): ReactNode {
         )}
         {session && (
           <>
-            <Ends
-              left={`• palace ${session.memory.palace}`}
-              right={session.memory.palace === session.memory.project.name ? "project" : "shared"}
-            />
-            <Ends
-              left={`• agent ${session.identity?.name ?? "unnamed"}`}
-              right={session.identity?.ownOnly ? "own" : "shared"}
-            />
-            <Ends left={`• ${session.vault.namespace}`} right="namespace" />
+            {/* Where this session's memory lives: its namespace, by whose it is. */}
+            <Text wrap="truncate-end">
+              • {memoryOwner(session.vault.namespace) ?? session.vault.namespace}
+            </Text>
             {props.recall !== undefined && (
               <Text wrap="truncate-end">
                 <Text color={theme.memory}>◆</Text> last message:{" "}
@@ -240,44 +236,30 @@ export function Sidebar(props: SidebarProps): ReactNode {
         )}
       </Section>
 
-      {/* Runs: a task Auto split into parts for several models (/orchestrate), each one a run. */}
       <Section
         title="RUNS"
-        note="Auto's planned work"
         color={theme.accent}
         grow
         {...click(props, "runs")}
         {...pick(props, "runs")}
       >
         {props.runs === undefined || props.runs.length === 0 ? (
-          <Box flexDirection="column">
-            <Text dimColor wrap="wrap">
-              A big task Auto splits into parts, each done by a model and checked: that is a run.
-            </Text>
-            <Text dimColor wrap="wrap">
-              None yet. /orchestrate {"<task>"} starts one; Auto may also propose one.
-            </Text>
-          </Box>
+          <Text dimColor>none yet · /orchestrate</Text>
         ) : (
-          [
-            <Text key="hint" dimColor wrap="truncate-end">
-              click: each run's tasks, models and report
-            </Text>,
-            ...props.runs.map((run) => (
-              <Ends
-                key={run.id}
-                left={
-                  <>
-                    <Text color={RUN_LOOK[run.state]?.color ?? theme.muted}>
-                      {RUN_LOOK[run.state]?.mark ?? "·"}{" "}
-                    </Text>
-                    {run.request}
-                  </>
-                }
-                right={<Text dimColor>{duration(run.seconds, run.state)}</Text>}
-              />
-            )),
-          ]
+          props.runs.map((run) => (
+            <Ends
+              key={run.id}
+              left={
+                <>
+                  <Text color={RUN_LOOK[run.state]?.color ?? theme.muted}>
+                    {RUN_LOOK[run.state]?.mark ?? "·"}{" "}
+                  </Text>
+                  {run.request}
+                </>
+              }
+              right={<Text dimColor>{duration(run.seconds, run.state)}</Text>}
+            />
+          ))
         )}
       </Section>
     </Box>

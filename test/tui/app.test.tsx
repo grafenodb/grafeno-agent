@@ -230,7 +230,9 @@ describe("the terminal interface", { timeout: 20_000 }, () => {
     await until(() => now(app).includes("PLAN USAGE") && now(app).includes("42%"), "the panel");
     expect(now(app)).toContain("G R A F E N O");
     expect(now(app)).toContain("Fake Default 1.0");
-    expect(now(app)).toContain("grafeno-agent-test");
+    // MEMORY: where this session's memory lives (its namespace), nothing more.
+    expect(now(app)).toMatch(/• test\s/);
+    expect(now(app)).not.toContain("• palace");
     // The plan, with its usage.
     expect(now(app)).toContain("PLAN USAGE · Fake Pro");
     app.unmount();

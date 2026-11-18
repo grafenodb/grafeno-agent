@@ -38,6 +38,20 @@ export function sharedNamespace(env: Record<string, string | undefined> = proces
   return env.GRAFENO_NAMESPACE?.trim() || "grafeno-agent";
 }
 
+/**
+ * Whose memory a namespace is, when it is the agent's: General (sessions
+ * outside a project) or a project's. Others on the server are not its own.
+ */
+export function memoryOwner(namespace: string): string | undefined {
+  if (namespace === sharedNamespace()) return "General (outside projects)";
+  try {
+    const project = loadProjects().find((p) => p.namespace === namespace);
+    return project ? `Project ${project.name}` : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** A project's namespace: the shared one, `--`, and the project's name made safe. */
 export function projectNamespace(base: string, name: string): string {
   const slug =

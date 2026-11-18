@@ -480,9 +480,6 @@ describe("the memory view", () => {
       <MemoryView admin={admin} tab="browse" notice={() => undefined} onClose={() => undefined} />,
     );
     await wait();
-    expect(app.lastFrame()).toContain(
-      "memories: what was remembered · facts: the links between them",
-    );
     await keys(app, TAB, ..."sqlite".split(""), ENTER);
     await until(app, () => (app.lastFrame() ?? "").includes("Use SQLite (sqlite)"), "the results");
     await keys(app, ENTER);

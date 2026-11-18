@@ -85,9 +85,7 @@ export function Header(props: {
         </Text>
       </Box>
       <Box justifyContent="space-between" gap={2}>
-        <Text dimColor wrap="truncate-end">
-          {props.narrow ? "long-term memory" : "CLI orchestrator · long-term memory · multi-model"}
-        </Text>
+        <Text> </Text>
         <Text dimColor wrap="truncate-start">
           {props.narrow ? "" : `${props.who} · `}
           {DATE.format(props.now)} · {TIME.format(props.now)}

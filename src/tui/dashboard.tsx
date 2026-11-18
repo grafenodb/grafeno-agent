@@ -219,10 +219,6 @@ export function Dashboard(props: {
         <InputArea>
           <ClickArea>
             <Box flexDirection="column" paddingX={1}>
-              <Text dimColor wrap="wrap">
-                Each session works on its own, with its own model and memory: leave one running and
-                open another. Enter goes to a session or opens a new one; esc back.
-              </Text>
               <Picker
                 title={`Sessions · ${String(tabs.length)} open`}
                 items={items}

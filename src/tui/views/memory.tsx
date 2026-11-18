@@ -21,10 +21,6 @@ const TAB_TITLE: Readonly<Record<Tab, string>> = {
   namespaces: "Namespaces",
 };
 
-/** What the words of the memory mean, said once at the top. */
-export const MEMORY_WORDS =
-  "memories: what was remembered · facts: the links between them · kinds: what each memory is";
-
 /** What the agent is asked when the memory should be consolidated (it writes the summaries). */
 export const CONSOLIDATE_PROMPT =
   "Look after the memory: call maintain, then consolidate the groups of old memories it suggests (write each summary from those memories themselves, nothing else), and merge the clear duplicates. Say what you did.";
@@ -341,9 +337,6 @@ export function MemoryView(props: {
           </Text>
         ))}
       </Text>
-      <Text dimColor wrap="truncate-end">
-        {MEMORY_WORDS}
-      </Text>
       {error !== undefined && <Text color={theme.error}>✗ {error}</Text>}
 
       {tab === "browse" && (
@@ -495,10 +488,8 @@ export function MemoryView(props: {
               onMenu={openSpace}
             />
           )}
-          <Text dimColor wrap="wrap">
-            one per project, and General for sessions outside a project: each apart from the others
-            · enter opens one (Browse, Search… then work in it) · shift+f10 empty or delete it · tab
-            next tab · esc close
+          <Text dimColor wrap="truncate-end">
+            enter open · shift+f10 empty or delete · tab next tab · esc close
           </Text>
         </>
       )}

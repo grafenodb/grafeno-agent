@@ -84,7 +84,7 @@ import { StatusBar } from "./status-bar.js";
 import { commandActions, paletteItems, VIEW_ACTIONS } from "./core/actions.js";
 import { ProjectsPanel } from "./projects.js";
 import { deleteProjectEverywhere, describeDeletion } from "../app/project-delete.js";
-import { loadProjects, projectFootprint, sharedNamespace } from "../projects.js";
+import { memoryOwner, projectFootprint } from "../projects.js";
 import { sessionsDir } from "../sessions/store.js";
 import { dataDir } from "../data-dir.js";
 import { SessionsPanel } from "./sessions.js";
@@ -2252,7 +2252,7 @@ function AppBody({
         justifyContent="center"
         alignItems="center"
       >
-        <Logo version={services.version} tagline="A programming assistant with long-term memory." />
+        <Logo version={services.version} />
         <Box marginTop={1} width={Math.min(84, columns - 4)} flexDirection="column">
           <Text bold>Welcome. Two things to set up, once:</Text>
           <Text dimColor>
@@ -3723,10 +3723,9 @@ function Home({
             <Text bold>Agent</Text>
             <Text dimColor> v{version}</Text>
           </Text>
-          <Text dimColor>A programming assistant with long-term memory.</Text>
         </Box>
       ) : (
-        <Logo version={version} tagline="A programming assistant with long-term memory." />
+        <Logo version={version} />
       )}
       <Box marginTop={compact ? 1 : 2} flexDirection="column">
         {ready ? (
@@ -3753,20 +3752,6 @@ function Tip({ keys, text }: { readonly keys: string; readonly text: string }): 
       <Text dimColor>{text}</Text>
     </Text>
   );
-}
-
-/**
- * Whose memory a namespace is, when it is the agent's: General (sessions
- * outside a project) or a project's. Others on the server are not its own.
- */
-export function memoryOwner(namespace: string): string | undefined {
-  if (namespace === sharedNamespace()) return "General (outside projects)";
-  try {
-    const project = loadProjects().find((p) => p.namespace === namespace);
-    return project ? `Project ${project.name}` : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /** What a namespace made by the agent says it holds. */
