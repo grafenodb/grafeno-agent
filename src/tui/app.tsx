@@ -1290,18 +1290,17 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                 current: now === "",
               },
               ...lists.flatMap(({ provider: p, models: found }) => [
+                // Only where it is from and the model's name: "Claude Code Haiku 5.5".
                 {
                   id: p.id,
-                  label: `${p.name} · its own choice of model`,
-                  hint: p.id,
+                  label: `${leaderSource(p)} (its own choice)`,
                   current: now === p.id,
                 },
                 ...found
                   .filter((m) => m.id !== "default")
                   .map((m) => ({
                     id: `${p.id}/${m.id}`,
-                    label: `${p.name} · ${m.name}`,
-                    hint: [m.id !== m.name ? m.id : "", m.hint ?? ""].filter(Boolean).join(" · "),
+                    label: `${leaderSource(p)} ${m.name}`,
                     current: now === `${p.id}/${m.id}`,
                   })),
               ]),
@@ -3485,6 +3484,12 @@ function Tip({ keys, text }: { readonly keys: string; readonly text: string }): 
       <Text dimColor>{text}</Text>
     </Text>
   );
+}
+
+/** Where a model comes from, in a word or two: "Claude Code", "Codex", "OpenRouter". */
+export function leaderSource(provider: { readonly id: string; readonly name: string }): string {
+  if (provider.id === "claude-code") return "Claude Code";
+  return provider.name.replace(/\s*\([^)]*\)\s*$/, "").trim() || provider.name;
 }
 
 function Footer({
