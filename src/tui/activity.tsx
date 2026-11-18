@@ -1,5 +1,5 @@
 import { Box, Text } from "ink";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Clickable } from "./clicks.js";
 import { Spinner } from "./spinner.js";
 import { theme } from "./theme.js";
@@ -294,8 +294,8 @@ export function groupSummary(records: readonly ActionRecord[]): string {
 
 /**
  * Finished actions in a row, folded into one line ("Read 3 files, edited
- * a file") that unfolds, with a click or ctrl+o, into each action and what
- * it did.
+ * a file"). A click (or ctrl+o, the latest) unfolds it into a line per
+ * action with what it came to; a click on one of those shows its output.
  */
 export function ActionGroup({
   records,
@@ -308,6 +308,8 @@ export function ActionGroup({
 }): ReactNode {
   const failed = records.filter((r) => r.failed).length;
   const only = records.length === 1 ? records[0] : undefined;
+  // The actions whose output shows: one action alone shows its own once open.
+  const [shown, setShown] = useState<ReadonlySet<number>>(new Set());
   return (
     <Box
       flexDirection="column"
@@ -322,7 +324,7 @@ export function ActionGroup({
         <Text dimColor>
           {" "}
           · {only ? only.action.verb.toLowerCase() : `${String(records.length)} calls`}
-          {open ? "" : " · click or ctrl+o to open"}
+          {open ? (only ? "" : " · click an action for its output") : " · click to open"}
         </Text>
       </Text>
       <Clickable onClick={onToggle}>
@@ -355,27 +357,39 @@ export function ActionGroup({
         records.map((record, index) => (
           <Box key={index} flexDirection="column">
             {!only && (
-              <ActionLine action={record.action} state={record.failed ? "failed" : "done"} />
+              <Clickable
+                onClick={() => {
+                  setShown((current) => {
+                    const next = new Set(current);
+                    if (!next.delete(index)) next.add(index);
+                    return next;
+                  });
+                }}
+              >
+                <ActionLine action={record.action} state={record.failed ? "failed" : "done"} />
+              </Clickable>
             )}
-            {record.output !== undefined && record.output.trim() !== "" && (
-              <Box paddingLeft={6} flexDirection="column">
-                {record.output.split("\n").map((line, at) => (
-                  <Text
-                    key={at}
-                    wrap="truncate-end"
-                    {...(record.failed
-                      ? { color: theme.error }
-                      : line.startsWith("+ ")
-                        ? { color: theme.success }
-                        : line.startsWith("- ")
-                          ? { color: theme.error }
-                          : { dimColor: true })}
-                  >
-                    {line === "" ? " " : line}
-                  </Text>
-                ))}
-              </Box>
-            )}
+            {(only !== undefined || shown.has(index)) &&
+              record.output !== undefined &&
+              record.output.trim() !== "" && (
+                <Box paddingLeft={6} flexDirection="column">
+                  {record.output.split("\n").map((line, at) => (
+                    <Text
+                      key={at}
+                      wrap="truncate-end"
+                      {...(record.failed
+                        ? { color: theme.error }
+                        : line.startsWith("+ ")
+                          ? { color: theme.success }
+                          : line.startsWith("- ")
+                            ? { color: theme.error }
+                            : { dimColor: true })}
+                    >
+                      {line === "" ? " " : line}
+                    </Text>
+                  ))}
+                </Box>
+              )}
           </Box>
         ))}
     </Box>

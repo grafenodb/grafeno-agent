@@ -1517,7 +1517,7 @@ describe("Auto with no provider in it", { timeout: 20_000 }, () => {
 });
 
 describe("folded actions", { timeout: 20_000 }, () => {
-  it("finished actions fold into a line; ctrl+o or a click unfolds them; the turn closes with its result", async () => {
+  it("finished actions fold into a line; ctrl+o (the latest) or a click unfolds one; a click on an action shows its output", async () => {
     const reader = (name: string): Tool => ({
       name,
       description: "Reads.",
@@ -1550,13 +1550,17 @@ describe("folded actions", { timeout: 20_000 }, () => {
     expect(folded).toMatch(/Worked for \d+s · read 2 files, ran a command/);
     expect(folded).not.toContain("contents of a.ts");
     app.stdin.write("\u000F"); // ctrl+o
-    await until(() => now(app).includes("contents of a.ts"), "the actions unfolded");
-    expect(now(app)).toContain("npm test");
+    await until(() => now(app).includes("npm test"), "the actions unfolded");
     expect(now(app)).toContain("▾");
+    // A line per action, not every output at once.
+    expect(now(app)).not.toContain("contents of a.ts");
+    clickOn(app, "b.ts");
+    await until(() => now(app).includes("contents of b.ts"), "one action's output, on a click");
+    expect(now(app)).not.toContain("contents of a.ts");
     app.stdin.write("\u000F");
-    await until(() => !now(app).includes("contents of a.ts"), "folded again");
+    await until(() => !now(app).includes("npm test"), "folded again");
     clickOn(app, "Read 2 files");
-    await until(() => now(app).includes("contents of b.ts"), "unfolded by a click");
+    await until(() => now(app).includes("npm test"), "unfolded by a click");
     app.unmount();
   });
 });

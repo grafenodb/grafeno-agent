@@ -404,7 +404,8 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
     services.saveChoice({ layout: layoutSetting(next) });
   };
   const [scroll, setScroll] = useState(0);
-  // Folded actions: all unfolded with ctrl+o; a click flips one group.
+  // Folded actions: a click (or ctrl+o, the latest) unfolds one group, never all of them.
+  // In a sub-agent's view ctrl+o still unfolds all of its own.
   const [allOpen, setAllOpen] = useState(false);
   const [flipped, setFlipped] = useState<ReadonlySet<number>>(new Set());
   const [tick, setTick] = useState(0);
@@ -1785,8 +1786,23 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
         break;
       case "view.fold":
         setMode((m) => (m === "palette" ? "chat" : m));
-        setAllOpen((open) => !open);
-        setFlipped(new Set());
+        if (viewing !== undefined) {
+          setAllOpen((open) => !open);
+          break;
+        }
+        {
+          const groups = groupItems(itemsNow.current).filter((e) => "records" in e);
+          const latest = groups.at(-1);
+          if (!latest) {
+            notice("No actions in the conversation yet.", "info");
+            break;
+          }
+          setFlipped((current) => {
+            const next = new Set(current);
+            if (!next.delete(latest.id)) next.add(latest.id);
+            return next;
+          });
+        }
         break;
       case "view.models":
         if (!session) {
@@ -2528,7 +2544,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                   <ActionGroup
                     key={entry.id}
                     records={entry.records}
-                    open={allOpen !== flipped.has(entry.id)}
+                    open={flipped.has(entry.id)}
                     onToggle={() => {
                       setFlipped((current) => {
                         const next = new Set(current);
@@ -2541,7 +2557,7 @@ function AppBody({ services }: { readonly services: AppServices }): ReactNode {
                   <ItemView
                     key={entry.id}
                     item={entry}
-                    open={allOpen !== flipped.has(entry.id)}
+                    open={flipped.has(entry.id)}
                     onToggle={() => {
                       setFlipped((current) => {
                         const next = new Set(current);
@@ -3908,7 +3924,7 @@ function helpLines(): string[] {
     "  ↑ ↓             earlier messages; in a list, move",
     "  tab             complete a command",
     "  pgup / pgdn     scroll the conversation (or the mouse wheel)",
-    "  ctrl+o          unfold or fold every group of actions (a click does one)",
+    "  ctrl+o          unfold or fold the latest group of actions (a click: the one clicked)",
     "  shift + mouse   select text to copy",
     "  ctrl+b          show or hide the side panel",
     "  esc             interrupt the answer",

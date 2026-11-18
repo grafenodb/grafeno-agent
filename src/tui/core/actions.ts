@@ -22,7 +22,7 @@ export const VIEW_ACTIONS: readonly ActionSpec[] = [
   {
     id: "view.fold",
     title: "Actions in the chat",
-    hint: "open or fold all of them",
+    hint: "open or fold the latest group",
     keys: "ctrl+o",
   },
   {

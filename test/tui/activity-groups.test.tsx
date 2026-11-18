@@ -47,7 +47,7 @@ describe("groups of actions", () => {
     );
   });
 
-  it("show one line folded, and each action with what it did unfolded", () => {
+  it("show one line folded, and a line per action unfolded (its output on a click)", () => {
     const records = [
       record("Read", "src/a.ts", false, "File src/a.ts"),
       record("Edit", "src/a.ts", false, "- old\n+ new"),
@@ -63,8 +63,10 @@ describe("groups of actions", () => {
     const shown = open.lastFrame() ?? "";
     expect(shown).toContain("▾");
     expect(shown).toContain("Edit");
-    expect(shown).toContain("+ new");
-    expect(shown).toContain("exit 1: 2 failed");
+    expect(shown).toContain("npm test");
+    // A line per action: the outputs wait for a click on the action.
+    expect(shown).not.toContain("+ new");
+    expect(shown).toContain("click an action for its output");
     open.unmount();
     // One action alone reads as itself.
     const one = render(<ActionGroup records={[record("Run", "npm test")]} open={false} />);
